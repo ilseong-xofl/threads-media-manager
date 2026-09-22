@@ -79,6 +79,11 @@ export function PostCard({
         >
           <Icon name={exporting ? 'refresh' : 'download'} />
         </button>
+        {post.draft && (
+          <span className="post-draft-marker" title="등록을 위한 작성이 완료된 게시글">
+            <span className="post-draft-badge">등록</span>
+          </span>
+        )}
       </div>
     </article>
   );

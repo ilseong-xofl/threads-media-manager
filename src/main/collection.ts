@@ -4,6 +4,7 @@ import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import type { CollectionView, Problem, Snapshot } from '../shared/contracts';
 import type { LocalFile } from './media';
+import { validPostDraft } from '../shared/post-draft';
 
 export interface RuntimeResult {
   snapshot: Snapshot;
@@ -115,7 +116,8 @@ export function parseRuntimeResult(raw: string, root: string): RuntimeResult {
       !p.reasons.every(string) ||
       !Array.isArray(p.attachments) ||
       (p.edits !== undefined && !Array.isArray(p.edits)) ||
-      (p.comment !== undefined && !validComment(p.comment))
+      (p.comment !== undefined && !validComment(p.comment)) ||
+      (p.draft !== undefined && !validPostDraft(p.draft))
     )
       return invalid();
     const edits = Array.isArray(p.edits) ? p.edits : [];

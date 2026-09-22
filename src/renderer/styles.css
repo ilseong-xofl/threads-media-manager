@@ -1112,7 +1112,15 @@ input::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   margin-bottom: 12px;
+}
+.comment-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 .comment-heading button {
   min-height: 30px;
@@ -1215,7 +1223,7 @@ dd {
 .welcome {
   min-height: 390px;
 }
-footer {
+.app > footer {
   display: flex;
   justify-content: space-between;
   width: min(1320px, calc(100% - 64px));
@@ -1359,7 +1367,7 @@ footer {
 @media (max-width: 1000px) {
   .header-inner,
   .library-content,
-  footer {
+  .app > footer {
     width: calc(100% - 40px);
   }
   .brand h1 {
@@ -1503,6 +1511,21 @@ footer {
   border-top: 1px solid #e5e8ee;
   background: white;
 }
+.image-editor .media-editor-footer > button {
+  min-width: 97.5px;
+}
+.post-detail-action {
+  min-width: 90px;
+  min-height: 36.8px;
+  gap: 8px;
+  padding: 6.4px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.post-detail-action .icon {
+  width: 16px;
+  height: 16px;
+}
 .capture-help {
   margin-right: auto;
   color: #858fa0;
@@ -1535,6 +1558,8 @@ footer {
 }
 .crop-toolbar select {
   min-width: 110px;
+  height: 38px;
+  min-height: 38px;
 }
 .crop-dimensions {
   margin-left: auto;
@@ -1753,4 +1778,53 @@ footer {
 }
 .trim-error {
   color: #b75d5d;
+}
+
+.library-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 22px;
+  border-bottom: 1px solid var(--border, #e1e4ee);
+}
+.library-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 10px 15px 13px;
+  color: #8790a1;
+  border-bottom: 2px solid transparent;
+}
+.library-tabs button[aria-pressed='true'] {
+  color: #655bdd;
+  border-bottom-color: #655bdd;
+}
+.library-tabs span {
+  font-size: 12px;
+  margin-left: 4px;
+}
+/* The source list marks posts already used in a saved draft. */
+.post-draft-marker {
+  position: relative;
+  border-left: 1px solid transparent;
+  padding-left: 10px;
+  margin-left: 2px;
+}
+.post-draft-marker::before {
+  content: '';
+  position: absolute;
+  top: 10%;
+  bottom: 10%;
+  left: -1px;
+  border-left: 1px solid #e0e5ea;
+}
+.post-draft-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: #eaf6ef;
+  color: #438567;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
 }

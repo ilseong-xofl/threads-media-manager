@@ -27,7 +27,7 @@ const finalResult = () => ({
   },
 });
 
-function setup() {
+function setup(command = 'batch') {
   const child = Object.assign(new EventEmitter(), {
     stdin: Object.assign(new EventEmitter(), {
       write: vi.fn<(input: string) => boolean>(() => true),
@@ -38,11 +38,7 @@ function setup() {
   });
   vi.mocked(spawn).mockReturnValue(child as unknown as ChildProcess);
   const progress = vi.fn();
-  const operation = launchWorker('/synthetic-app')(
-    '/synthetic-collection',
-    { command: 'batch' },
-    progress,
-  );
+  const operation = launchWorker('/synthetic-app')('/synthetic-collection', { command }, progress);
   const cancellations = () =>
     child.stdin.write.mock.calls.filter(([input]) => input === '{"cancel":true}\n').length;
   return { child, progress, operation, cancellations };
@@ -58,6 +54,18 @@ afterEach(() => {
 });
 
 describe('batch worker stream lifecycle without a real process', () => {
+  it('gives resumed batches the same heartbeat watchdog as first runs', async () => {
+    const { child, operation, cancellations } = setup('resume');
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(cancellations()).toBe(0);
+    child.stdout.emit('data', line(waiting()));
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(cancellations()).toBe(0);
+    child.stdout.emit('data', line(finalResult()));
+    child.emit('close', 0);
+    await expect(operation.result).resolves.toMatchObject({ problem: null });
+  });
+
   it('keeps the first watchdog timeout when late progress and process errors arrive', async () => {
     const { child, progress, operation, cancellations } = setup();
     const failure = operation.result.catch((error) => error);

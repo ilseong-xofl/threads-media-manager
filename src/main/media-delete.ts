@@ -65,7 +65,7 @@ export function mediaDeleteConfirmation(
   const scope =
     input.kind === 'edit'
       ? '선택한 편집본 1개를 삭제합니다. 이 편집본으로 만든 다른 편집본은 유지됩니다.'
-      : `게시글의 원본 이미지·영상과 모든 편집본을 삭제합니다. 편집본 ${plan.editCount}개가 포함됩니다.\nExcel에 삭제 기록을 남겨 목록과 다음 다운로드에서 제외합니다.`;
+      : `게시글의 원본 이미지·영상과 모든 편집본을 삭제합니다. 편집본 ${plan.editCount}개가 포함됩니다.\n등록한 게시글의 캡션과 미디어 선택 내용도 함께 삭제됩니다.\nExcel에 삭제 기록을 남겨 목록과 다음 다운로드에서 제외합니다.`;
   return {
     type: 'warning',
     title: input.kind === 'edit' ? '편집본 삭제' : '게시글 삭제',

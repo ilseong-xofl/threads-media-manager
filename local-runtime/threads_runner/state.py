@@ -212,7 +212,15 @@ class State:
 
     def stop(self, code, retry_at=None, requires_review=False):
         with self.db:
-            self.set_meta("stop", {"code": code, "requires_review": requires_review})
+            previous = self.meta("stop")
+            value = {"code": code, "requires_review": requires_review}
+            if previous != value:
+                history = self.meta("stop_history", [])
+                if previous and not history:
+                    history.append({"stop": previous, "recordedAt": self.clock()})
+                history.append({"stop": value, "recordedAt": self.clock()})
+                self.set_meta("stop_history", history)
+            self.set_meta("stop", value)
             if retry_at is not None:
                 self.set_meta("next_allowed", max(float(retry_at), self.meta("next_allowed", 0)))
 
@@ -222,7 +230,9 @@ class State:
 
     def guard(self):
         now = self.clock()
-        if now < self.meta("last_clock", now) - 1:
+        # A clock problem must not downgrade a stronger persisted review gate
+        # (for example a backup restored without complete request history).
+        if now < self.meta("last_clock", now) - 1 and not self.meta("stop"):
             self.stop("clock_rollback", requires_review=True)
         with self.db:
             self.set_meta("last_clock", max(now, self.meta("last_clock", now)))
@@ -237,5 +247,7 @@ class State:
         with self.db:
             if type(hop) is not int or not 0 <= hop <= POLICY["max_redirects"]:
                 raise StateError("redirect_limit", "허용된 리디렉션 횟수를 초과했습니다.")
+            if self.db.execute("SELECT 1 FROM requests WHERE url_hash=? AND http_status IN (401,403) LIMIT 1", (url_hash,)).fetchone():
+                raise StateError("url_recollection_required", "접근이 거절된 동일 주소는 다시 요청하지 않습니다. 새로 수집한 주소가 필요합니다.")
             self.db.execute("INSERT INTO requests(job_id,url_hash,hostname,hop,consumed_at) VALUES(?,?,?,?,?)",
                             (job_id, url_hash, hostname, hop, now))

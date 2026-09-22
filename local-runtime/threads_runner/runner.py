@@ -11,7 +11,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from . import deletion_state, excel_input, transport
+from . import attempts, deletion_state, excel_input, transport
 from .state import State, StateError, POLICY, file_hash, safe_path, sync_directory
 
 
@@ -78,7 +78,7 @@ def _completed(state, media_id, *, deleted=None):
 
 
 def _unfinished(state):
-    if deletion_state.active_jobs(state, {'running', 'staged', 'failed', 'interrupted'}):
+    if attempts.current_jobs(state, {'running', 'staged', 'failed', 'interrupted'}):
         raise StateError("recovery_required", "미완료 작업이 있습니다. 새 작업 전에 복구가 필요합니다.")
 
 
@@ -87,7 +87,7 @@ def plan_one(root, account, *, expected=None):
     with State(root) as state:
         state.guard()
         _unfinished(state)
-        pending = next(iter(deletion_state.active_jobs(state, {'planned'})), None)
+        pending = next(iter(attempts.current_jobs(state, {'planned'})), None)
         if pending:
             if pending["account"] != account:
                 raise StateError("pending_other_account", "다른 계정의 기존 작업을 먼저 확인하세요.")
@@ -240,18 +240,19 @@ def download_one(root, job_id, *, cancel=lambda: False, download=transport.downl
             raise
 
 
-def recover(root):
+def recover(root, *, state=None, clock=time.time):
     """Only finish locally verified staged files; never send another request."""
     deletion_state.require_no_pending(root)
-    with State(root) as state:
+    with (nullcontext(state) if state is not None else State(root, clock=clock)) as state:
         results=[]
-        for row in deletion_state.active_jobs(state, {'running', 'staged'}):
+        for row in attempts.current_jobs(state, {'running', 'staged'}):
             if row["status"] == "staged":
                 results.append(_publish(state,row))
             else:
                 with state.db:
                     state.db.execute("UPDATE jobs SET status='interrupted',error_code='interrupted' WHERE job_id=?",(row["job_id"],))
-                state.stop("interrupted",requires_review=True)
+                if not state.meta("stop"):
+                    state.stop("interrupted",requires_review=True)
         return {"recovered":results,"network_requests":0,"stop":state.meta("stop")}
 
 

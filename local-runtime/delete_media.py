@@ -16,6 +16,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collection_view as view
+from threads_runner import attempts
 from threads_runner.deletion_state import require_no_pending
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
 from threads_runner.recovery import definitely_dead
@@ -160,12 +161,19 @@ def plan(root, data, lock=None):
     snapshot = view.read_snapshot(root, owned_lock=lock)
     if snapshot["snapshot"]["stateStatus"] != "read_only":
         raise DeleteError("deletion_state_unavailable", "기존 저장 상태 DB를 확인한 뒤 삭제하세요.")
+    if any(item.get("code") == "drafts_unavailable" for item in snapshot["snapshot"].get("warnings", [])):
+        raise DeleteError("drafts_unavailable", "등록 초안의 파일 선택 정보를 읽을 수 없습니다. 기존 초안을 확인한 뒤 삭제하세요.")
     post = next((p for p in snapshot["snapshot"]["posts"] if p["key"] == data["postKey"]), None)
     if not post: raise DeleteError("post_missing", "게시글을 찾을 수 없습니다. 목록을 새로고침하세요.")
+    if data["kind"] == "edit" and data["mediaId"] in post.get("draft", {}).get("mediaIds", []):
+        raise DeleteError("draft_media_in_use", "등록 초안에 포함된 편집본입니다. 초안을 수정해 이 항목을 뺀 뒤 삭제하세요.")
     files, edits, jobs = {}, [], []
     with closing(open_db(root)) as db:
-        if data["kind"] == "post" and db.execute("SELECT 1 FROM jobs WHERE status IN ('planned','running','staged') LIMIT 1").fetchone():
-            raise DeleteError("pending_download_plan", "미완료 다운로드 계획이 있습니다. 계획을 완료·확인한 뒤 게시글을 삭제하세요.")
+        if data["kind"] == "post":
+            retired = attempts.retired_ids(db)
+            if any(row['job_id'] not in retired for row in db.execute(
+                    "SELECT job_id FROM jobs WHERE status IN ('planned','running','staged')")):
+                raise DeleteError("pending_download_plan", "미완료 다운로드 계획이 있습니다. 계획을 완료·확인한 뒤 게시글을 삭제하세요.")
         library = json.loads(db.execute("SELECT value FROM meta WHERE key='library_id'").fetchone()[0])
         removed = {row[0] for row in db.execute("SELECT edit_id FROM edit_deletions")} if has_table(db, "edit_deletions") else set()
         if has_table(db, "media_edits"):
@@ -194,7 +202,7 @@ def plan(root, data, lock=None):
                     raise DeleteError("invalid_local_path", "미완료 파일의 연결을 확인해야 합니다.")
                 files[row["part_rel"]] = file_record(root, row["part_rel"])
     result = {"kind": data["kind"], "postKey": data["postKey"], "account": post["account"], "postId": post["postId"],
-        "mediaId": data.get("mediaId"), "libraryId": library, "files": sorted(files.values(), key=lambda item: item["path"]),
+        "mediaId": data.get("mediaId"), "libraryId": library, "draft": post.get("draft"), "files": sorted(files.values(), key=lambda item: item["path"]),
         "books": workbook_targets(root, post["account"], post["postId"]) if data["kind"] == "post" else [],
         "edits": edits, "jobs": jobs}
     result["fingerprint"] = digest(encoded(result))
@@ -282,6 +290,11 @@ def operation_status(root, document):
 def apply_tombstone(root, document):
     with closing(open_db(root, "rw")) as db, db:
         if document["kind"] == "post":
+            # The draft belongs to the approved whole-post deletion. Keep removal
+            # in the same transaction as the tombstone and commit receipt.
+            view.read_drafts(root, db=db)
+            if view.draft_schema(db):
+                db.execute("DELETE FROM post_drafts WHERE account=? AND post_id=?", (document["account"], document["postId"]))
             db.execute("CREATE TABLE IF NOT EXISTS post_deletions(account TEXT NOT NULL,post_id TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(account,post_id))")
             db.execute("INSERT INTO post_deletions VALUES(?,?,?)", (document["account"], document["postId"], document["deletedAt"]))
         else:

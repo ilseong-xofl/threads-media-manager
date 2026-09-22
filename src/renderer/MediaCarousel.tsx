@@ -75,6 +75,7 @@ export function MediaCarousel({
   disabled = false,
   onDeleteEdit,
   deleteDisabled = false,
+  includeEditsInType = false,
 }: {
   items: Attachment[];
   ordinal?: number;
@@ -86,12 +87,13 @@ export function MediaCarousel({
   disabled?: boolean;
   onDeleteEdit?(mediaId: string): void;
   deleteDisabled?: boolean;
+  includeEditsInType?: boolean;
 }) {
   const found = items.findIndex((item) => item.ordinal === ordinal);
   const index = found < 0 ? 0 : found;
   const item = items[index];
   const multiple = items.length > 1;
-  const originals = items.filter((attachment) => !attachment.editType);
+  const originals = includeEditsInType ? items : items.filter((attachment) => !attachment.editType);
   const hasImages = originals.some((attachment) => attachment.kind === 'image');
   const hasVideos = originals.some((attachment) => attachment.kind === 'video');
   const mediaTypeLabel = hasVideos ? (hasImages ? '영상 & 이미지' : '영상') : '이미지';

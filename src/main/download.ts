@@ -16,6 +16,7 @@ interface Result {
   nextAllowedAt: number | null;
   problem: Problem | null;
   recoverable: boolean;
+  resumable?: boolean;
   batch?: DownloadBatch | null;
 }
 interface Progress {
@@ -118,7 +119,8 @@ export function parseResult(value: unknown): Result {
       value.problem === null ||
       (object(value.problem) && text(value.problem.code) && text(value.problem.message))
     ) ||
-    typeof value.recoverable !== 'boolean'
+    typeof value.recoverable !== 'boolean' ||
+    (value.resumable !== undefined && typeof value.resumable !== 'boolean')
   )
     return invalid();
   if (value.target !== undefined && value.target !== null && !target(value.target))
@@ -154,6 +156,7 @@ export function parseResult(value: unknown): Result {
     target: cleanTarget,
     plan,
     recoverable: raw.recoverable,
+    resumable: raw.resumable ?? false,
     nextAllowedAt: raw.nextAllowedAt,
     problem: raw.problem ? { code: raw.problem.code, message: raw.problem.message } : null,
     ...(value.batch !== undefined ? { batch: batchProgress(value.batch) } : {}),
@@ -189,7 +192,7 @@ export function launchWorker(project: string): Launch {
       let result: Result | undefined;
       let failure: ViewError | undefined;
       let timeout: ReturnType<typeof setTimeout>;
-      const batch = input.command === 'batch';
+      const batch = input.command === 'batch' || input.command === 'resume';
       let outputWindow = Date.now();
       const armTimeout = () => {
         clearTimeout(timeout);
@@ -349,6 +352,24 @@ export class DownloadController {
     this.run({ command: 'batch' }, true);
     return this.view;
   }
+  inspect(root: string): DownloadView {
+    if (this.active) return this.view;
+    // A read-only refresh is not a new download outcome: preserve dismissed
+    // notices and the completion timer for the same library.
+    if (root !== this.root) this.view = { ...empty(), revision: this.view.revision + 1 };
+    this.root = root;
+    this.plan = null;
+    this.run({ command: 'status' }, false);
+    return this.view;
+  }
+  resume(root: string): DownloadView {
+    if (this.active) return this.view;
+    this.root = root;
+    this.plan = null;
+    this.view = { ...empty(), phase: 'recovering', revision: this.view.revision + 1 };
+    this.run({ command: 'resume' }, true);
+    return this.view;
+  }
   recover(root: string): DownloadView {
     if (this.active) return this.view;
     this.root = root;
@@ -390,18 +411,25 @@ export class DownloadController {
           ...this.view,
           target: result.target ?? this.view.target,
           nextAllowedAt: result.nextAllowedAt,
-          problem: result.problem,
+          problem:
+            input.command === 'status' && this.view.problem?.code === result.problem?.code
+              ? this.view.problem
+              : result.problem,
           recoverable: result.recoverable,
+          resumable: result.resumable ?? false,
           batch: result.batch ?? this.view.batch,
-          phase: result.problem
-            ? 'blocked'
-            : input.command === 'preview'
-              ? this.plan
-                ? 'ready'
-                : 'blocked'
-              : input.command === 'download' || input.command === 'batch'
-                ? 'complete'
-                : 'idle',
+          phase:
+            result.problem || result.recoverable || result.resumable
+              ? 'blocked'
+              : input.command === 'preview'
+                ? this.plan
+                  ? 'ready'
+                  : 'blocked'
+                : ['download', 'batch', 'resume'].includes(String(input.command))
+                  ? 'complete'
+                  : input.command === 'status' && this.view.phase === 'complete'
+                    ? 'complete'
+                    : 'idle',
         };
       } catch (error) {
         this.plan = null;
@@ -431,7 +459,10 @@ export class DownloadController {
         }
         // Publish a terminal state only after the saved library is refreshed.
         // stop/shutdown during refresh must not leave an inactive 'stopping' view.
-        this.view = { ...(outcome ?? this.view), revision: this.view.revision + 1 };
+        this.view = {
+          ...(outcome ?? this.view),
+          revision: this.view.revision + (input.command === 'status' ? 0 : 1),
+        };
         this.completion = null;
       }
     })();

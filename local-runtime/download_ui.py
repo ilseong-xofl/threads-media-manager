@@ -49,6 +49,14 @@ def watch_input(stopped):
 
 def execute(root, data, cancel, *, transfer=None, output=emit):
     command = data.get('command')
+    if command == 'status':
+        if set(data) != {'command'}:
+            raise StateError('invalid_request', '상태 조회는 별도 입력을 받지 않습니다.')
+        return recovery.read_status(root)
+    if command in {'resume', 'continue'}:
+        if set(data) != {'command'}:
+            raise StateError('invalid_request', '기존 다운로드 대상만 이어서 처리할 수 있습니다.')
+        return batch.run(root, cancel, transfer=transfer, output=output, resume_requested=True)
     if command == 'batch':
         if set(data) != {'command'}:
             raise StateError('invalid_request', '전체 다운로드는 앱에서 현재 원본으로 계획합니다.')

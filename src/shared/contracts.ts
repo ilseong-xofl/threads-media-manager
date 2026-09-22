@@ -6,7 +6,7 @@ export const IPC = {
   downloadStatus: 'tmm:download:status',
   downloadPrepare: 'tmm:download:prepare',
   downloadStart: 'tmm:download:start',
-  downloadStop: 'tmm:download:stop',
+  downloadResume: 'tmm:download:resume',
   downloadRecover: 'tmm:download:recover',
   exportPost: 'tmm:post:export',
   saveMediaEdit: 'tmm:media:edit',
@@ -14,6 +14,15 @@ export const IPC = {
   recoverDeletions: 'tmm:media:delete-recover',
   savePostComment: 'tmm:post:comment',
   openPostLink: 'tmm:post:open-link',
+  savePostDraft: 'tmm:post:draft',
+  deletePostDraft: 'tmm:post:draft-delete',
+  exportPostDraft: 'tmm:post:draft-export',
+  generateCaption: 'tmm:caption:generate',
+  cancelCaption: 'tmm:caption:cancel',
+  libraryRoot: 'tmm:library:root',
+  backupDatabase: 'tmm:library:backup',
+  restoreDatabase: 'tmm:library:restore',
+  reconnectLibrary: 'tmm:library:reconnect',
 } as const;
 export interface Problem {
   code: string;
@@ -52,7 +61,39 @@ export interface Post {
   attachments: Attachment[];
   edits?: Attachment[];
   comment?: PostComment;
+  draft?: PostDraft;
 }
+export interface PostDraft {
+  caption: string;
+  mediaIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+}
+export interface SavePostDraftInput {
+  postKey: string;
+  caption: string;
+  mediaIds: string[];
+  expectedRevision: number | null;
+}
+export type PostDraftResult =
+  | { status: 'saved'; draft: PostDraft; view: CollectionView }
+  | { status: 'error'; problem: Problem };
+export interface PostDraftActionInput {
+  postKey: string;
+  expectedRevision: number;
+}
+export type DeletePostDraftResult = MediaDeleteResult;
+export type CaptionLanguage = 'en' | 'ko' | 'ja';
+export interface GenerateCaptionInput {
+  postKey: string;
+  mediaIds: string[];
+  language: CaptionLanguage;
+}
+export type GenerateCaptionResult =
+  | { status: 'generated'; captions: [string, string, string] }
+  | { status: 'cancelled' }
+  | { status: 'error'; problem: Problem };
 export interface PostComment {
   caption: string;
   link: string;
@@ -90,14 +131,23 @@ export interface ThreadsMediaApi {
   downloadStatus(): Promise<DownloadView>;
   prepareDownload(account: string): Promise<DownloadView>;
   startDownload(): Promise<DownloadView>;
-  stopDownload(): Promise<DownloadView>;
+  resumeDownloads(): Promise<DownloadView>;
   recoverDownloads(): Promise<DownloadView>;
+  libraryRoot(): Promise<string | null>;
+  backupDatabase(): Promise<LibraryMaintenanceResult>;
+  restoreDatabase(): Promise<LibraryMaintenanceResult>;
+  reconnectLibrary(): Promise<LibraryMaintenanceResult>;
   exportPost(postKey: string): Promise<PostExportResult>;
   saveMediaEdit(input: MediaEditInput): Promise<MediaEditResult>;
   deleteMedia(input: MediaDeleteInput): Promise<MediaDeleteResult>;
   recoverDeletions(): Promise<MediaDeleteResult>;
   savePostComment(input: SavePostCommentInput): Promise<PostCommentResult>;
   openPostLink(input: OpenPostLinkInput): Promise<PostLinkResult>;
+  savePostDraft(input: SavePostDraftInput): Promise<PostDraftResult>;
+  deletePostDraft(input: PostDraftActionInput): Promise<DeletePostDraftResult>;
+  exportPostDraft(input: PostDraftActionInput): Promise<PostExportResult>;
+  generateCaption(input: GenerateCaptionInput): Promise<GenerateCaptionResult>;
+  cancelCaption(): Promise<void>;
 }
 
 export type MediaDeleteInput =
@@ -160,8 +210,23 @@ export interface DownloadView {
   nextAllowedAt: number | null;
   problem: Problem | null;
   recoverable: boolean;
+  resumable?: boolean;
   received: number;
   total: number | null;
   revision: number;
   batch?: DownloadBatch | null;
 }
+
+export type LibraryMaintenanceOperation = 'backup' | 'restore' | 'reconnect';
+export type LibraryMaintenanceResult =
+  | {
+      status: 'complete';
+      operation: LibraryMaintenanceOperation;
+      view: CollectionView;
+      filePath?: string;
+      automaticBackupPath?: string;
+      restoreMode?: 'metadata' | 'full';
+      historyReviewRequired?: boolean;
+    }
+  | { status: 'cancelled' }
+  | { status: 'error'; problem: Problem };

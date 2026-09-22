@@ -60,16 +60,14 @@ def selected_post(snapshot, key):
         raise CommentError("comment_state_unavailable", "기존 저장 상태 DB를 확인한 뒤 댓글 정보를 저장하세요.")
     if any(warning.get("code") == "comments_unavailable" for warning in snapshot["snapshot"].get("warnings", [])):
         raise CommentError("comments_unavailable", "기존 댓글 정보를 읽을 수 없습니다. 덮어쓰지 않도록 저장 상태를 먼저 확인하세요.")
+    if any(warning.get("code") == "drafts_unavailable" for warning in snapshot["snapshot"].get("warnings", [])):
+        raise CommentError("drafts_unavailable", "등록 게시글을 확인하지 못했습니다. 새로고침한 뒤 댓글을 저장하세요.")
     matches = [post for post in snapshot["snapshot"]["posts"] if post["key"] == key]
     if len(matches) != 1:
         raise CommentError("post_missing", "게시글을 찾을 수 없습니다. 목록을 새로고침하세요.")
     post = matches[0]
-    registered = {item["id"]: item for item in snapshot["files"]}
-    if not post["attachments"] or any(
-        attachment.get("status") != "saved" or not registered.get(attachment.get("mediaId")) or
-        registered[attachment["mediaId"]]["kind"] != attachment["kind"] for attachment in post["attachments"]
-    ):
-        raise CommentError("attachments_incomplete", "게시글의 원본 이미지와 영상을 모두 저장한 뒤 댓글 정보를 등록하세요.")
+    if not post.get("draft"):
+        raise CommentError("comment_draft_missing", "게시글을 등록한 뒤 댓글 정보를 저장하세요.")
     return post
 
 
@@ -119,6 +117,14 @@ def execute(data, *, check=lambda: False):
                 deleted, _ = database_deletions(root, db)
                 if (post["account"], post["postId"]) in deleted:
                     raise CommentError("post_missing", "삭제된 게시글에는 댓글 정보를 저장할 수 없습니다.")
+                # Recheck registration inside the write transaction; source media
+                # availability is independent of a registered post's text comment.
+                try:
+                    draft = view.read_drafts(root, excluded_posts=deleted, db=db).get((post["account"], post["postId"]))
+                except (ValueError, sqlite3.Error, TypeError) as exc:
+                    raise CommentError("drafts_unavailable", "등록 게시글을 확인하지 못했습니다. 새로고침한 뒤 댓글을 저장하세요.") from exc
+                if draft is None:
+                    raise CommentError("comment_draft_missing", "게시글을 등록한 뒤 댓글 정보를 저장하세요.")
                 cancelled(check)
                 comment = {"caption": caption, "link": link, "updatedAt": datetime.now(timezone.utc).isoformat()}
                 write_comment(db, post, comment)

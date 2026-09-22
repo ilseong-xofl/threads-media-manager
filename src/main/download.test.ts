@@ -678,3 +678,122 @@ describe('batch worker response boundary', () => {
     expect(() => parseResult({ ...batchResult(), batch: invalidBatch })).toThrow(ViewError);
   });
 });
+
+describe('persistent download recovery', () => {
+  it('reads interrupted state without writing or automatically starting a transfer', async () => {
+    const launch = vi.fn<Launch>(() => ({
+      cancel: vi.fn(),
+      result: Promise.resolve({
+        target: null,
+        nextAllowedAt: 2_000_000_000,
+        problem: { code: 'interrupted', message: '갑작스러운 종료로 다운로드가 중단됐습니다.' },
+        recoverable: true,
+        resumable: true,
+        batch: {
+          totalPosts: 1,
+          completedPosts: 0,
+          totalFiles: 3,
+          completedFiles: 1,
+          totalRounds: 1,
+          currentRound: 1,
+          deferredPosts: 0,
+        },
+      }),
+    }));
+    const refresh = vi.fn();
+    const controller = new DownloadController(launch, refresh);
+    controller.inspect('/library');
+    await controller.settled();
+    expect(launch).toHaveBeenCalledExactlyOnceWith(
+      '/library',
+      { command: 'status' },
+      expect.any(Function),
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    expect(controller.view).toMatchObject({
+      phase: 'blocked',
+      recoverable: true,
+      resumable: true,
+      nextAllowedAt: 2_000_000_000,
+      batch: { completedFiles: 1 },
+    });
+  });
+
+  it('resumes only on the explicit recovery action, once, then refreshes saved files', async () => {
+    const pending = deferred<Result>();
+    const launch = vi.fn<Launch>(() => ({ result: pending.promise, cancel: vi.fn() }));
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const controller = new DownloadController(launch, refresh);
+    controller.resume('/library');
+    controller.resume('/library');
+    controller.startAll('/library');
+    await Promise.resolve();
+    expect(launch).toHaveBeenCalledExactlyOnceWith(
+      '/library',
+      { command: 'resume' },
+      expect.any(Function),
+    );
+    pending.resolve({
+      target: null,
+      nextAllowedAt: null,
+      problem: null,
+      recoverable: false,
+      resumable: false,
+    });
+    await controller.settled();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(controller.view).toMatchObject({ phase: 'complete', resumable: false });
+  });
+
+  it('rejects malformed resumability instead of exposing an unsafe action', () => {
+    expect(() => parseResult({ ...ready(), resumable: 'yes' })).toThrow();
+  });
+});
+
+describe('read-only status refresh notices', () => {
+  it('preserves the outcome identity and detail of a dismissed interruption', async () => {
+    const result: Result = {
+      target: null,
+      nextAllowedAt: null,
+      problem: { code: 'interrupted', message: 'Interrupted' },
+      recoverable: false,
+      resumable: true,
+    };
+    const controller = new DownloadController(
+      () => ({ result: Promise.resolve(result), cancel: vi.fn() }),
+      vi.fn(),
+    );
+    controller.inspect('/library');
+    await controller.settled();
+    const first = { ...controller.view };
+    result.problem = { code: 'interrupted', message: 'Generic persisted message' };
+    expect(controller.inspect('/library')).toEqual(first);
+    await controller.settled();
+    expect(controller.view).toEqual(first);
+    controller.inspect('/other');
+    await controller.settled();
+    expect(controller.view.revision).toBeGreaterThan(first.revision);
+  });
+
+  it('does not restart a completion toast on ordinary refresh', async () => {
+    const controller = new DownloadController(
+      () => ({
+        result: Promise.resolve({
+          target: null,
+          nextAllowedAt: null,
+          problem: null,
+          recoverable: false,
+          resumable: false,
+        }),
+        cancel: vi.fn(),
+      }),
+      vi.fn(),
+    );
+    controller.startAll('/library');
+    await controller.settled();
+    const first = { ...controller.view };
+    controller.inspect('/library');
+    await controller.settled();
+    expect(controller.view).toEqual(first);
+  });
+});

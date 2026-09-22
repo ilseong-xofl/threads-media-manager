@@ -6,6 +6,7 @@ import type {
   PostCommentResult,
   SavePostCommentInput,
 } from '../shared/contracts';
+import { validPostDraft } from '../shared/post-draft';
 import { ViewError } from './collection';
 import { pythonCommand } from './python';
 
@@ -193,6 +194,11 @@ export class PostCommentController {
           'comments_unavailable',
           '기존 댓글을 확인하지 못했습니다. 새로고침한 뒤 저장하세요.',
         );
+      if (before.snapshot?.warnings.some((warning) => warning.code === 'drafts_unavailable'))
+        throw new ViewError(
+          'drafts_unavailable',
+          '등록 게시글을 확인하지 못했습니다. 새로고침한 뒤 댓글을 저장하세요.',
+        );
       const post =
         before.snapshot?.root === root
           ? before.snapshot.posts.find((item) => item.key === input.postKey)
@@ -202,6 +208,8 @@ export class PostCommentController {
           'comment_source',
           '댓글을 저장할 게시글을 찾을 수 없습니다. 목록을 새로고침하세요.',
         );
+      if (!validPostDraft(post.draft))
+        throw new ViewError('comment_draft_missing', '게시글을 등록한 뒤 댓글 정보를 저장하세요.');
       this.job = this.launch({ root, ...input });
       const comment = await this.job.result;
       this.job = null;

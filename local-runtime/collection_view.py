@@ -26,7 +26,7 @@ from threads_source import excel_input
 from threads_source.files import SourceError, collection_root, read_stable, safe_path, parse_json, CollectionLock
 from threads_source.excel_input import InputError
 from threads_runner.state import APP_ID, SCHEMA_VERSION, StateError
-from threads_runner import deletion_state
+from threads_runner import attempts, deletion_state
 
 UUID = re.compile(r"[0-9a-f]{32}")
 FILE = re.compile(r"media/files/[0-9a-f]{32}/([0-9a-f]{32})\.(jpg|jpeg|png|webp|gif|mp4|webm|mov)")
@@ -112,13 +112,16 @@ def read_state(root, excluded_posts=None):
             raise SourceError("library_mismatch", "저장된 DB와 미디어 폴더의 연결이 다릅니다.")
         if not UUID.fullmatch(meta.get("library_id", "")) or meta.get("root") != str(root):
             raise SourceError("root_changed", "기존 라이브러리의 폴더 연결을 확인해야 합니다.")
-        rows = db.execute("""SELECT m.*, j.status,j.final_rel,j.size,j.sha256,j.error_code
+        retired = attempts.retired_ids(db)
+        rows = db.execute("""SELECT m.*, j.job_id,j.status,j.final_rel,j.size,j.sha256,j.error_code
             FROM media m LEFT JOIN jobs j ON j.media_id=m.media_id
             ORDER BY (j.status='complete') DESC, j.updated_at DESC, j.job_id DESC""").fetchall()
         deleted, _ = deletion_state.database_deletions(root, db)
         deleted |= set(excluded_posts or ())
     links, files = {}, []
     for row in rows:
+        if row["job_id"] in retired:
+            continue
         key = row["account"], row["post_id"], row["ordinal"]
         if key[:2] in deleted:
             continue
@@ -253,6 +256,75 @@ def read_comments(root, excluded_posts=None):
     return result
 
 
+POST_DRAFT_COLUMNS = ("account", "post_id", "caption", "media_ids_json", "created_at", "updated_at", "revision")
+MAX_DRAFT_REVISION = 9_007_199_254_740_991
+
+
+def draft_schema(db):
+    table = db.execute("SELECT type FROM sqlite_master WHERE name='post_drafts'").fetchone()
+    if not table: return False
+    if table[0] != "table": raise ValueError("Invalid draft table")
+    columns = db.execute("PRAGMA table_info(post_drafts)").fetchall()
+    if (tuple(row[1] for row in columns) != POST_DRAFT_COLUMNS or
+            tuple(row[2].upper() for row in columns) != ("TEXT",)*6+("INTEGER",) or
+            tuple(row[5] for row in columns) != (1, 2, 0, 0, 0, 0, 0) or
+            db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name='post_drafts'").fetchone()):
+        raise ValueError("Invalid draft schema")
+    return True
+
+
+def draft_caption(value):
+    if (not isinstance(value, str) or len(value.encode("utf-16-le"))//2 > 10000 or
+            any(ord(char) < 32 and char not in "\t\n\r" for char in value) or "\x7f" in value):
+        raise ValueError("Invalid draft caption")
+    return value
+
+
+def draft_media_ids(value):
+    if (not isinstance(value, list) or not 1 <= len(value) <= 100 or
+            any(not isinstance(item, str) or not UUID.fullmatch(item) for item in value) or len(set(value)) != len(value)):
+        raise ValueError("Invalid draft media selection")
+    return value
+
+
+def _read_drafts(db, excluded_posts=None):
+    if not draft_schema(db): return {}
+    result = {}
+    for account, post_id, caption, raw_ids, created, updated, revision in db.execute(
+            "SELECT account,post_id,caption,media_ids_json,created_at,updated_at,revision FROM post_drafts"):
+        if not isinstance(account, str) or not account or not isinstance(post_id, str) or not post_id:
+            raise ValueError("Invalid draft identity")
+        key = account, post_id
+        if key in (excluded_posts or ()): continue
+        if key in result or not isinstance(raw_ids, str) or len(raw_ids) > 16384:
+            raise ValueError("Invalid draft selection record")
+        draft_caption(caption)
+        media_ids = draft_media_ids(json.loads(raw_ids))
+        dates = []
+        for value in (created, updated):
+            if (not isinstance(value, str) or len(value) > 64 or
+                    not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)", value)):
+                raise ValueError("Invalid draft date")
+            date = datetime.fromisoformat(value)
+            if date.tzinfo is None or date.utcoffset().total_seconds() != 0:
+                raise ValueError("Invalid draft timezone")
+            dates.append(date)
+        if dates[1] < dates[0] or type(revision) is not int or not 1 <= revision <= MAX_DRAFT_REVISION:
+            raise ValueError("Invalid draft revision")
+        result[key] = {"caption": caption, "mediaIds": media_ids, "createdAt": created, "updatedAt": updated, "revision": revision}
+    return result
+
+
+def read_drafts(root, excluded_posts=None, *, db=None):
+    """Keep selected IDs even when files are missing, so a saved draft remains editable."""
+    if db is not None: return _read_drafts(db, excluded_posts)
+    path = safe_path(root, "state/state.db", require_file=True)
+    with closing(sqlite3.connect(path.as_uri()+"?mode=ro&immutable=1", uri=True, timeout=0)) as connection:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        return _read_drafts(connection, excluded_posts)
+
+
 def read_snapshot(path, *, owned_lock=None):
     root = collection_root(Path(path))
     idle(root, owned_lock)
@@ -330,7 +402,7 @@ def read_snapshot(path, *, owned_lock=None):
             post["reasons"].append("attachment_source_missing")
         post["attachments"].append({"ordinal": key[2], "addressStatus": "missing", "observedAt": None, **link})
         post["attachments"].sort(key=lambda item: item["ordinal"])
-    edits, comments = {}, {}
+    edits, comments, drafts = {}, {}, {}
     if state_status == "read_only":
         try:
             edits, edit_files, edit_warnings = read_edits(root, links, excluded_posts)
@@ -342,12 +414,18 @@ def read_snapshot(path, *, owned_lock=None):
             comments = read_comments(root, excluded_posts)
         except (SourceError, sqlite3.Error, ValueError, OSError, TypeError, KeyError):
             warnings.append({"code": "comments_unavailable", "message": "저장된 댓글 정보를 읽을 수 없습니다. 기존 댓글을 보존하려면 저장 상태를 확인하세요."})
+        try:
+            drafts = read_drafts(root, excluded_posts)
+        except (SourceError, sqlite3.Error, ValueError, OSError, TypeError, KeyError):
+            warnings.append({"code": "drafts_unavailable", "message": "등록 초안을 읽을 수 없습니다. 기존 초안을 보존하려면 저장 상태를 확인하세요."})
     for post in posts:
         after = max((item["ordinal"] for item in post["attachments"]), default=0)
         post["edits"] = [{**item, "ordinal": after + index} for index, item in
                          enumerate(edits.get((post["account"], post["postId"]), []), 1)]
         if (post["account"], post["postId"]) in comments:
             post["comment"] = comments[(post["account"], post["postId"])]
+        if (post["account"], post["postId"]) in drafts:
+            post["draft"] = drafts[(post["account"], post["postId"])]
     if excel_input.load_collection(root)["sources"] != source["sources"]:
         raise SourceError("source_changed", "읽는 중 원본 파일 구성이 변경되었습니다.")
     if state_stamp is not None and state_signature(root) != state_stamp:

@@ -57,6 +57,13 @@ function post(): Post {
     reasons: [],
     source: 'results/synthetic.xlsx',
     attachments: [],
+    draft: {
+      caption: 'Registered caption',
+      mediaIds: ['a'.repeat(32)],
+      createdAt: '2026-09-22T09:00:00Z',
+      updatedAt: '2026-09-22T09:00:00Z',
+      revision: 1,
+    },
   };
 }
 function view(saved = false): CollectionView {
@@ -203,28 +210,78 @@ describe('comment process ownership', () => {
     expect(refresh.mock.calls).toEqual([[root], [root]]);
     expect(controller.active).toBe(false);
   });
-  it.each(['root', 'post', 'read-error', 'recovery', 'comments-unavailable'] as const)(
-    'rejects invalid %s before launching a write',
-    async (reason) => {
+  it.each([
+    'root',
+    'post',
+    'read-error',
+    'recovery',
+    'comments-unavailable',
+    'drafts-unavailable',
+  ] as const)('rejects invalid %s before launching a write', async (reason) => {
+    const initial = view();
+    if (reason === 'root') initial.snapshot!.root = '/other';
+    if (reason === 'post') initial.snapshot!.posts = [];
+    if (reason === 'read-error') initial.error = { code: 'read_failed', message: 'Failed.' };
+    if (reason === 'recovery')
+      initial.snapshot!.warnings.push({
+        code: 'deletion_recovery_required',
+        message: 'Recovery needed.',
+      });
+    if (reason === 'comments-unavailable')
+      initial.snapshot!.warnings.push({
+        code: 'comments_unavailable',
+        message: 'Unknown existing comment.',
+      });
+    if (reason === 'drafts-unavailable')
+      initial.snapshot!.warnings.push({
+        code: 'drafts_unavailable',
+        message: 'Unknown existing registration.',
+      });
+    const { controller, launch } = setup(initial);
+    expect((await controller.save(root, input())).status).toBe('error');
+    expect(launch).not.toHaveBeenCalled();
+  });
+  it.each(['missing', 'invalid'] as const)(
+    'requires a valid registration before saving a comment: %s',
+    async (state) => {
       const initial = view();
-      if (reason === 'root') initial.snapshot!.root = '/other';
-      if (reason === 'post') initial.snapshot!.posts = [];
-      if (reason === 'read-error') initial.error = { code: 'read_failed', message: 'Failed.' };
-      if (reason === 'recovery')
-        initial.snapshot!.warnings.push({
-          code: 'deletion_recovery_required',
-          message: 'Recovery needed.',
-        });
-      if (reason === 'comments-unavailable')
-        initial.snapshot!.warnings.push({
-          code: 'comments_unavailable',
-          message: 'Unknown existing comment.',
-        });
+      if (state === 'missing') delete initial.snapshot!.posts[0].draft;
+      else initial.snapshot!.posts[0].draft!.revision = 0;
       const { controller, launch } = setup(initial);
-      expect((await controller.save(root, input())).status).toBe('error');
+      expect(await controller.save(root, input())).toMatchObject({
+        status: 'error',
+        problem: { code: 'comment_draft_missing' },
+      });
       expect(launch).not.toHaveBeenCalled();
     },
   );
+  it('saves comments on registered posts with missing source files without changing the draft', async () => {
+    const initial = view();
+    initial.snapshot!.posts[0].attachments = [
+      {
+        ordinal: 1,
+        kind: 'image',
+        addressStatus: '',
+        observedAt: null,
+        status: 'review',
+        reason: 'local_file_unavailable',
+        mediaId: 'a'.repeat(32),
+        localUrl: null,
+      },
+    ];
+    const after = structuredClone(initial);
+    after.snapshot!.posts[0].comment = comment();
+    const { controller, refresh, launch } = setup(initial);
+    refresh.mockReset().mockResolvedValueOnce(initial).mockResolvedValueOnce(after);
+    expect(await controller.save(root, input())).toEqual({
+      status: 'saved',
+      comment: comment(),
+      view: after,
+    });
+    expect(launch).toHaveBeenCalledExactlyOnceWith({ root, ...input() });
+    expect(after.snapshot!.posts[0].draft).toEqual(initial.snapshot!.posts[0].draft);
+    expect(initial.snapshot!.posts[0].comment).toBeUndefined();
+  });
   it('blocks other active writes and duplicate saves before preflight and through worker completion', async () => {
     const pending = deferred<PostComment>();
     const { controller, busy, refresh, launch, cancel } = setup();

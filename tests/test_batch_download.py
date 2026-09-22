@@ -263,7 +263,7 @@ class BatchDownloadTests(unittest.TestCase):
         with patch.object(runner, "_publish", side_effect=OSError("Simulated shutdown before publish")):
             first = self.run_batch()
         self.assertTrue(first["recoverable"])
-        with patch.object(runner, "State", side_effect=lambda root: State(root, clock=self.clock)), \
+        with patch.object(runner, "State", side_effect=lambda root, **kwargs: State(root, clock=self.clock)), \
                 patch.object(runner.secrets, "randbelow", return_value=0):
             result = runner.recover(self.root)
         self.assertEqual(len(result["recovered"]), 1)

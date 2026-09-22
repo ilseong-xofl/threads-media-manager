@@ -6,7 +6,7 @@ import secrets
 import time
 import uuid
 
-from . import deletion_state, inspection, runner, transport
+from . import attempts, deletion_state, inspection, recovery, resume, runner, transport
 from .state import POLICY, State, StateError, safe_path
 
 META = "download_batch"
@@ -165,7 +165,7 @@ def _validate_plan(state, plan):
                 (target["account"], target["postId"], target["ordinal"], target["kind"], target["mediaId"])):
             raise StateError("invalid_batch", "저장된 계획과 첨부 작업의 연결이 다릅니다.")
         ids.add(target["jobId"])
-    if any(row['job_id'] not in ids for row in deletion_state.active_jobs(state, {'planned'}, deleted=deleted)):
+    if any(row['job_id'] not in ids for row in attempts.current_jobs(state, {'planned'}, deleted=deleted)):
         raise StateError("pending_plan_conflict", "저장된 회차 밖의 미완료 계획을 먼저 확인하세요.")
     _source_guard(state, plan)
 
@@ -185,7 +185,7 @@ def _persist_plan(state):
                         (number == len(rounds) or rounds[number][0]["account"] != post["account"])})
     for kind in {target["kind"] for target in targets}:
         transport.dependencies(kind)
-    existing = {row["media_id"]: row for row in deletion_state.active_jobs(state, {'planned'})}
+    existing = {row["media_id"]: row for row in attempts.current_jobs(state, {'planned'})}
     if any(media_id not in {target["mediaId"] for target in targets} for media_id in existing):
         raise StateError("pending_plan_conflict", "기존 단일 파일 계획과 이번 대상이 다릅니다. 기존 작업을 먼저 확인하세요.")
     plan = {"version": 1, "id": uuid.uuid4().hex, "policy": POLICY, "sources": data["sources"], "targets": targets,
@@ -215,7 +215,8 @@ def _persist_plan(state):
 def _result(state, plan, problem=None):
     next_allowed = state.meta("next_allowed", 0)
     return {"nextAllowedAt": next_allowed if next_allowed > state.clock() else None, "problem": problem,
-            "recoverable": bool(deletion_state.active_jobs(state, {'running', 'staged'})),
+            "recoverable": bool(attempts.current_jobs(state, {'running', 'staged'})),
+            "resumable": resume.possible({META: plan, "stop": state.meta("stop")}) and state.clock() >= state.meta("last_clock", state.clock()) - 1,
             "batch": public_batch(plan)}
 
 
@@ -227,44 +228,66 @@ def _deferred_problem(plan):
     return {"code": "posts_deferred", "message": f"다운로드 가능한 게시글을 처리했습니다. 보류 {len(plan['deferred'])}개: {detail}."}
 
 
-def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.time, sleep=time.sleep, monotonic=time.monotonic):
+def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.time, sleep=time.sleep, monotonic=time.monotonic, resume_requested=False):
     """The only entry starts on an explicit app command; opening/recovery never calls it."""
     if cancel():
         raise StateError("cancelled", "사용자 중지로 다운로드하지 않았습니다.")
-    # Read-only validation happens before opening the writer, including corrupt DB/WAL handling.
-    initial = inspection.read_status(root, clock=clock)
-    if initial["problem"]:
-        return inspection.public_status(initial)
-    source = deletion_state.load_source(root)
-    if source["errors"]:
-        raise StateError("invalid_source", "확정된 Excel 수집 자료에 검증 오류가 있습니다.")
-    # A fully saved collection is a read-only no-op, even while the last wait persists.
-    post_keys = {(post["계정명"], post["게시글ID"]) for post in source["posts"]}
-    media_keys = {(item["계정명"], item["게시글ID"]) for item in source["media"]}
-    if not any(job["status"] == "planned" for job in initial["jobs"]) and (not source["posts"] or (post_keys <= media_keys and all(
-            initial["links"].get((item["계정명"], item["게시글ID"], item["순서"]), {}).get("status") == "saved" and
-            initial["links"][(item["계정명"], item["게시글ID"], item["순서"])]["kind"] == item["종류"]
-            for item in source["media"]))):
-        return {**inspection.public_status(initial), "batch": {"totalPosts": 0, "completedPosts": 0,
-            "totalFiles": 0, "completedFiles": 0, "totalRounds": 0, "currentRound": 0, "deferredPosts": 0}}
+    if resume_requested:
+        # This explicit action may release only a provably dead download lock.
+        recovery.release_abandoned(root)
+    else:
+        # Read-only validation happens before opening the writer, including corrupt DB/WAL handling.
+        initial = inspection.read_status(root, clock=clock)
+        if initial["problem"]:
+            return inspection.public_status(initial)
+        source = deletion_state.load_source(root)
+        if source["errors"]:
+            raise StateError("invalid_source", "확정된 Excel 수집 자료에 검증 오류가 있습니다.")
+        # A fully saved collection is a read-only no-op, even while the last wait persists.
+        post_keys = {(post["계정명"], post["게시글ID"]) for post in source["posts"]}
+        media_keys = {(item["계정명"], item["게시글ID"]) for item in source["media"]}
+        if not any(job["status"] == "planned" for job in initial["jobs"]) and (not source["posts"] or (post_keys <= media_keys and all(
+                initial["links"].get((item["계정명"], item["게시글ID"], item["순서"]), {}).get("status") == "saved" and
+                initial["links"][(item["계정명"], item["게시글ID"], item["순서"])]["kind"] == item["종류"]
+                for item in source["media"]))):
+            return {**inspection.public_status(initial), "batch": {"totalPosts": 0, "completedPosts": 0,
+                "totalFiles": 0, "completedFiles": 0, "totalRounds": 0, "currentRound": 0, "deferredPosts": 0}}
     with State(root, clock=clock) as state:
-        try:
-            state.guard()
-        except StateError as exc:
-            if exc.code != "waiting":
-                raise
-        runner._unfinished(state)
         saved_stamps = {}
-        _validate_saved(state, saved_stamps)
-        plan = state.meta(META)
-        if plan and plan.get("status") != "complete":
+        if resume_requested:
+            plan = state.meta(META)
             try:
-                _validate_plan(state, plan)
-            except StateError as exc:
-                state.stop(exc.code, requires_review=True)
-                return _result(state, plan, {"code": exc.code, "message": str(exc)})
+                if not resume.possible({META: plan, "stop": state.meta("stop")}):
+                    raise StateError("resume_review_required", "현재 중단 사유 또는 다운로드 계획을 먼저 확인해야 합니다.")
+                runner.recover(root, state=state, clock=clock)
+                if cancel():
+                    raise StateError("cancelled", "앱 종료로 다운로드하지 않았습니다.")
+                plan = resume.revalidate(state, recovered_complete=True)
+            except (StateError, transport.TransferError) as exc:
+                # Keep the original stop/history on failed revalidation. Repeated
+                # clicks may inspect repaired source data, but cannot reset policy.
+                if plan:
+                    return _result(state, state.meta(META), {"code": exc.code, "message": str(exc)})
+                raise
+            if plan["status"] == "complete":
+                return _result(state, plan, _deferred_problem(plan))
         else:
-            plan = _persist_plan(state)
+            try:
+                state.guard()
+            except StateError as exc:
+                if exc.code != "waiting":
+                    raise
+            runner._unfinished(state)
+            _validate_saved(state, saved_stamps)
+            plan = state.meta(META)
+            if plan and plan.get("status") != "complete":
+                try:
+                    _validate_plan(state, plan)
+                except StateError as exc:
+                    state.stop(exc.code, requires_review=True)
+                    return _result(state, plan, {"code": exc.code, "message": str(exc)})
+            else:
+                plan = _persist_plan(state)
         last_emit = -float("inf")
 
         def emit(phase, received=0, total=None, target=None):

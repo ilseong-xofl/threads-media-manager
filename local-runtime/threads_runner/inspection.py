@@ -5,7 +5,7 @@ import sqlite3
 import time
 import json
 
-from . import deletion_state, runner, transport
+from . import attempts, deletion_state, runner, transport
 from .state import StateError, supported_policy
 
 
@@ -26,7 +26,8 @@ def read_status(root, *, clock=time.time):
             meta = {row['key']: json.loads(row['value']) for row in db.execute('SELECT * FROM meta')}
             jobs = [dict(row) for row in db.execute('SELECT j.*,m.account,m.post_id,m.ordinal,m.kind FROM jobs j JOIN media m USING(media_id)')]
             excluded_posts |= deletion_state.database_deletions(root, db)[0]
-            jobs = [job for job in jobs if (job['account'], job['post_id']) not in excluded_posts]
+            retired = attempts.retired_ids(db)
+            jobs = [job for job in jobs if (job['account'], job['post_id']) not in excluded_posts and job['job_id'] not in retired]
         if not supported_policy(meta.get('policy')):
             raise StateError('policy_mismatch', '저장된 요청 제한과 실행기 설정이 다릅니다.')
     if signature != view.state_signature(root):
@@ -45,7 +46,7 @@ def read_status(root, *, clock=time.time):
     next_allowed = meta.get('next_allowed', 0)
     return {'nextAllowedAt': next_allowed if next_allowed > now else None, 'problem': problem,
             'recoverable': any(j['status'] in {'running', 'staged'} for j in jobs),
-            'jobs': jobs, 'links': links, 'signature': signature}
+            'jobs': jobs, 'links': links, 'signature': signature, 'meta': meta}
 
 
 def candidate(post, media):
@@ -55,7 +56,17 @@ def candidate(post, media):
 
 
 def public_status(status):
-    return {key: status[key] for key in ('nextAllowedAt', 'problem', 'recoverable')}
+    from . import batch, resume
+    result = {key: status[key] for key in ('nextAllowedAt', 'problem', 'recoverable')}
+    meta = status.get('meta', {})
+    result['resumable'] = resume.possible(meta) and (result.get('problem') or {}).get('code') != 'clock_rollback'
+    plan = meta.get(batch.META)
+    if plan:
+        result['batch'] = batch.public_batch(plan)
+        cursor = plan['nextIndex']
+        if cursor < len(plan['targets']):
+            result['target'] = {key: plan['targets'][cursor][key] for key in ('account', 'postId', 'ordinal', 'kind')}
+    return result
 
 
 def preview_one(root, account, *, clock=time.time):

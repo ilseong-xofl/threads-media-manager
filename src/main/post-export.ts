@@ -1,11 +1,20 @@
 import { execFile } from 'node:child_process';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import type { CollectionView, PostExportResult } from '../shared/contracts';
-import { postExportIssue } from '../shared/post-export';
+import {
+  postDraftExportIssue,
+  postExportIssue,
+  validPostDraftActionInput,
+} from '../shared/post-export';
 import { ViewError } from './collection';
 import { pythonCommand } from './python';
 
-export type LaunchExport = (input: { root: string; postKey: string; destination: string }) => {
+export type LaunchExport = (input: {
+  root: string;
+  postKey: string;
+  destination: string;
+  expectedRevision?: number;
+}) => {
   result: Promise<void>;
   cancel(): void;
 };
@@ -100,23 +109,50 @@ export class PostExportController {
     return this.pending !== null;
   }
   export(root: string, postKey: string): Promise<PostExportResult> {
+    return this.start(() => this.run(root, postKey));
+  }
+  exportDraft(root: string, input: unknown): Promise<PostExportResult> {
+    return this.start(async () => {
+      if (!validPostDraftActionInput(input))
+        return {
+          status: 'error',
+          problem: { code: 'draft_input', message: '등록 게시글과 수정 버전을 확인하세요.' },
+        };
+      return this.run(root, input.postKey, input.expectedRevision);
+    });
+  }
+  private start(run: () => Promise<PostExportResult>): Promise<PostExportResult> {
     if (this.pending)
       return Promise.resolve({
         status: 'error',
         problem: { code: 'export_busy', message: '다른 게시글의 ZIP을 저장하고 있습니다.' },
       });
     this.cancelled = false;
-    this.pending = this.run(root, postKey).finally(() => {
+    this.pending = run().finally(() => {
       this.pending = null;
       this.job = null;
     });
     return this.pending;
   }
-  private async run(root: string, postKey: string): Promise<PostExportResult> {
+  private async run(
+    root: string,
+    postKey: string,
+    expectedRevision?: number,
+  ): Promise<PostExportResult> {
     try {
       const view = await this.refresh(root);
       if (this.cancelled) return { status: 'cancelled' };
       if (view.error) throw new ViewError(view.error.code, view.error.message);
+      if (view.snapshot?.warnings.some((item) => item.code === 'deletion_recovery_required'))
+        throw new ViewError('deletion_recovery_required', '중단된 삭제 작업을 먼저 복구하세요.');
+      if (
+        expectedRevision !== undefined &&
+        view.snapshot?.warnings.some((item) => item.code === 'drafts_unavailable')
+      )
+        throw new ViewError(
+          'drafts_unavailable',
+          '등록 게시글을 읽을 수 없습니다. 저장 상태를 확인하세요.',
+        );
       const post =
         view.snapshot?.root === root
           ? view.snapshot.posts.find((item) => item.key === postKey)
@@ -126,13 +162,24 @@ export class PostExportController {
           'export_post_missing',
           '게시글을 찾을 수 없습니다. 목록을 새로고침하세요.',
         );
-      const issue = postExportIssue(post);
+      if (expectedRevision !== undefined && post.draft?.revision !== expectedRevision)
+        throw new ViewError(
+          'draft_conflict',
+          '등록 게시글이 변경되었습니다. 최신 게시글을 다시 열어 다운로드하세요.',
+        );
+      const issue =
+        expectedRevision === undefined ? postExportIssue(post) : postDraftExportIssue(post);
       if (issue) throw new ViewError('export_media_missing', issue);
       const destination = await this.chooseDestination(archiveFileName(post.postId));
       if (this.cancelled || destination === null) return { status: 'cancelled' };
       if (!isAbsolute(destination) || extname(destination).toLowerCase() !== '.zip')
         throw new ViewError('export_destination', '.zip 확장자로 저장 위치를 선택하세요.');
-      this.job = this.launch({ root, postKey, destination });
+      this.job = this.launch({
+        root,
+        postKey,
+        destination,
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      });
       await this.job.result;
       return { status: 'saved', fileName: basename(destination) };
     } catch (error) {

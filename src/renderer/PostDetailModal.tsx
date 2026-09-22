@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Attachment, MediaEditInput, Post, SavePostCommentInput } from '../shared/contracts';
+import type { Attachment, MediaEditInput, Post } from '../shared/contracts';
 import { displayDate, postMedia } from './view-model';
 import { Icon } from './Icon';
 import { MediaCarousel } from './MediaCarousel';
 import { ImageCropEditor } from './ImageCropEditor';
 import { captureVideoFrame } from './capture-frame';
 import { VideoEditControls } from './VideoEditControls';
-import { PostCommentSection } from './PostCommentSection';
 import { PostLink } from './PostLink';
 
 export function PostDetailModal({
@@ -16,8 +15,7 @@ export function PostDetailModal({
   onClose,
   editDisabled,
   onEdit,
-  onSaveComment,
-  commentProblem,
+  onRegister,
 }: {
   post: Post;
   ordinal?: number;
@@ -25,8 +23,7 @@ export function PostDetailModal({
   onClose(): void;
   editDisabled: boolean;
   onEdit(input: MediaEditInput): Promise<Attachment | null>;
-  onSaveComment(input: SavePostCommentInput): Promise<void>;
-  commentProblem?: string;
+  onRegister(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -37,7 +34,6 @@ export function PostDetailModal({
   const pending = useRef(false);
   const [editing, setEditing] = useState(false);
   const [working, setWorking] = useState(false);
-  const [commentEditing, setCommentEditing] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; message: string } | null>(null);
   const imageEditing = editing && item?.kind === 'image' && !!item.localUrl;
   const canEdit = !!item?.mediaId && !!item.localUrl && item.status === 'saved';
@@ -73,22 +69,6 @@ export function PostDetailModal({
         message:
           error instanceof Error ? error.message : '편집본을 저장하지 못했습니다. 다시 시도하세요.',
       });
-    } finally {
-      pending.current = false;
-      setWorking(false);
-    }
-  }
-  async function saveComment(input: SavePostCommentInput) {
-    if (pending.current || editDisabled || commentProblem) {
-      throw new Error(commentProblem || '다른 작업이 끝난 뒤 저장하세요.');
-    }
-    pending.current = true;
-    setWorking(true);
-    setNotice(null);
-    try {
-      await onSaveComment(input);
-      setCommentEditing(false);
-      setNotice({ error: false, message: '댓글 정보를 저장했습니다.' });
     } finally {
       pending.current = false;
       setWorking(false);
@@ -136,12 +116,12 @@ export function PostDetailModal({
       }}
     >
       <header className="modal-header">
-        <h2 id="post-detail-title">게시글 상세</h2>
+        <h2 id="post-detail-title">{editing ? '컨텐츠 편집' : '상세 화면'}</h2>
         <button
           className="icon-button modal-close"
           ref={close}
           type="button"
-          aria-label="게시글 상세 닫기"
+          aria-label={editing ? '컨텐츠 편집 닫기' : '상세 화면 닫기'}
           disabled={working}
           onClick={onClose}
         >
@@ -202,16 +182,7 @@ export function PostDetailModal({
                 <PostLink postKey={post.key} kind="original" url={post.originalUrl} />
               </section>
             )}
-            <PostCommentSection
-              post={post}
-              editing={commentEditing}
-              onEditingChange={setCommentEditing}
-              disabled={editDisabled || editing || !!commentProblem}
-              saving={working}
-              problem={commentProblem}
-              onSave={saveComment}
-            />
-            <details className="collection-details">
+            <details className="collection-details" open>
               <summary>수집·파일 정보</summary>
               <dl className="metadata">
                 <div>
@@ -291,17 +262,29 @@ export function PostDetailModal({
               }
             />
           ) : (
-            <button
-              type="button"
-              disabled={!canEdit || editDisabled || commentEditing}
-              onClick={() => {
-                setNotice(null);
-                setEditing(true);
-              }}
-            >
-              <Icon name="edit" />
-              편집
-            </button>
+            <>
+              <button
+                type="button"
+                className="post-detail-action"
+                disabled={!canEdit || editDisabled}
+                onClick={() => {
+                  setNotice(null);
+                  setEditing(true);
+                }}
+              >
+                <Icon name="edit" />
+                편집
+              </button>
+              <button
+                type="button"
+                className="primary post-detail-action"
+                disabled={editDisabled || working}
+                onClick={onRegister}
+              >
+                <Icon name={post.draft ? 'eye' : 'plus'} />
+                {post.draft ? '보기' : '작성'}
+              </button>
+            </>
           )}
         </div>
       )}

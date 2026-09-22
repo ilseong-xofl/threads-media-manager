@@ -120,16 +120,27 @@ export function PostCommentSection({
         <div className="detail-section comment-content">
           <div className="comment-heading">
             <span>등록한 댓글</span>
-            <button
-              ref={editButton}
-              type="button"
-              onClick={openForm}
-              disabled={disabled}
-              aria-label="댓글 정보 수정"
-            >
-              <Icon name="edit" />
-              수정
-            </button>
+            <div className="comment-heading-actions">
+              <button
+                ref={editButton}
+                type="button"
+                onClick={openForm}
+                disabled={disabled}
+                aria-label="댓글 정보 수정"
+              >
+                <Icon name="edit" />
+                수정
+              </button>
+              <button
+                type="button"
+                disabled
+                aria-label="댓글 API 업로드"
+                title="API 업로드는 준비 중입니다."
+              >
+                <Icon name="upload" />
+                API 업로드
+              </button>
+            </div>
           </div>
           {post.comment.caption && <p className="caption">{post.comment.caption}</p>}
           {post.comment.link && (

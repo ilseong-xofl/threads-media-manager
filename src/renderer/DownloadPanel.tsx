@@ -29,19 +29,20 @@ export function DownloadToast({
   view,
   starting,
   enabled,
-  stop,
+  resume,
   recover,
 }: {
   view: DownloadView;
   starting: boolean;
   enabled: boolean;
-  stop(): void;
+  resume(): void;
   recover(): void;
 }) {
   const [completeVisible, setCompleteVisible] = useState(true);
   const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
   const active = activeDownload(view) || starting;
-  const attention = !!view.problem || view.recoverable || view.phase === 'blocked';
+  const attention =
+    !!view.problem || view.recoverable || view.resumable || view.phase === 'blocked';
   const complete = view.phase === 'complete' && !active && !attention;
   const dismissible = !active && (attention || view.phase === 'error');
   // Polling returns new objects. Remember the outcome, not the object identity,
@@ -52,6 +53,7 @@ export function DownloadToast({
     view.problem?.code,
     view.problem?.message,
     view.recoverable,
+    view.resumable,
   ]);
   useEffect(() => {
     if (active) setDismissedNotice(null);
@@ -133,7 +135,7 @@ export function DownloadToast({
               </p>
             )}
             {batch && batch.deferredPosts > 0 && <p>보류된 게시글 {batch.deferredPosts}개</p>}
-            {view.recoverable && (
+            {view.recoverable && !view.resumable && (
               <p>이미 받은 파일만 확인해 복구합니다. 다운로드를 다시 시도하지 않습니다.</p>
             )}
             {['downloading', 'validating', 'stopping'].includes(view.phase) && !starting && (
@@ -152,19 +154,13 @@ export function DownloadToast({
           </>
         )}
       </div>
-      <div className="download-actions">
-        {active ? (
-          <button onClick={stop} disabled={starting || view.phase === 'stopping'}>
-            중지
+      {!active && (view.resumable || view.recoverable) && (
+        <div className="download-actions">
+          <button onClick={view.resumable ? resume : recover} disabled={!enabled}>
+            {view.resumable ? '이어서 다운로드' : '파일 상태 확인'}
           </button>
-        ) : (
-          view.recoverable && (
-            <button onClick={recover} disabled={!enabled}>
-              로컬 저장 복구
-            </button>
-          )
-        )}
-      </div>
+        </div>
+      )}
     </section>
   );
 }

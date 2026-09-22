@@ -17,6 +17,10 @@ import { MediaEditController, launchMediaEdit } from './media-edit';
 import { MediaDeleteController, launchMediaDelete, mediaDeleteConfirmation } from './media-delete';
 import { PostCommentController, launchPostComment } from './post-comment';
 import { openPostLink } from './open-post-link';
+import { PostDraftController, launchPostDraft } from './post-draft';
+import { CaptionGenerator } from './caption-generator';
+import { PostDraftDeleteController, launchPostDraftDelete } from './post-draft-delete';
+import { LibraryMaintenanceController, launchLibraryMaintenance } from './library-maintenance';
 
 app.setName('Threads Media Manager');
 app.setAppUserModelId('com.threadsmediamanager.desktop');
@@ -66,17 +70,20 @@ const archives = new PostExportController(
   },
   launchExport(app.getAppPath()),
 );
-let selectingFolder = false;
+let initialFolderHint: string | undefined;
 const edits: MediaEditController = new MediaEditController(
   (root) => controller.refresh(root),
   launchMediaEdit(app.getAppPath()),
   () =>
-    selectingFolder ||
+    maintenance.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
     deletions.active ||
-    comments.active,
+    comments.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active,
 );
 const deletions: MediaDeleteController = new MediaDeleteController(
   (root) => controller.refresh(root),
@@ -90,24 +97,162 @@ const deletions: MediaDeleteController = new MediaDeleteController(
     return choice.response === 1 && !signal.aborted;
   },
   () =>
-    selectingFolder ||
+    maintenance.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
     edits.active ||
-    comments.active,
+    comments.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active,
 );
 const comments: PostCommentController = new PostCommentController(
   (root) => controller.refresh(root),
   launchPostComment(app.getAppPath()),
   () =>
-    selectingFolder ||
+    maintenance.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
     edits.active ||
-    deletions.active,
+    deletions.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active,
 );
+const drafts: PostDraftController = new PostDraftController(
+  (root) => controller.refresh(root),
+  launchPostDraft(app.getAppPath()),
+  () =>
+    maintenance.active ||
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    draftDeletions.active ||
+    captions.active,
+);
+const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
+  (root) => controller.refresh(root),
+  async (_input, signal) => {
+    if (!window || signal.aborted) return false;
+    const choice = await dialog.showMessageBox(window, {
+      type: 'warning',
+      title: '등록한 게시글 삭제',
+      message: '작성한 게시글을 삭제할까요?',
+      detail:
+        '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 원본 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.',
+      buttons: ['취소', '삭제'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      signal,
+    });
+    return choice.response === 1 && !signal.aborted;
+  },
+  launchPostDraftDelete(app.getAppPath()),
+  () =>
+    maintenance.active ||
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    drafts.active ||
+    captions.active,
+);
+const captions = new CaptionGenerator(app.getAppPath(), (root) => controller.refresh(root));
+
+const maintenance: LibraryMaintenanceController = new LibraryMaintenanceController(
+  async (root) => {
+    const view = await controller.refresh(root);
+    downloads.inspect(root);
+    await downloads.settled();
+    return view;
+  },
+  {
+    chooseBackup: async (fileName, signal) => {
+      if (!window || signal.aborted) return null;
+      const choice = await dialog.showSaveDialog(window, {
+        title: '데이터베이스 백업 저장',
+        defaultPath: join(app.getPath('documents'), fileName),
+        buttonLabel: '백업 저장',
+        filters: [{ name: 'Threads Media Manager DB 백업', extensions: ['sqlite'] }],
+        properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent'],
+        showsTagField: false,
+      });
+      return choice.canceled || signal.aborted ? null : (choice.filePath ?? null);
+    },
+    chooseRestore: async (signal) => {
+      if (!window || signal.aborted) return null;
+      const choice = await dialog.showOpenDialog(window, {
+        title: '데이터베이스 백업 선택',
+        buttonLabel: '백업 선택',
+        filters: [{ name: 'Threads Media Manager DB 백업', extensions: ['sqlite'] }],
+        properties: ['openFile', 'dontAddToRecent'],
+      });
+      return choice.canceled || signal.aborted ? null : (choice.filePaths[0] ?? null);
+    },
+    confirmRestore: async (_sourcePath, signal) => {
+      if (!window || signal.aborted) return false;
+      const choice = await dialog.showMessageBox(window, {
+        type: 'warning',
+        title: '데이터베이스 복원',
+        message: '선택한 백업에서 데이터를 복원할까요?',
+        detail:
+          '현재 DB는 먼저 별도 보관합니다. 정상 DB에서는 등록·댓글 정보를 복원하고 다운로드·삭제 이력은 유지합니다. DB가 없거나 손상된 경우에는 백업 시점으로 복원하며 다운로드를 보류합니다. 이미지·영상과 수집 Excel은 변경하지 않습니다.',
+        buttons: ['취소', '복원'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        signal,
+      });
+      return choice.response === 1 && !signal.aborted;
+    },
+    chooseReconnect: async (root, signal) => {
+      if (!window || signal.aborted) return null;
+      const choice = await dialog.showOpenDialog(window, {
+        title: root ? '작업 폴더 재연결' : '처음 사용할 작업 폴더 선택',
+        buttonLabel: '폴더 선택',
+        defaultPath: root ?? initialFolderHint,
+        properties: ['openDirectory', 'dontAddToRecent'],
+      });
+      return choice.canceled || signal.aborted ? null : (choice.filePaths[0] ?? null);
+    },
+  },
+  launchLibraryMaintenance(app.getAppPath(), app.getVersion()),
+  () =>
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active,
+);
+let downloadCloseNoticeOpen = false;
+function explainActiveDownload(): void {
+  if (!window || downloadCloseNoticeOpen) return;
+  downloadCloseNoticeOpen = true;
+  void dialog
+    .showMessageBox(window, {
+      type: 'info',
+      title: '다운로드 진행 중',
+      message: '다운로드가 끝난 뒤 앱을 종료할 수 있습니다.',
+      buttons: ['확인'],
+      noLink: true,
+    })
+    .finally(() => {
+      downloadCloseNoticeOpen = false;
+    });
+}
+
 let closing = false;
 function deletionNeedsRecovery(): boolean {
   return (
@@ -144,22 +289,31 @@ function createWindow(): void {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
   window.once('ready-to-show', () => window?.show());
   window.on('close', (event) => {
+    if (downloads.active) {
+      event.preventDefault();
+      explainActiveDownload();
+      return;
+    }
     if (
-      (!downloads.active &&
+      (!maintenance.active &&
+        !downloads.active &&
         !archives.active &&
         !edits.active &&
         !deletions.active &&
-        !comments.active) ||
+        !(comments.active || drafts.active || draftDeletions.active || captions.active)) ||
       closing
     )
       return;
     event.preventDefault();
     void Promise.all([
-      downloads.shutdown(),
+      maintenance.shutdown(),
       archives.shutdown(),
       edits.shutdown(),
       deletions.shutdown(),
       comments.shutdown(),
+      drafts.shutdown(),
+      draftDeletions.shutdown(),
+      captions.cancelAndWait(),
     ]).finally(() => {
       closing = true;
       window?.close();
@@ -197,10 +351,20 @@ if (!app.requestSingleInstanceLock()) {
           !app.isPackaged && process.env.TMM_SETTINGS_PATH
             ? process.env.TMM_SETTINGS_PATH
             : join(homedir(), '.threads-media-manager', 'settings.json');
-        const root =
-          (await readRootSetting(join(userData, 'view-settings.json'))) ??
-          (await readRootSetting(settings));
-        if (root) await controller.refresh(root);
+        const root = await readRootSetting(join(userData, 'view-settings.json'));
+        if (!root) {
+          // Collector settings are a picker hint, not the app's first-use choice.
+          try {
+            initialFolderHint = (await readRootSetting(settings)) ?? undefined;
+          } catch {
+            initialFolderHint = undefined;
+          }
+        }
+        if (root) {
+          await controller.refresh(root);
+          downloads.inspect(root);
+          await downloads.settled();
+        }
       } catch (error) {
         controller.view = { snapshot: null, error: problem(error) };
       }
@@ -246,13 +410,61 @@ if (!app.requestSingleInstanceLock()) {
           } else if (
             channel === IPC.saveMediaEdit ||
             channel === IPC.deleteMedia ||
-            channel === IPC.savePostComment
+            channel === IPC.savePostComment ||
+            channel === IPC.savePostDraft ||
+            channel === IPC.deletePostDraft ||
+            channel === IPC.exportPostDraft ||
+            channel === IPC.generateCaption
           ) {
             if (args.length !== 1) throw new Error('Unexpected arguments');
           } else if (args.length) throw new Error('Unexpected arguments');
           if (channel === IPC.current) return controller.view;
           if (channel === IPC.downloadStatus) return downloads.view;
-          if (channel === IPC.downloadStop) return downloads.stop();
+          if (channel === IPC.libraryRoot) return controller.root;
+
+          if (
+            [IPC.backupDatabase, IPC.restoreDatabase, IPC.reconnectLibrary, IPC.choose].some(
+              (value) => value === channel,
+            )
+          ) {
+            const result =
+              channel === IPC.backupDatabase
+                ? await maintenance.backup(controller.root)
+                : channel === IPC.restoreDatabase
+                  ? await maintenance.restore(controller.root)
+                  : await maintenance.reconnect(controller.root);
+            if (result.status === 'complete') {
+              controller.view = result.view;
+              if ((channel === IPC.reconnectLibrary || channel === IPC.choose) && controller.root) {
+                try {
+                  await rememberRoot(userData, controller.root);
+                } catch {
+                  const failure = {
+                    status: 'error' as const,
+                    problem: {
+                      code: 'settings_save_failed',
+                      message: '폴더 위치를 기억하지 못했습니다. 설정에서 다시 연결하세요.',
+                    },
+                  };
+                  if (channel === IPC.choose) {
+                    controller.view = { ...controller.view, error: failure.problem };
+                    return controller.view;
+                  }
+                  return failure;
+                }
+              }
+            }
+            if (channel === IPC.choose) {
+              if (result.status === 'error')
+                controller.view = { ...controller.view, error: result.problem };
+              return controller.view;
+            }
+            return result;
+          }
+          if (channel === IPC.cancelCaption) {
+            captions.cancel();
+            return;
+          }
           if (channel === IPC.deleteMedia || channel === IPC.recoverDeletions) {
             if (!controller.root)
               return {
@@ -271,10 +483,15 @@ if (!app.requestSingleInstanceLock()) {
             [
               IPC.saveMediaEdit,
               IPC.savePostComment,
+              IPC.savePostDraft,
+              IPC.deletePostDraft,
+              IPC.exportPostDraft,
+              IPC.generateCaption,
               IPC.exportPost,
               IPC.downloadPrepare,
               IPC.downloadStart,
               IPC.downloadRecover,
+              IPC.downloadResume,
             ].some((blocked) => blocked === channel)
           ) {
             if (channel.startsWith('tmm:download:')) return downloads.view;
@@ -285,6 +502,51 @@ if (!app.requestSingleInstanceLock()) {
                 message: '중단된 삭제 작업을 먼저 복구하세요.',
               },
             };
+          }
+          if (channel === IPC.deletePostDraft) {
+            if (!controller.root)
+              return {
+                status: 'error',
+                problem: { code: 'draft_source', message: '수집 폴더를 연결한 뒤 삭제하세요.' },
+              };
+            const result = await draftDeletions.delete(controller.root, args[0]);
+            if (result.status === 'deleted') controller.view = result.view;
+            return result;
+          }
+          if (channel === IPC.savePostDraft || channel === IPC.generateCaption) {
+            if (!controller.root)
+              return {
+                status: 'error',
+                problem: {
+                  code: 'draft_source',
+                  message: '수집 폴더를 연결한 뒤 게시글을 등록하세요.',
+                },
+              };
+            if (channel === IPC.generateCaption) {
+              if (
+                maintenance.active ||
+                controller.loading ||
+                downloads.active ||
+                archives.active ||
+                edits.active ||
+                deletions.active ||
+                comments.active ||
+                drafts.active ||
+                draftDeletions.active ||
+                captions.active
+              )
+                return {
+                  status: 'error',
+                  problem: {
+                    code: 'caption_busy',
+                    message: '진행 중인 작업이 끝난 뒤 캡션을 생성하세요.',
+                  },
+                };
+              return captions.generate(controller.root, args[0]);
+            }
+            const result = await drafts.save(controller.root, args[0]);
+            if (result.status === 'saved') controller.view = result.view;
+            return result;
           }
           if (channel === IPC.savePostComment) {
             if (!controller.root)
@@ -310,14 +572,17 @@ if (!app.requestSingleInstanceLock()) {
               };
             return edits.save(controller.root, args[0]);
           }
-          if (channel === IPC.exportPost) {
+          if (channel === IPC.exportPost || channel === IPC.exportPostDraft) {
             if (
-              selectingFolder ||
+              maintenance.active ||
               controller.loading ||
               downloads.active ||
               edits.active ||
               deletions.active ||
               comments.active ||
+              drafts.active ||
+              draftDeletions.active ||
+              captions.active ||
               !controller.root
             )
               return {
@@ -327,47 +592,43 @@ if (!app.requestSingleInstanceLock()) {
                   message: '진행 중인 작업이 끝난 뒤 ZIP을 저장하세요.',
                 },
               };
-            return archives.export(controller.root, args[0] as string);
+            return channel === IPC.exportPost
+              ? archives.export(controller.root, args[0] as string)
+              : archives.exportDraft(controller.root, args[0]);
           }
-          if (archives.active || edits.active || deletions.active || comments.active)
+          if (
+            maintenance.active ||
+            archives.active ||
+            edits.active ||
+            deletions.active ||
+            comments.active ||
+            drafts.active ||
+            draftDeletions.active ||
+            captions.active
+          )
             return channel.startsWith('tmm:download:') ? downloads.view : controller.view;
-          if (selectingFolder || controller.loading) {
+          if (controller.loading) {
             return channel.startsWith('tmm:download:') ? downloads.view : controller.view;
           }
           if (channel === IPC.downloadPrepare)
             return downloads.prepare(currentRoot(), args[0] as string);
           if (channel === IPC.downloadStart) return downloads.startAll(currentRoot());
+          if (channel === IPC.downloadResume) {
+            if (!controller.root) throw new Error('Connect a collection before recovery');
+            return downloads.resume(controller.root);
+          }
           if (channel === IPC.downloadRecover) {
             if (!controller.root) throw new Error('Connect a collection before recovery');
             return downloads.recover(controller.root);
           }
           if (downloads.active) return controller.view;
-          if (channel === IPC.refresh) return controller.refresh();
-          selectingFolder = true;
-          try {
-            const selection = await dialog.showOpenDialog(window, {
-              title: '수집 폴더 연결',
-              properties: ['openDirectory'],
-            });
-            if (selection.canceled || !selection.filePaths[0]) return controller.view;
-            const view = await controller.refresh(selection.filePaths[0]);
-            if (!view.error && view.snapshot) {
-              downloads.resetForRoot(view.snapshot.root);
-              try {
-                await rememberRoot(userData, view.snapshot.root);
-              } catch {
-                controller.view = {
-                  ...view,
-                  error: {
-                    code: 'settings_save_failed',
-                    message:
-                      '자료를 읽었지만 폴더 위치를 기억하지 못했습니다. 다음 실행에서 다시 연결하세요.',
-                  },
-                };
-              }
+          if (channel === IPC.refresh) {
+            const view = await controller.refresh();
+            if (controller.root) {
+              downloads.inspect(controller.root);
+              await downloads.settled();
             }
-          } finally {
-            selectingFolder = false;
+            return view;
           }
           return controller.view;
         });
@@ -385,22 +646,31 @@ if (!app.requestSingleInstanceLock()) {
       app.quit();
     });
   app.on('before-quit', (event) => {
+    if (downloads.active) {
+      event.preventDefault();
+      explainActiveDownload();
+      return;
+    }
     if (
-      (!downloads.active &&
+      (!maintenance.active &&
+        !downloads.active &&
         !archives.active &&
         !edits.active &&
         !deletions.active &&
-        !comments.active) ||
+        !(comments.active || drafts.active || draftDeletions.active || captions.active)) ||
       closing
     )
       return;
     event.preventDefault();
     void Promise.all([
-      downloads.shutdown(),
+      maintenance.shutdown(),
       archives.shutdown(),
       edits.shutdown(),
       deletions.shutdown(),
       comments.shutdown(),
+      drafts.shutdown(),
+      draftDeletions.shutdown(),
+      captions.shutdown(),
     ]).finally(() => {
       closing = true;
       app.quit();

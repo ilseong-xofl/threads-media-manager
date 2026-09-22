@@ -12,6 +12,7 @@ from unittest.mock import patch
 import test_media_edit as fixtures
 from test_collection_source import payload, workbook
 import save_post_comment as comments
+import post_draft as drafts
 from threads_runner.state import StateError
 from threads_source.files import CollectionLock, SourceError
 
@@ -24,6 +25,9 @@ class PostCommentTests(unittest.TestCase):
         self.root = self.fixture.root
         self.request = {"root": str(self.root), "postKey": self.fixture.key,
             "caption": "  준비한 답글 🙂\n두 번째 줄\t유지  ", "link": " https://example.test/item?id=one#details "}
+        self.draft_request = {"root": str(self.root), "postKey": self.fixture.key,
+            "caption": "등록한 게시글", "mediaIds": [self.fixture.ids[0]], "expectedRevision": None}
+        self.draft = drafts.execute(self.draft_request)["draft"]
         self.before = self.fixture.preserved()
 
     def rows(self):
@@ -46,6 +50,7 @@ class PostCommentTests(unittest.TestCase):
         after = self.fixture.snapshot()["snapshot"]["posts"][0]
         self.assertEqual(after["comment"], result["comment"])
         self.assertEqual(after["caption"], before_snapshot["snapshot"]["posts"][0]["caption"])
+        self.assertEqual(after["draft"], self.draft)
         self.assertEqual(self.rows(), [("Example", "AbC_01", result["comment"]["caption"], result["comment"]["link"], result["comment"]["updatedAt"])])
         self.preserved()
 
@@ -81,6 +86,7 @@ class PostCommentTests(unittest.TestCase):
         self.before = self.fixture.preserved()
         comments.execute(self.request)
         second_key = '["Other","AbC_01"]'
+        drafts.execute({**self.draft_request, "postKey": second_key, "mediaIds": [media_id]})
         comments.execute({**self.request, "postKey": second_key, "caption": "별도 계정의 답글"})
         stored = {row[:2]: row[2] for row in self.rows()}
         self.assertEqual(stored, {("Example", "AbC_01"): self.request["caption"].strip(), ("Other", "AbC_01"): "별도 계정의 답글"})
@@ -117,19 +123,33 @@ class PostCommentTests(unittest.TestCase):
         self.assertEqual(self.fixture.snapshot()["snapshot"]["posts"][0]["comment"], result["comment"])
         self.preserved()
 
-    def test_missing_or_unsaved_originals_are_not_eligible(self):
+    def test_missing_or_unregistered_posts_are_not_eligible(self):
         with self.assertRaises(comments.CommentError) as caught:
             comments.execute({**self.request, "postKey": '["Example","missing"]'})
         self.assertEqual(caught.exception.code, "post_missing")
-        raw = self.fixture.originals[1].read_bytes()
-        self.fixture.originals[1].unlink()
+        drafts.execute({"root": str(self.root), "postKey": self.fixture.key, "kind": "delete", "expectedRevision": 1})
         with self.assertRaises(comments.CommentError) as caught: comments.execute(self.request)
-        self.assertEqual(caught.exception.code, "attachments_incomplete")
-        self.fixture.originals[1].write_bytes(raw)
+        self.assertEqual(caught.exception.code, "comment_draft_missing")
         self.assertIsNone(self.rows())
         self.preserved()
 
-    def test_broken_edit_does_not_block_comment_on_saved_originals(self):
+    def test_missing_selected_or_unselected_originals_do_not_block_registered_comment(self):
+        for ordinal, path in enumerate(self.fixture.originals):
+            with self.subTest(ordinal=ordinal):
+                raw = path.read_bytes()
+                path.unlink()
+                try:
+                    result = comments.execute(self.request)
+                    post = self.fixture.snapshot()["snapshot"]["posts"][0]
+                    self.assertEqual(post["attachments"][ordinal]["status"], "review")
+                    self.assertEqual(post["comment"], result["comment"])
+                    self.assertEqual(post["draft"], self.draft)
+                    self.assertFalse(path.exists())
+                finally:
+                    path.write_bytes(raw)
+                self.preserved()
+
+    def test_broken_edit_does_not_block_registered_comment(self):
         media_id = fixtures.editor.execute(self.fixture.request)["mediaId"]
         self.fixture.edit_path(media_id).unlink()
         result = comments.execute(self.request)
@@ -137,6 +157,56 @@ class PostCommentTests(unittest.TestCase):
         post = self.fixture.snapshot()["snapshot"]["posts"][0]
         self.assertEqual(post["edits"][0]["status"], "review")
         self.assertEqual(post["comment"], result["comment"])
+        self.preserved()
+
+    def test_existing_comment_remains_readable_after_draft_delete_and_reregistration(self):
+        saved = comments.execute(self.request)["comment"]
+        rows = self.rows()
+        drafts.execute({"root": str(self.root), "postKey": self.fixture.key, "kind": "delete", "expectedRevision": 1})
+        post = self.fixture.snapshot()["snapshot"]["posts"][0]
+        self.assertNotIn("draft", post)
+        self.assertEqual(post["comment"], saved)
+        with self.assertRaises(comments.CommentError) as caught:
+            comments.execute({**self.request, "caption": "not registered"})
+        self.assertEqual(caught.exception.code, "comment_draft_missing")
+        self.assertEqual(self.rows(), rows)
+        drafts.execute(self.draft_request)
+        self.assertEqual(self.fixture.snapshot()["snapshot"]["posts"][0]["comment"], saved)
+        self.assertEqual(self.rows(), rows)
+        self.preserved()
+
+    def test_corrupt_registration_blocks_comment_changes_and_preserves_existing_text(self):
+        comments.execute(self.request)
+        before = self.rows()
+        with closing(sqlite3.connect(self.root / "state/state.db")) as db, db:
+            db.execute("UPDATE post_drafts SET media_ids_json='not json'")
+        with self.assertRaises(comments.CommentError) as caught:
+            comments.execute({**self.request, "caption": "not saved"})
+        self.assertEqual(caught.exception.code, "drafts_unavailable")
+        self.assertEqual(self.rows(), before)
+        self.preserved()
+
+    def test_registration_deleted_after_preflight_is_rechecked_inside_transaction(self):
+        comments.execute(self.request)
+        before = self.rows()
+        actual = fixtures.view.read_snapshot
+        reads = 0
+        def remove_registration(*args, **kwargs):
+            nonlocal reads
+            result = actual(*args, **kwargs)
+            reads += 1
+            if reads == 2:
+                # Another local writer changes registration after the last
+                # source snapshot but before this worker opens its transaction.
+                with closing(sqlite3.connect(self.root / "state/state.db")) as db, db:
+                    db.execute("DELETE FROM post_drafts")
+            return result
+        with patch.object(fixtures.view, "read_snapshot", side_effect=remove_registration):
+            with self.assertRaises(comments.CommentError) as caught:
+                comments.execute({**self.request, "caption": "not saved"})
+        self.assertEqual(caught.exception.code, "comment_draft_missing")
+        self.assertEqual(self.rows(), before)
+        self.assertNotIn("draft", self.fixture.snapshot()["snapshot"]["posts"][0])
         self.preserved()
 
     def test_foreign_lock_and_pending_delete_keep_existing_comment_unchanged(self):

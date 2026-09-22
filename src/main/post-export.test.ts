@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CollectionView, Post } from '../shared/contracts';
-import { postExportIssue } from '../shared/post-export';
+import { postDraftExportIssue, postExportIssue } from '../shared/post-export';
 import { ViewError } from './collection';
 import {
   archiveFileName,
@@ -87,6 +87,109 @@ function setup(initialView = view()) {
   const controller = new PostExportController(refresh, choose, launch);
   return { refresh, choose, cancel, launch, controller };
 }
+
+function registeredPost(): Post {
+  const item = post();
+  item.draft = {
+    caption: '수정한 캡션',
+    mediaIds: ['b'.repeat(32)],
+    revision: 2,
+    createdAt: '2026-09-22T01:00:00+00:00',
+    updatedAt: '2026-09-22T02:00:00+00:00',
+  };
+  return item;
+}
+
+describe('registered post ZIP export', () => {
+  const input = { postKey, expectedRevision: 2 };
+  it('checks only selected attachments and sends the revision instead of renderer caption or media', async () => {
+    const item = registeredPost();
+    item.attachments[0].status = 'review';
+    item.attachments[0].localUrl = null;
+    expect(postDraftExportIssue(item)).toBeNull();
+    const { controller, choose, launch } = setup(view(item));
+    expect(await controller.exportDraft(root, input)).toEqual({
+      status: 'saved',
+      fileName: 'AbC_01.zip',
+    });
+    expect(choose).toHaveBeenCalledExactlyOnceWith('AbC_01.zip');
+    expect(launch).toHaveBeenCalledExactlyOnceWith({
+      root,
+      postKey,
+      destination,
+      expectedRevision: 2,
+    });
+  });
+  it.each(['missing', 'stale', 'corrupt'])(
+    'refuses %s registered metadata before the chooser',
+    async (kind) => {
+      const item = registeredPost();
+      const current = view(item);
+      if (kind === 'missing') delete item.draft;
+      if (kind === 'stale') item.draft!.revision = 3;
+      if (kind === 'corrupt')
+        current.snapshot!.warnings.push({ code: 'drafts_unavailable', message: 'Check drafts.' });
+      const { controller, choose, launch } = setup(current);
+      expect(await controller.exportDraft(root, input)).toMatchObject({
+        status: 'error',
+        problem: { code: kind === 'corrupt' ? 'drafts_unavailable' : 'draft_conflict' },
+      });
+      expect(choose).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+    },
+  );
+  it('rejects missing selected media but allows saved edited media', async () => {
+    const item = registeredPost();
+    item.draft!.mediaIds = ['c'.repeat(32)];
+    expect(postDraftExportIssue(item)).not.toBeNull();
+    const { controller, launch } = setup(view(item));
+    expect((await controller.exportDraft(root, input)).status).toBe('error');
+    expect(launch).not.toHaveBeenCalled();
+    item.edits = [
+      {
+        ...item.attachments[0],
+        mediaId: 'c'.repeat(32),
+        localUrl: `threads-media://file/${'c'.repeat(32)}`,
+        ordinal: 3,
+        editType: 'crop',
+        sourceMediaId: 'a'.repeat(32),
+        createdAt: '2026-09-22T01:00:00+00:00',
+      },
+    ];
+    expect(postDraftExportIssue(item)).toBeNull();
+    expect((await controller.exportDraft(root, input)).status).toBe('saved');
+  });
+  it('never starts after chooser cancellation and shares busy ownership with original export', async () => {
+    const pending = deferred<string | null>();
+    const { controller, choose, launch } = setup(view(registeredPost()));
+    choose.mockReturnValueOnce(pending.promise);
+    const operation = controller.exportDraft(root, input);
+    await Promise.resolve();
+    expect(await controller.export(root, postKey)).toMatchObject({
+      status: 'error',
+      problem: { code: 'export_busy' },
+    });
+    pending.resolve(null);
+    expect(await operation).toEqual({ status: 'cancelled' });
+    expect(launch).not.toHaveBeenCalled();
+  });
+  it('rejects invalid action values before refreshing and does not bypass worker revision conflicts', async () => {
+    const { controller, refresh, launch, cancel } = setup(view(registeredPost()));
+    expect((await controller.exportDraft(root, { ...input, expectedRevision: 0 })).status).toBe(
+      'error',
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    launch.mockReturnValueOnce({
+      result: Promise.reject(new ViewError('draft_conflict', 'Changed during chooser.')),
+      cancel,
+    });
+    expect(await controller.exportDraft(root, input)).toMatchObject({
+      status: 'error',
+      problem: { code: 'draft_conflict' },
+    });
+    expect(launch).toHaveBeenCalledOnce();
+  });
+});
 
 describe('post ZIP export process ownership', () => {
   it('refreshes source metadata and sends only identity and destination to the worker', async () => {

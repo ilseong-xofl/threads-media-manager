@@ -16,7 +16,7 @@ import zipfile
 
 # The Electron worker runs with -I; import only this application's runtime.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from collection_view import EDIT_FORMAT, FILE, InputError, read_snapshot
+from collection_view import EDIT_FORMAT, FILE, MAX_DRAFT_REVISION, InputError, read_snapshot
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
 from threads_runner.deletion_state import require_no_pending
 from threads_runner.state import StateError
@@ -81,7 +81,7 @@ def validate_destination(root, path, parents, existing):
         raise ExportError("destination_changed", "ZIP 저장 위치가 변경되었습니다. 기존 파일을 보존했습니다.")
 
 
-def selected_post(snapshot, post_key):
+def selected_post(snapshot, post_key, expected_revision=None):
     if any(item.get("code") in {"invalid_edit", "edits_unavailable"} for item in snapshot["snapshot"].get("warnings", [])):
         raise ExportError("edits_unavailable", "편집 결과의 연결 정보가 손상되었거나 누락되었습니다. 편집 자료를 복구·확인한 뒤 ZIP을 다시 저장하세요. 원본 파일은 보존했습니다.")
     matches = [post for post in snapshot["snapshot"]["posts"] if post["key"] == post_key]
@@ -89,6 +89,17 @@ def selected_post(snapshot, post_key):
         raise ExportError("post_missing", "게시글을 찾을 수 없습니다. 목록을 새로고침하세요.")
     post = matches[0]
     attachments = [*post["attachments"], *post.get("edits", [])]
+    if expected_revision is not None:
+        if any(item.get("code") == "drafts_unavailable" for item in snapshot["snapshot"].get("warnings", [])):
+            raise ExportError("drafts_unavailable", "등록 게시글을 읽을 수 없습니다. 저장 상태를 확인하세요.")
+        draft = post.get("draft")
+        if draft is None or draft["revision"] != expected_revision:
+            raise ExportError("draft_conflict", "등록 게시글이 변경되었습니다. 최신 게시글을 다시 열어 다운로드하세요.")
+        by_id = {item.get("mediaId"): item for item in attachments if item.get("mediaId")}
+        if any(media_id not in by_id for media_id in draft["mediaIds"]):
+            raise ExportError("attachments_incomplete", "선택한 첨부를 찾을 수 없습니다. 등록 게시글을 수정한 뒤 다운로드하세요.")
+        attachments = [{**by_id[media_id], "ordinal": index} for index, media_id in enumerate(draft["mediaIds"], 1)]
+        post = {**post, "caption": draft["caption"]}
     if not attachments:
         raise ExportError("attachments_missing", "저장할 이미지 또는 영상이 없습니다.")
     registered = {item["id"]: item for item in snapshot["files"]}
@@ -170,15 +181,18 @@ def copy_media(archive, root, item, check):
 
 
 def export_post(data, *, check=lambda: False):
-    if (not isinstance(data, dict) or set(data) != {"root", "postKey", "destination"} or
-            not all(isinstance(data[key], str) and data[key] for key in data)):
+    fields = {"root", "postKey", "destination"}
+    if (not isinstance(data, dict) or set(data) not in (fields, fields | {"expectedRevision"}) or
+            not all(isinstance(data[key], str) and data[key] for key in fields) or
+            ("expectedRevision" in data and (type(data["expectedRevision"]) is not int or
+                not 1 <= data["expectedRevision"] <= MAX_DRAFT_REVISION))):
         raise ExportError("invalid_request", "게시글 ZIP 저장 요청이 올바르지 않습니다.")
     root = collection_root(Path(data["root"]))
     require_no_pending(root)
     destination, parents, existing = destination_state(root, data["destination"])
     cancelled(check)
     snapshot = read_snapshot(root)
-    post, files = selected_post(snapshot, data["postKey"])
+    post, files = selected_post(snapshot, data["postKey"], data.get("expectedRevision"))
     metadata = post_text(post)
     cancelled(check)
     validate_destination(root, destination, parents, existing)

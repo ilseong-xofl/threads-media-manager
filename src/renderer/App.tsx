@@ -7,6 +7,10 @@ import type {
   MediaEditInput,
   MediaDeleteInput,
   SavePostCommentInput,
+  SavePostDraftInput,
+  GenerateCaptionInput,
+  CaptionLanguage,
+  PostDraftActionInput,
 } from '../shared/contracts';
 import { displayDate, filterPosts, isSavedPost, pendingPostCount, postMedia } from './view-model';
 import { Icon } from './Icon';
@@ -17,6 +21,15 @@ import { Pagination } from './Pagination';
 import { paginate, POST_PAGE_SIZE, type PostListMode } from './post-pagination';
 import { defaultDateRange, type DateRange } from './date-range';
 import { DatePicker } from './DatePicker';
+import { PostRegistrationModal } from './PostRegistrationModal';
+import { RegisteredPostCard } from './RegisteredPostCard';
+import { matchesDateRange } from './date-range';
+import { parseAICaptionResponse } from './ai-caption-response';
+import './registration.css';
+import { SettingsModal } from './SettingsModal';
+import './settings.css';
+
+const captionCacheKey = (root: string, postKey: string) => JSON.stringify([root, postKey]);
 
 export function App() {
   const [view, setView] = useState<CollectionView>({ snapshot: null, error: null });
@@ -30,6 +43,8 @@ export function App() {
   const scrollSentinel = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [positions, setPositions] = useState<Record<string, number>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [maintaining, setMaintaining] = useState(false);
   const [startingDownload, setStartingDownload] = useState(false);
   const [download, setDownload] = useState(idleDownload);
   const [exporting, setExporting] = useState<string | null>(null);
@@ -42,7 +57,20 @@ export function App() {
   const deletePending = useRef(false);
   const [savingComment, setSavingComment] = useState(false);
   const commentPending = useRef(false);
-  const localMutation = savingEdit || deleting || savingComment;
+  const [libraryTab, setLibraryTab] = useState<'source' | 'registered'>('source');
+  const [registration, setRegistration] = useState<{
+    postKey: string;
+    mode: 'view' | 'edit';
+  } | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [generatingCaption, setGeneratingCaption] = useState(false);
+  const draftPending = useRef(false);
+  const captionPending = useRef(false);
+  const captionSuggestions = useRef(
+    new Map<string, { language: CaptionLanguage; captions: string[] | null }>(),
+  );
+  const localMutation =
+    maintaining || savingEdit || deleting || savingComment || savingDraft || generatingCaption;
   const exportPending = useRef(false);
   const downloadPending = useRef(false);
   const revision = useRef(-1);
@@ -54,14 +82,36 @@ export function App() {
   const posts = useMemo(() => snapshot?.posts ?? [], [snapshot]);
   const savedPosts = useMemo(() => posts.filter(isSavedPost), [posts]);
   const pendingPosts = pendingPostCount(posts);
+  const registeredPosts = useMemo(() => posts.filter((post) => post.draft), [posts]);
   const accounts = useMemo(
-    () => [...new Set(savedPosts.map((post) => post.account))].sort(),
-    [savedPosts],
+    () =>
+      [
+        ...new Set(
+          (libraryTab === 'source' ? savedPosts : registeredPosts).map((post) => post.account),
+        ),
+      ].sort(),
+    [libraryTab, savedPosts, registeredPosts],
   );
-  const visible = useMemo(
-    () => filterPosts(savedPosts, account, query, dateRange),
-    [savedPosts, account, query, dateRange],
-  );
+  const visible = useMemo(() => {
+    if (libraryTab === 'source') return filterPosts(savedPosts, account, query, dateRange);
+    const term = query.trim().toLocaleLowerCase();
+    return registeredPosts
+      .filter(
+        (post) =>
+          (!account || post.account === account) &&
+          matchesDateRange(post.draft!.updatedAt, dateRange) &&
+          (!term ||
+            `${post.account}\n${post.postId}\n${post.draft!.caption}`
+              .toLocaleLowerCase()
+              .includes(term)),
+      )
+      .sort((a, b) => Date.parse(b.draft!.updatedAt) - Date.parse(a.draft!.updatedAt));
+  }, [libraryTab, savedPosts, registeredPosts, account, query, dateRange]);
+  const registrationPost = posts.find((post) => post.key === registration?.postKey);
+  const draftProblem = snapshot?.warnings.find(
+    (warning) => warning.code === 'drafts_unavailable',
+  )?.message;
+
   const detail = visible.find((post) => post.key === selected);
   const scrolling = listMode === 'scroll';
   const paginated = useMemo(
@@ -75,7 +125,7 @@ export function App() {
   }, [page, paginated.page]);
   useEffect(() => {
     const sentinel = scrollSentinel.current;
-    if (!hasMore || detail || !sentinel) return;
+    if (!hasMore || detail || registrationPost || !sentinel) return;
     let consumed = false;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -101,6 +151,7 @@ export function App() {
     dateRange.to,
     snapshot?.root,
     detail?.key,
+    registrationPost?.key,
   ]);
   function resetList() {
     setPage(1);
@@ -132,7 +183,11 @@ export function App() {
     }
   }
   useEffect(() => {
-    void act(() => window.threadsMedia.current());
+    void act(async () => {
+      const current = await window.threadsMedia.current();
+      const root = await window.threadsMedia.libraryRoot();
+      return root ? current : window.threadsMedia.chooseFolder();
+    });
     let disposed = false;
     let pending = false;
     const poll = async () => {
@@ -186,7 +241,11 @@ export function App() {
     setStartingDownload(true);
     setActionNotice(null);
     try {
-      await downloadAction(() => window.threadsMedia.startDownload());
+      await downloadAction(() =>
+        download.resumable
+          ? window.threadsMedia.resumeDownloads()
+          : window.threadsMedia.startDownload(),
+      );
     } finally {
       downloadPending.current = false;
       setStartingDownload(false);
@@ -219,9 +278,62 @@ export function App() {
       const result = await window.threadsMedia.savePostComment(input);
       if (result.status === 'error') throw new Error(result.problem.message);
       setView(result.view);
+      setActionNotice({
+        error: !!result.view.error,
+        message: result.view.error?.message ?? '댓글 정보를 저장했습니다.',
+      });
     } finally {
       commentPending.current = false;
       setSavingComment(false);
+    }
+  }
+
+  async function savePostDraft(input: SavePostDraftInput): Promise<void> {
+    if (draftPending.current) throw new Error('게시글을 저장하고 있습니다.');
+    draftPending.current = true;
+    setSavingDraft(true);
+    try {
+      const result = await window.threadsMedia.savePostDraft(input);
+      if (result.status === 'error') throw new Error(result.problem.message);
+      setView(result.view);
+      setRegistration(null);
+      setSelected(null);
+      setLibraryTab('registered');
+      setAccount('');
+      setQuery('');
+      setDateRange(defaultDateRange());
+      resetList();
+      setActionNotice({
+        error: !!result.view.error,
+        message:
+          result.view.error?.message ??
+          (input.expectedRevision === null ? '게시글을 등록했습니다.' : '게시글을 수정했습니다.'),
+      });
+    } finally {
+      draftPending.current = false;
+      setSavingDraft(false);
+    }
+  }
+  async function generateCaption(input: GenerateCaptionInput): Promise<string[] | null> {
+    if (!snapshot?.root) throw new Error('수집 폴더를 먼저 연결하세요.');
+    const key = captionCacheKey(snapshot.root, input.postKey);
+    if (captionPending.current) throw new Error('캡션을 생성하고 있습니다.');
+    captionPending.current = true;
+    captionSuggestions.current.set(key, { language: input.language, captions: null });
+    setGeneratingCaption(true);
+    try {
+      const response: unknown = await window.threadsMedia.generateCaption(input);
+      const result = parseAICaptionResponse(response);
+      if (result.status === 'error') throw new Error(result.problem.message);
+      if (result.status !== 'generated') return null;
+      captionSuggestions.current.set(key, {
+        language: input.language,
+        captions: [...result.captions],
+      });
+      return result.captions;
+    } finally {
+      captionPending.current = false;
+      setGeneratingCaption(false);
     }
   }
 
@@ -235,6 +347,8 @@ export function App() {
         ? await window.threadsMedia.deleteMedia(input)
         : await window.threadsMedia.recoverDeletions();
       if (result.status === 'deleted') {
+        if (input?.kind === 'post' && snapshot?.root)
+          captionSuggestions.current.delete(captionCacheKey(snapshot.root, input.postKey));
         setView(result.view);
         setPositions((previous) => {
           const next = { ...previous };
@@ -289,13 +403,55 @@ export function App() {
     }
   }
 
-  async function exportPost(postKey: string) {
+  async function deletePostDraft(input: PostDraftActionInput) {
+    if (deletePending.current) return;
+    deletePending.current = true;
+    setDeleting(true);
+    setActionNotice(null);
+    try {
+      const result = await window.threadsMedia.deletePostDraft(input);
+      if (result.status === 'deleted') {
+        setView(result.view);
+        if (snapshot?.root)
+          captionSuggestions.current.delete(captionCacheKey(snapshot.root, input.postKey));
+        setRegistration((current) => (current?.postKey === input.postKey ? null : current));
+        setPositions((current) => {
+          const next = { ...current };
+          delete next[`draft:${input.postKey}`];
+          return next;
+        });
+        setActionNotice({
+          error: !!result.view.error,
+          message: result.view.error?.message ?? '등록한 게시글을 삭제했습니다.',
+        });
+      } else if (result.status === 'error') {
+        setActionNotice({ error: true, message: result.problem.message });
+      }
+    } catch {
+      setActionNotice({
+        error: true,
+        message: '삭제 결과를 확인하지 못했습니다. 새로고침해 상태를 확인하세요.',
+      });
+    } finally {
+      deletePending.current = false;
+      setDeleting(false);
+      void window.threadsMedia
+        .current()
+        .then(setView)
+        .catch(() => {});
+    }
+  }
+
+  async function exportPost(postKey: string, expectedRevision?: number) {
     if (exportPending.current) return;
     exportPending.current = true;
     setExporting(postKey);
     setActionNotice(null);
     try {
-      const result = await window.threadsMedia.exportPost(postKey);
+      const result =
+        expectedRevision === undefined
+          ? await window.threadsMedia.exportPost(postKey)
+          : await window.threadsMedia.exportPostDraft({ postKey, expectedRevision });
       if (result.status === 'saved')
         setActionNotice({ error: false, message: `${result.fileName} 저장 완료` });
       if (result.status === 'error')
@@ -315,6 +471,8 @@ export function App() {
   useEffect(() => {
     setAccount('');
     setSelected(null);
+    setRegistration(null);
+    setLibraryTab('source');
     setPositions({});
     setQuery('');
     setDateRange(defaultDateRange());
@@ -332,13 +490,6 @@ export function App() {
           </div>
           <div className="actions">
             <button
-              onClick={() => void act(() => window.threadsMedia.chooseFolder())}
-              disabled={busy || downloading || !!exporting || localMutation}
-            >
-              <Icon name="folder" />
-              폴더 연결
-            </button>
-            <button
               className="refresh-button"
               onClick={() => void act(() => window.threadsMedia.refresh())}
               disabled={
@@ -349,7 +500,7 @@ export function App() {
               {busy ? '읽는 중…' : '새로고침'}
             </button>
             <button
-              className={`download-button ${pendingPosts === 0 ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
+              className={`download-button ${pendingPosts === 0 && !download.resumable ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
               onClick={() => void startDownloads()}
               disabled={
                 busy ||
@@ -357,11 +508,24 @@ export function App() {
                 !!exporting ||
                 localMutation ||
                 deletionRecovery ||
-                pendingPosts === 0
+                (!download.resumable && pendingPosts === 0)
               }
             >
               <Icon name="download" />
-              {pendingPosts > 0 ? `다운로드 (${pendingPosts})` : '다운로드'}
+              {download.resumable
+                ? '이어서 다운로드'
+                : pendingPosts > 0
+                  ? `다운로드 (${pendingPosts})`
+                  : '다운로드'}
+            </button>
+            <button
+              className="settings-button"
+              aria-label="설정"
+              title="설정"
+              onClick={() => setSettingsOpen(true)}
+              disabled={busy || downloading || !!exporting || localMutation}
+            >
+              <Icon name="settings" />
             </button>
           </div>
         </div>
@@ -369,9 +533,16 @@ export function App() {
       <main className="library-content">
         <div className="library-heading">
           <h2>
-            저장한 게시글 <span className="post-total">{savedPosts.length}</span>
+            {libraryTab === 'source' ? '수집' : '등록'}{' '}
+            <span className="post-total">
+              {libraryTab === 'source' ? savedPosts.length : registeredPosts.length}
+            </span>
           </h2>
-          <p>이미지와 영상을 한곳에서 살펴보세요.</p>
+          <p>
+            {libraryTab === 'source'
+              ? '이미지와 영상을 한곳에서 살펴보세요.'
+              : '선택한 미디어와 캡션을 확인하고 수정하세요.'}
+          </p>
           <div className="folder">
             <Icon name="folder" />
             <span title={snapshot?.root}>{snapshot?.root ?? '연결된 수집 폴더가 없습니다'}</span>
@@ -415,6 +586,32 @@ export function App() {
             ))}
           </details>
         ) : null}
+        <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
+          <button
+            type="button"
+            aria-pressed={libraryTab === 'source'}
+            onClick={() => {
+              setLibraryTab('source');
+              setAccount('');
+              setSelected(null);
+              resetList();
+            }}
+          >
+            수집 <span>{savedPosts.length}</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={libraryTab === 'registered'}
+            onClick={() => {
+              setLibraryTab('registered');
+              setAccount('');
+              setSelected(null);
+              resetList();
+            }}
+          >
+            등록 <span>{registeredPosts.length}</span>
+          </button>
+        </div>
         <div className="toolbar">
           <div className="filters">
             <label className="sr-only" htmlFor="account">
@@ -465,9 +662,15 @@ export function App() {
                 </button>
               )}
             </div>
-            <div className="date-range" role="group" aria-label="게시글 등록일 범위">
+            <div
+              className="date-range"
+              role="group"
+              aria-label={
+                libraryTab === 'registered' ? '등록 게시글 수정일 범위' : '게시글 등록일 범위'
+              }
+            >
               <DatePicker
-                label="등록일 시작 날짜"
+                label={libraryTab === 'registered' ? '수정일 시작 날짜' : '등록일 시작 날짜'}
                 value={dateRange.from}
                 max={dateRange.to}
                 onChange={(from) => {
@@ -477,7 +680,7 @@ export function App() {
               />
               <span aria-hidden="true">~</span>
               <DatePicker
-                label="등록일 종료 날짜"
+                label={libraryTab === 'registered' ? '수정일 종료 날짜' : '등록일 종료 날짜'}
                 value={dateRange.to}
                 min={dateRange.from}
                 onChange={(to) => {
@@ -488,51 +691,86 @@ export function App() {
             </div>
           </div>
         </div>
-        {snapshot && savedPosts.length > 0 ? (
+        {snapshot && (libraryTab === 'registered' || savedPosts.length > 0) ? (
           <section className="post-library" aria-label="게시글 목록">
             <div className="list-heading">
               <span>{visible.length}개 게시글</span>
               <span>최신순</span>
             </div>
             <div className="post-grid">
-              {shownPosts.map((post) => (
-                <PostCard
-                  key={post.key}
-                  post={post}
-                  ordinal={positions[post.key]}
-                  onChange={(ordinal) => changePosition(post.key, ordinal)}
-                  onOpen={() => setSelected(post.key)}
-                  onExport={() => void exportPost(post.key)}
-                  onDeletePost={() => void deleteMedia({ kind: 'post', postKey: post.key })}
-                  onDeleteEdit={(mediaId) =>
-                    void deleteMedia({ kind: 'edit', postKey: post.key, mediaId })
-                  }
-                  deleteDisabled={
-                    busy ||
-                    downloading ||
-                    !!exporting ||
-                    localMutation ||
-                    !!view.error ||
-                    deletionRecovery
-                  }
-                  exporting={exporting === post.key}
-                  exportDisabled={
-                    busy ||
-                    downloading ||
-                    !!exporting ||
-                    localMutation ||
-                    !!view.error ||
-                    deletionRecovery
-                  }
-                />
-              ))}
+              {shownPosts.map((post) =>
+                libraryTab === 'registered' ? (
+                  <RegisteredPostCard
+                    key={post.key}
+                    post={post}
+                    ordinal={positions[`draft:${post.key}`]}
+                    onChange={(ordinal) => changePosition(`draft:${post.key}`, ordinal)}
+                    onOpen={() => setRegistration({ postKey: post.key, mode: 'view' })}
+                    onDelete={() =>
+                      void deletePostDraft({
+                        postKey: post.key,
+                        expectedRevision: post.draft!.revision,
+                      })
+                    }
+                    onExport={() => void exportPost(post.key, post.draft!.revision)}
+                    exporting={exporting === post.key}
+                    actionsDisabled={
+                      busy ||
+                      downloading ||
+                      !!exporting ||
+                      localMutation ||
+                      !!view.error ||
+                      deletionRecovery ||
+                      !!draftProblem
+                    }
+                  />
+                ) : (
+                  <PostCard
+                    key={post.key}
+                    post={post}
+                    ordinal={positions[post.key]}
+                    onChange={(ordinal) => changePosition(post.key, ordinal)}
+                    onOpen={() => setSelected(post.key)}
+                    onExport={() => void exportPost(post.key)}
+                    onDeletePost={() => void deleteMedia({ kind: 'post', postKey: post.key })}
+                    onDeleteEdit={(mediaId) =>
+                      void deleteMedia({ kind: 'edit', postKey: post.key, mediaId })
+                    }
+                    deleteDisabled={
+                      busy ||
+                      downloading ||
+                      !!exporting ||
+                      localMutation ||
+                      !!view.error ||
+                      deletionRecovery
+                    }
+                    exporting={exporting === post.key}
+                    exportDisabled={
+                      busy ||
+                      downloading ||
+                      !!exporting ||
+                      localMutation ||
+                      !!view.error ||
+                      deletionRecovery
+                    }
+                  />
+                ),
+              )}
             </div>
             {hasMore && <div ref={scrollSentinel} className="scroll-sentinel" aria-hidden="true" />}
             {visible.length === 0 && (
               <div className="empty">
                 <Icon name="search" />
-                <h3>검색 결과가 없습니다</h3>
-                <p>다른 검색어, 계정 또는 날짜 범위로 다시 찾아보세요.</p>
+                <h3>
+                  {libraryTab === 'registered' && registeredPosts.length === 0
+                    ? '아직 등록한 게시글이 없습니다'
+                    : '검색 결과가 없습니다'}
+                </h3>
+                <p>
+                  {libraryTab === 'registered' && registeredPosts.length === 0
+                    ? '수집 목록의 상세 화면에서 작성 버튼을 눌러 미디어와 캡션을 준비하세요.'
+                    : '다른 검색어, 계정 또는 날짜 범위로 다시 찾아보세요.'}
+                </p>
                 <button
                   onClick={() => {
                     setAccount('');
@@ -589,23 +827,23 @@ export function App() {
                 ? '수집 자료를 불러오고 있습니다'
                 : snapshot
                   ? '아직 저장한 게시글이 없습니다'
-                  : '수집 폴더를 연결하세요'}
+                  : '작업 폴더를 선택하세요'}
             </h2>
             <p>
               {snapshot
                 ? pendingPosts > 0
                   ? '상단 다운로드 버튼을 눌러 이미지와 영상을 저장하세요.'
                   : '수집한 자료를 저장한 뒤 새로고침하세요.'
-                : '수집 플러그인에서 준비한 폴더를 선택하세요.'}
+                : '설정에서 수집 플러그인으로 준비한 작업 폴더를 선택하세요.'}
             </p>
             {!snapshot && (
               <button
                 className="primary"
-                onClick={() => void act(() => window.threadsMedia.chooseFolder())}
-                disabled={busy || downloading}
+                onClick={() => setSettingsOpen(true)}
+                disabled={busy || downloading || maintaining}
               >
-                <Icon name="folder" />
-                폴더 연결
+                <Icon name="settings" />
+                설정 열기
               </button>
             )}
           </section>
@@ -615,14 +853,56 @@ export function App() {
         <span>Threads Media Manager</span>
         <span>내 컴퓨터에 저장된 자료</span>
       </footer>
-      {detail && (
+      {detail && !registrationPost && (
         <PostDetailModal
           key={detail.key}
           post={detail}
           editDisabled={
             busy || downloading || !!exporting || localMutation || !!view.error || deletionRecovery
           }
+          onRegister={() => {
+            if (draftProblem) {
+              setActionNotice({ error: true, message: draftProblem });
+              return;
+            }
+            setRegistration({ postKey: detail.key, mode: detail.draft ? 'view' : 'edit' });
+          }}
           onEdit={saveMediaEdit}
+          ordinal={positions[detail.key]}
+          onChange={(ordinal) => changePosition(detail.key, ordinal)}
+          onClose={() => setSelected(null)}
+        />
+      )}
+      {registrationPost && registration && (
+        <PostRegistrationModal
+          key={`${snapshot?.root}:${registrationPost.key}`}
+          post={registrationPost}
+          draft={registrationPost.draft}
+          mode={registration.mode}
+          initialCandidates={
+            snapshot?.root
+              ? (captionSuggestions.current.get(
+                  captionCacheKey(snapshot.root, registrationPost.key),
+                )?.captions ?? undefined)
+              : undefined
+          }
+          initialLanguage={
+            snapshot?.root
+              ? captionSuggestions.current.get(captionCacheKey(snapshot.root, registrationPost.key))
+                  ?.language
+              : undefined
+          }
+          disabled={
+            busy ||
+            downloading ||
+            !!exporting ||
+            savingEdit ||
+            deleting ||
+            savingComment ||
+            !!view.error ||
+            deletionRecovery ||
+            !!draftProblem
+          }
           onSaveComment={savePostComment}
           commentProblem={
             view.error?.code === 'comment_refresh_failed'
@@ -630,17 +910,56 @@ export function App() {
               : snapshot?.warnings.find((warning) => warning.code === 'comments_unavailable')
                   ?.message
           }
-          ordinal={positions[detail.key]}
-          onChange={(ordinal) => changePosition(detail.key, ordinal)}
-          onClose={() => setSelected(null)}
+          onDelete={() => {
+            if (registrationPost.draft)
+              void deletePostDraft({
+                postKey: registrationPost.key,
+                expectedRevision: registrationPost.draft.revision,
+              });
+          }}
+          onExport={() => {
+            if (registrationPost.draft)
+              void exportPost(registrationPost.key, registrationPost.draft.revision);
+          }}
+          exporting={exporting === registrationPost.key}
+          onSave={savePostDraft}
+          onGenerate={generateCaption}
+          onCancelGeneration={() => window.threadsMedia.cancelCaption()}
+          onClose={() => setRegistration(null)}
         />
       )}
-      <ToastLayer modalKey={detail?.key}>
+      {settingsOpen && (
+        <SettingsModal
+          enabled={
+            !busy &&
+            !downloading &&
+            !exporting &&
+            !(savingEdit || deleting || savingComment || savingDraft || generatingCaption)
+          }
+          onClose={() => setSettingsOpen(false)}
+          onWorking={setMaintaining}
+          onResult={(updated) => {
+            setView(updated);
+            setSelected(null);
+            setRegistration(null);
+            captionSuggestions.current.clear();
+          }}
+        />
+      )}
+      <ToastLayer
+        modalKey={
+          settingsOpen
+            ? 'settings'
+            : registrationPost
+              ? `registration:${registrationPost.key}`
+              : detail?.key
+        }
+      >
         <DownloadToast
           view={download}
           starting={startingDownload}
           enabled={!busy && !exporting && !localMutation && !deletionRecovery}
-          stop={() => void downloadAction(() => window.threadsMedia.stopDownload())}
+          resume={() => void downloadAction(() => window.threadsMedia.resumeDownloads())}
           recover={() => void downloadAction(() => window.threadsMedia.recoverDownloads())}
         />
         {actionNotice && (
