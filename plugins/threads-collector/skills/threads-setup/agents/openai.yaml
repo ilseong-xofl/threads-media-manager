@@ -1,0 +1,4 @@
+interface:
+  display_name: "Threads 초기 설정"
+  short_description: "설치 점검부터 수집 폴더와 계정 엑셀 준비까지 처음 사용을 안내"
+  default_prompt: "$threads-setup으로 처음 사용할 수 있게 초기 설정해줘. 수집은 아직 시작하지 마."

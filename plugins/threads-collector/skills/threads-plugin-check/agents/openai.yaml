@@ -1,0 +1,4 @@
+interface:
+  display_name: "Threads 플러그인 설치 점검"
+  short_description: "수집을 시작하지 않고 플러그인 버전과 필수 도구의 준비 상태 확인"
+  default_prompt: "$threads-plugin-check로 설치 상태와 현재 대화의 버전만 확인해줘. Threads 접속이나 수집·다운로드는 하지 마."

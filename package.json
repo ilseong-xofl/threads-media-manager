@@ -1,0 +1,60 @@
+{
+  "name": "threads-media-manager",
+  "productName": "Threads Media Manager",
+  "version": "0.1.0",
+  "description": "Local Threads collection browser",
+  "private": true,
+  "main": ".webpack/main",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22.12 <25"
+  },
+  "scripts": {
+    "start": "electron-forge start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:python": "node scripts/test-python.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:python && pnpm format:check"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ],
+    "overrides": {
+      "tar": "7.5.22",
+      "tmp": "0.2.7",
+      "uuid": "11.1.1",
+      "webpack-dev-server": "5.2.6"
+    }
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/plugin-webpack": "7.11.2",
+    "@electron-forge/plugin-fuses": "7.11.2",
+    "@electron/fuses": "1.8.0",
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "css-loader": "7.1.4",
+    "electron": "43.3.0",
+    "eslint": "9.39.5",
+    "fork-ts-checker-webpack-plugin": "9.1.0",
+    "globals": "17.9.0",
+    "prettier": "3.9.6",
+    "style-loader": "4.0.0",
+    "ts-loader": "9.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.66.0",
+    "vitest": "4.1.10",
+    "webpack": "5.109.2",
+    "webpack-cli": "7.2.2"
+  }
+}

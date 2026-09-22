@@ -1,0 +1,27 @@
+{
+  "name": "threads-collector",
+  "version": "0.1.0+codex.20260921075554",
+  "description": "\uac1c\uc778 Codex \ub0b4\ubd80 \ube0c\ub77c\uc6b0\uc800\ub85c Threads\ub97c \uc218\uc9d1\ud558\uace0 \ub0a0\uc9dc\ubcc4 Excel \uc6d0\ubcf8\uc73c\ub85c \ubcf4\uad00\ud569\ub2c8\ub2e4.",
+  "author": {
+    "name": "Threads Media Manager"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Threads \uc218\uc9d1",
+    "shortDescription": "Threads \uc218\uc9d1\u00b7Excel \uc6d0\ubcf8\u00b7\uc784\uc2dc \ubcf5\uad6c \uae30\ub85d",
+    "longDescription": "\ub4f1\ub85d\ud55c \uacc4\uc815\uc758 \uc774\ubbf8\uc9c0\u00b7\uc601\uc0c1 \uac8c\uc2dc\uae00 \uc815\ubcf4\ub97c \ub0b4\ubd80 \ube0c\ub77c\uc6b0\uc800\uc5d0\uc11c \uc218\uc9d1\ud569\ub2c8\ub2e4. \uc218\uc9d1 \uc911 JSONL\uc740 \uc784\uc2dc \uae30\ub85d\uc774\uace0 \uac80\uc99d\ub41c \ucd5c\uc885 \uc6d0\ubcf8\uc740 Excel\uc785\ub2c8\ub2e4. \ub2e4\uc6b4\ub85c\ub4dc\uc640 SQLite \uc791\uc5c5 \uc0c1\ud0dc\ub294 \ubcc4\ub3c4 \ub85c\uceec \uc571\uc774 \ub2f4\ub2f9\ud569\ub2c8\ub2e4.",
+    "developerName": "Threads Media Manager",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "$threads-setup\uc73c\ub85c \ucd08\uae30 \uc124\uc815\ud574\uc918.",
+      "$threads-collect\ub85c \uc218\uc9d1 \uc2dc\uc791\ud574\uc918.",
+      "$threads-plugin-check\ub85c \uc124\uce58 \uc0c1\ud0dc\ub9cc \ud655\uc778\ud574\uc918."
+    ]
+  },
+  "keywords": [
+    "threads",
+    "excel",
+    "collection"
+  ]
+}

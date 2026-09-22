@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+.webpack/
+out/
+pnpm-lock.yaml
+plugins/
+docs/
+README.md
+AGENTS.md
+.agents/
+local-runtime/
+tests/
