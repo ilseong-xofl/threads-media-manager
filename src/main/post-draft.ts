@@ -77,7 +77,7 @@ export type LaunchPostDraft = (input: PostDraftCommand) => {
   cancel(): void;
 };
 
-export function launchPostDraft(projectRoot: string): LaunchPostDraft {
+export function launchPostDraft(projectRoot: string, includeAI = false): LaunchPostDraft {
   return (input) => {
     const { command, prefix } = pythonCommand(projectRoot);
     let cancel = () => {};
@@ -86,7 +86,13 @@ export function launchPostDraft(projectRoot: string): LaunchPostDraft {
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       const child = execFile(
         command,
-        [...prefix, '-I', '-B', join(projectRoot, 'local-runtime', 'post_draft.py')],
+        [
+          ...prefix,
+          '-I',
+          '-B',
+          join(projectRoot, 'local-runtime', 'post_draft.py'),
+          ...(includeAI ? ['--include-ai'] : []),
+        ],
         { timeout: 120_000, maxBuffer: 128 * 1024, windowsHide: true, encoding: 'utf8' },
         (_error, stdout) => {
           closed = true;

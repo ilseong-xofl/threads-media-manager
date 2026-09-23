@@ -155,3 +155,16 @@ it('appends edits after originals without changing saved-gallery eligibility or 
   expect(filterPosts([edited, pending], '', '')).toEqual([edited]);
   expect(pendingPostCount([edited, pending])).toBe(1);
 });
+
+it('excludes skipped posts from pending downloads without hiding saved posts or mutating attachments', () => {
+  const excludedPartial = { ...partial, downloadExcluded: true };
+  const excludedPending = { ...pending, downloadExcluded: true };
+  const saved = { ...complete, downloadExcluded: true };
+  const newPost = post('new', 'two', [attachment('not_downloaded')]);
+  const candidates = [excludedPartial, excludedPending, saved, newPost];
+  const before = structuredClone(candidates);
+  expect(pendingPostCount(candidates)).toBe(1);
+  expect(pendingPostCount([excludedPartial, excludedPending, saved])).toBe(0);
+  expect(filterPosts(candidates, '', '')).toEqual([saved]);
+  expect(candidates).toEqual(before);
+});

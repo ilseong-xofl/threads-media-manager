@@ -75,3 +75,47 @@ it.each(['bytes=-0', 'bytes=5-2', 'bytes=0-1,5-6', 'bytes=999999999999999999999-
     expect(byteRange(value, 10)).toBeNull();
   },
 );
+
+describe('development AI media registrations', () => {
+  async function generatedFile(): Promise<LocalFile> {
+    const post = 'c'.repeat(32);
+    const generation = 'd'.repeat(32);
+    const name = '01.png';
+    const id = createHash('sha256')
+      .update(`ai:${post}:${generation}:${name}`)
+      .digest('hex')
+      .slice(0, 32);
+    const relativePath = `ai-drafts/${post}/${generation}/${name}`;
+    await mkdir(join(root, 'ai-drafts', post, generation), { recursive: true });
+    await writeFile(join(root, relativePath), '0123456789');
+    return { ...file, id, relativePath, kind: 'image' };
+  }
+  it('requires development opt-in and serves the registered version by stable ID', async () => {
+    const generated = await generatedFile();
+    await expect(new MediaRegistry().adopt(root, [generated])).rejects.toThrow(
+      'Invalid registration',
+    );
+    const registry = new MediaRegistry(true);
+    await registry.adopt(root, [generated]);
+    const response = await registry.respond(new Request(`threads-media://file/${generated.id}`));
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(await response.text()).toBe('0123456789');
+    await writeFile(join(root, generated.relativePath), '9876543210');
+    expect(
+      (await registry.respond(new Request(`threads-media://file/${generated.id}`))).status,
+    ).toBe(409);
+  });
+  it('rejects another version ID, unsupported names, and symlinked generated files', async () => {
+    const generated = await generatedFile();
+    const registry = new MediaRegistry(true);
+    await expect(registry.adopt(root, [{ ...generated, id: 'e'.repeat(32) }])).rejects.toThrow();
+    await expect(
+      registry.adopt(root, [
+        { ...generated, relativePath: generated.relativePath.replace('01.png', '../01.png') },
+      ]),
+    ).rejects.toThrow();
+    await unlink(join(root, generated.relativePath));
+    await symlink(join(root, file.relativePath), join(root, generated.relativePath));
+    await expect(registry.adopt(root, [generated])).rejects.toThrow();
+  });
+});

@@ -4,7 +4,7 @@
 
 ## 파일과 helper
 
-시작 전 수집 helper inspect로 원본을 확인하고 기존 수집 복구·잠금을 점검한다. 다운로드 DB의 중단 상태는 읽지 않는다. `_work/collector.lock`을 `{owner: "collector", token: "<UUID>", run_id: "<실행ID>"}`로 배타 생성한 단일 수집기가 `_work/<실행ID>/0001.jsonl`처럼 계정 순번으로 파일을 정한다. 사용자가 입력한 계정명을 파일 경로로 이어 붙이지 않는다. 파일을 플러그인 소스·설치 캐시에 만들지 않는다.
+시작 전 수집 helper inspect로 원본을 확인하고 기존 수집 복구·잠금을 점검한다. 다운로드 DB의 중단 상태는 읽지 않는다. 수집 중에는 공통 잠금을 생성하지 않고, `_work/<실행ID>/0001.jsonl`처럼 계정 순번으로 파일을 정한다. 사용자가 입력한 계정명을 파일 경로로 이어 붙이지 않는다. 파일을 플러그인 소스·설치 캐시에 만들지 않는다.
 
 패키지 루트의 `scripts/collection_journal.py`를 제공된 Python으로 호출한다. 이 helper는 브라우저·Excel·네트워크를 사용하지 않는다.
 
@@ -37,7 +37,7 @@ python <plugin>/scripts/collection_journal.py read --journal <account.jsonl> --o
 
 1. 계정 탐색 종료 후 `read`로 JSONL을 읽는다. 게시글 `(계정, ID)`와 미디어 `(계정, ID, 순서)`로 관찰을 병합한다. 같은 ID의 보완 관찰을 새 게시글로 세지 않고 완전한 정보를 불완전한 재관찰로 지우지 않는다. DOM 등장 순서·기준 ID·목표 수 판정은 수집 중 처리하며 종료 후 임의 정렬로 다시 정하지 않는다.
 2. 한 계정의 관찰을 정규화해 `{posts, media, run}` 입력을 만든다. 실제 종료·partial 상태와 기존 기준을 검증한다.
-3. `commit-source --input ... --journal ... --lock-token ...`으로 결과 Excel과 accounts를 저장·검증한다. 성공하면 helper가 전달한 journal·입력만 정리한다. 실패하면 남은 임시 기록으로 재수집 없이 같은 저장을 복구한다. 영구 JSONL은 생성하지 않는다.
+3. `commit-source --input ... --journal ...`을 `--lock-token` 없이 호출하여 결과 Excel과 accounts를 저장·검증한다. 이 짧은 반영 구간에만 helper가 공통 잠금을 잡고 반환 시 해제한다. 성공하면 helper가 전달한 journal·입력만 정리한다. 실패하면 남은 임시 기록으로 재수집 없이 같은 저장을 복구한다. 영구 JSONL은 생성하지 않는다.
 4. `end` 없이 종료됐다면 완전히 기록된 JSONL 행만 복구하여 `partial`로 후처리한다. 기존 기준은 유지하고 종료 시각을 만들어내지 않는다. 복구만으로 브라우저 수집을 다시 시작하지 않는다.
 5. 완전한 `start`가 하나도 없으면 실행·계정·시각을 추측하여 Excel 행이나 기준을 만들지 않고 원본을 보존한 채 중단한다. 마지막 줄이 개행 없이 잘려 있으면 helper는 `incomplete_tail`로 알린다. 원본을 보존하고 완전한 앞선 행만 복구하여 partial로 처리한다. 마지막 줄이라도 개행이 있는 잘못된 JSON, 중간 손상·순서/실행 식별 충돌은 추정 복구하지 않고 전체 중단한다. 손상 파일에 이어 쓰거나 잘린 끝을 자동 삭제하지 않는다.
 

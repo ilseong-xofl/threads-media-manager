@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DownloadToast, activeDownload, idleDownload } from './DownloadPanel';
+import {
+  DownloadConfirmation,
+  DownloadOverlay,
+  activeDownload,
+  idleDownload,
+} from './DownloadPanel';
 import type {
   Attachment,
   CollectionView,
@@ -11,11 +16,13 @@ import type {
   GenerateCaptionInput,
   CaptionLanguage,
   PostDraftActionInput,
+  AIContentDraft,
 } from '../shared/contracts';
 import { displayDate, filterPosts, isSavedPost, pendingPostCount, postMedia } from './view-model';
 import { Icon } from './Icon';
 import { PostCard } from './PostCard';
 import { PostDetailModal } from './PostDetailModal';
+import { AIContentModal } from './AIContentModal';
 import { ToastLayer } from './ToastLayer';
 import { Pagination } from './Pagination';
 import { paginate, POST_PAGE_SIZE, type PostListMode } from './post-pagination';
@@ -46,6 +53,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [maintaining, setMaintaining] = useState(false);
   const [startingDownload, setStartingDownload] = useState(false);
+  const [confirmDownload, setConfirmDownload] = useState(false);
   const [download, setDownload] = useState(idleDownload);
   const [exporting, setExporting] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ error: boolean; message: string } | null>(
@@ -64,13 +72,26 @@ export function App() {
   } | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [generatingCaption, setGeneratingCaption] = useState(false);
+  const [aiContentEnabled, setAIContentEnabled] = useState(false);
+  const [contentPostKey, setContentPostKey] = useState<string | null>(null);
+  const [contentDraft, setContentDraft] = useState<AIContentDraft | null>(null);
+  const [contentError, setContentError] = useState<string | null>(null);
+  const [generatingContent, setGeneratingContent] = useState(false);
+  const contentRequest = useRef(0);
+  const contentPending = useRef(false);
   const draftPending = useRef(false);
   const captionPending = useRef(false);
   const captionSuggestions = useRef(
     new Map<string, { language: CaptionLanguage; captions: string[] | null }>(),
   );
   const localMutation =
-    maintaining || savingEdit || deleting || savingComment || savingDraft || generatingCaption;
+    maintaining ||
+    savingEdit ||
+    deleting ||
+    savingComment ||
+    savingDraft ||
+    generatingCaption ||
+    generatingContent;
   const exportPending = useRef(false);
   const downloadPending = useRef(false);
   const revision = useRef(-1);
@@ -79,7 +100,13 @@ export function App() {
   const deletionRecovery =
     view.error?.code === 'deletion_recovery_required' ||
     !!snapshot?.warnings.some((warning) => warning.code === 'deletion_recovery_required');
-  const posts = useMemo(() => snapshot?.posts ?? [], [snapshot]);
+  const posts = useMemo(
+    () =>
+      (snapshot?.posts ?? []).map((post) =>
+        aiContentEnabled ? post : { ...post, aiImages: undefined },
+      ),
+    [snapshot, aiContentEnabled],
+  );
   const savedPosts = useMemo(() => posts.filter(isSavedPost), [posts]);
   const pendingPosts = pendingPostCount(posts);
   const registeredPosts = useMemo(() => posts.filter((post) => post.draft), [posts]);
@@ -112,6 +139,7 @@ export function App() {
     (warning) => warning.code === 'drafts_unavailable',
   )?.message;
 
+  const contentPost = posts.find((p) => p.key === contentPostKey);
   const detail = visible.find((post) => post.key === selected);
   const scrolling = listMode === 'scroll';
   const paginated = useMemo(
@@ -182,6 +210,20 @@ export function App() {
       setBusy(false);
     }
   }
+  useEffect(() => {
+    let disposed = false;
+    void (async () => {
+      try {
+        const capabilities = await window.threadsMedia.capabilities();
+        if (!disposed) setAIContentEnabled(capabilities.aiContent === true);
+      } catch {
+        // Keep development-only controls hidden when capabilities cannot be read.
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, []);
   useEffect(() => {
     void act(async () => {
       const current = await window.threadsMedia.current();
@@ -313,6 +355,68 @@ export function App() {
       draftPending.current = false;
       setSavingDraft(false);
     }
+  }
+  async function runContent(postKey: string, language: 'en' | 'ko' | 'ja', request: number) {
+    if (!aiContentEnabled) return;
+    try {
+      const result = await window.threadsMedia.generateContent({ postKey, language });
+      if (request !== contentRequest.current) return;
+      if (result.status === 'generated') {
+        setContentDraft(result.draft);
+        try {
+          const updated = await window.threadsMedia.current();
+          if (request === contentRequest.current) setView(updated);
+        } catch {
+          setContentError('AI 초안을 저장했지만 목록을 갱신하지 못했습니다. 새로고침해 주세요.');
+        }
+      } else if (result.status === 'error') setContentError(result.problem.message);
+      else if (result.status !== 'cancelled')
+        setContentError('AI 초안 응답을 확인하지 못했습니다.');
+    } catch {
+      if (request === contentRequest.current)
+        setContentError('AI 생성을 실행하지 못했습니다. 앱을 완전히 종료한 뒤 다시 실행하세요.');
+    } finally {
+      contentPending.current = false;
+      if (request === contentRequest.current) setGeneratingContent(false);
+    }
+  }
+  async function openContent(postKey: string) {
+    if (!aiContentEnabled || contentPending.current) return;
+    contentPending.current = true;
+    const request = ++contentRequest.current;
+    setContentPostKey(postKey);
+    setContentDraft(null);
+    setContentError(null);
+    setGeneratingContent(true);
+    try {
+      const saved = await window.threadsMedia.loadContent({ postKey });
+      if (request !== contentRequest.current) return;
+      if (saved.status === 'generated') {
+        setContentDraft(saved.draft);
+        setGeneratingContent(false);
+        contentPending.current = false;
+      } else if (saved.status === 'empty') await runContent(postKey, 'en', request);
+      else {
+        setContentError(
+          saved.status === 'error' ? saved.problem.message : 'AI 초안을 열지 못했습니다.',
+        );
+        setGeneratingContent(false);
+        contentPending.current = false;
+      }
+    } catch {
+      contentPending.current = false;
+      if (request === contentRequest.current) {
+        setContentError('AI 기능을 불러오지 못했습니다. 앱을 완전히 종료한 뒤 다시 실행하세요.');
+        setGeneratingContent(false);
+      }
+    }
+  }
+  async function closeContent() {
+    ++contentRequest.current;
+    setContentPostKey(null);
+    await window.threadsMedia.cancelContent().catch(() => {});
+    contentPending.current = false;
+    setGeneratingContent(false);
   }
   async function generateCaption(input: GenerateCaptionInput): Promise<string[] | null> {
     if (!snapshot?.root) throw new Error('수집 폴더를 먼저 연결하세요.');
@@ -501,7 +605,7 @@ export function App() {
             </button>
             <button
               className={`download-button ${pendingPosts === 0 && !download.resumable ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
-              onClick={() => void startDownloads()}
+              onClick={() => setConfirmDownload(true)}
               disabled={
                 busy ||
                 downloading ||
@@ -578,14 +682,6 @@ export function App() {
             </button>
           </div>
         )}
-        {snapshot?.warnings.length ? (
-          <details className="notice warning global-warning">
-            <summary>확인할 수집·저장 정보 {snapshot.warnings.length}건</summary>
-            {snapshot.warnings.map((warning, index) => (
-              <p key={index}>{warning.message}</p>
-            ))}
-          </details>
-        ) : null}
         <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
           <button
             type="button"
@@ -853,7 +949,7 @@ export function App() {
         <span>Threads Media Manager</span>
         <span>내 컴퓨터에 저장된 자료</span>
       </footer>
-      {detail && !registrationPost && (
+      {detail && !registrationPost && !contentPost && (
         <PostDetailModal
           key={detail.key}
           post={detail}
@@ -867,10 +963,40 @@ export function App() {
             }
             setRegistration({ postKey: detail.key, mode: detail.draft ? 'view' : 'edit' });
           }}
+          onGenerateContent={aiContentEnabled ? () => void openContent(detail.key) : undefined}
           onEdit={saveMediaEdit}
           ordinal={positions[detail.key]}
           onChange={(ordinal) => changePosition(detail.key, ordinal)}
           onClose={() => setSelected(null)}
+        />
+      )}
+      {aiContentEnabled && contentPost && (
+        <AIContentModal
+          post={contentPost}
+          draft={contentDraft}
+          working={generatingContent}
+          error={contentError}
+          onClose={() => void closeContent()}
+          onGenerate={(language) => {
+            if (contentPending.current) return;
+            contentPending.current = true;
+            const request = ++contentRequest.current;
+            setGeneratingContent(true);
+            setContentError(null);
+            void runContent(contentPost.key, language, request);
+          }}
+          onCopy={async () => {
+            const r = await window.threadsMedia.copyContentCaption({ postKey: contentPost.key });
+            if (r.status === 'error') throw new Error(r.problem.message);
+          }}
+          onReveal={async () => {
+            try {
+              const r = await window.threadsMedia.revealContent({ postKey: contentPost.key });
+              if (r.status === 'error') setContentError(r.problem.message);
+            } catch {
+              setContentError('초안 폴더를 열지 못했습니다.');
+            }
+          }}
         />
       )}
       {registrationPost && registration && (
@@ -946,6 +1072,23 @@ export function App() {
           }}
         />
       )}
+      <DownloadOverlay
+        view={download}
+        starting={startingDownload}
+        enabled={!busy && !exporting && !localMutation && !deletionRecovery}
+        resume={() => setConfirmDownload(true)}
+        recover={() => void downloadAction(() => window.threadsMedia.recoverDownloads())}
+      />
+      {confirmDownload && (
+        <DownloadConfirmation
+          resuming={!!download.resumable}
+          onCancel={() => setConfirmDownload(false)}
+          onConfirm={() => {
+            setConfirmDownload(false);
+            void startDownloads();
+          }}
+        />
+      )}
       <ToastLayer
         modalKey={
           settingsOpen
@@ -955,13 +1098,6 @@ export function App() {
               : detail?.key
         }
       >
-        <DownloadToast
-          view={download}
-          starting={startingDownload}
-          enabled={!busy && !exporting && !localMutation && !deletionRecovery}
-          resume={() => void downloadAction(() => window.threadsMedia.resumeDownloads())}
-          recover={() => void downloadAction(() => window.threadsMedia.recoverDownloads())}
-        />
         {actionNotice && (
           <div
             className={`export-toast ${actionNotice.error ? 'export-toast-error' : ''}`}

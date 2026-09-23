@@ -1,4 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  protocol,
+  session,
+  shell,
+} from 'electron';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { IPC, MEDIA_SCHEME } from '../shared/contracts';
@@ -19,11 +29,13 @@ import { PostCommentController, launchPostComment } from './post-comment';
 import { openPostLink } from './open-post-link';
 import { PostDraftController, launchPostDraft } from './post-draft';
 import { CaptionGenerator } from './caption-generator';
+import { ContentGenerator, parseContentInput } from './content-generator';
 import { PostDraftDeleteController, launchPostDraftDelete } from './post-draft-delete';
 import { LibraryMaintenanceController, launchLibraryMaintenance } from './library-maintenance';
 
 app.setName('Threads Media Manager');
 app.setAppUserModelId('com.threadsmediamanager.desktop');
+const aiContentEnabled = !app.isPackaged;
 const testUserData = !app.isPackaged ? process.env.TMM_USER_DATA : undefined;
 app.setPath(
   'userData',
@@ -45,9 +57,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let window: BrowserWindow | null = null;
-const registry = new MediaRegistry();
+const registry = new MediaRegistry(aiContentEnabled);
 const controller = new CollectionController(
-  (root) => readRuntime(app.getAppPath(), root),
+  (root) => readRuntime(app.getAppPath(), root, aiContentEnabled),
   (root, files) => registry.adopt(root, files),
 );
 
@@ -68,7 +80,7 @@ const archives = new PostExportController(
     });
     return choice.canceled ? null : choice.filePath;
   },
-  launchExport(app.getAppPath()),
+  launchExport(app.getAppPath(), aiContentEnabled),
 );
 let initialFolderHint: string | undefined;
 const edits: MediaEditController = new MediaEditController(
@@ -83,7 +95,8 @@ const edits: MediaEditController = new MediaEditController(
     comments.active ||
     drafts.active ||
     draftDeletions.active ||
-    captions.active,
+    captions.active ||
+    content.active,
 );
 const deletions: MediaDeleteController = new MediaDeleteController(
   (root) => controller.refresh(root),
@@ -105,7 +118,8 @@ const deletions: MediaDeleteController = new MediaDeleteController(
     comments.active ||
     drafts.active ||
     draftDeletions.active ||
-    captions.active,
+    captions.active ||
+    content.active,
 );
 const comments: PostCommentController = new PostCommentController(
   (root) => controller.refresh(root),
@@ -119,11 +133,12 @@ const comments: PostCommentController = new PostCommentController(
     deletions.active ||
     drafts.active ||
     draftDeletions.active ||
-    captions.active,
+    captions.active ||
+    content.active,
 );
 const drafts: PostDraftController = new PostDraftController(
   (root) => controller.refresh(root),
-  launchPostDraft(app.getAppPath()),
+  launchPostDraft(app.getAppPath(), aiContentEnabled),
   () =>
     maintenance.active ||
     controller.loading ||
@@ -133,7 +148,8 @@ const drafts: PostDraftController = new PostDraftController(
     deletions.active ||
     comments.active ||
     draftDeletions.active ||
-    captions.active,
+    captions.active ||
+    content.active,
 );
 const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
   (root) => controller.refresh(root),
@@ -163,16 +179,30 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     deletions.active ||
     comments.active ||
     drafts.active ||
-    captions.active,
+    captions.active ||
+    content.active,
 );
-const captions = new CaptionGenerator(app.getAppPath(), (root) => controller.refresh(root));
+const captions = new CaptionGenerator(
+  app.getAppPath(),
+  (root) => controller.refresh(root),
+  aiContentEnabled,
+);
+const content = new ContentGenerator(
+  app.getAppPath(),
+  (root) => controller.refresh(root),
+  (bytes) => {
+    const image = nativeImage.createFromBuffer(bytes);
+    const { width, height } = image.getSize();
+    return !image.isEmpty() && width >= 256 && height >= 256 && width * height <= 40_000_000;
+  },
+);
 
 const maintenance: LibraryMaintenanceController = new LibraryMaintenanceController(
   async (root) => {
-    const view = await controller.refresh(root);
+    await controller.refresh(root);
     downloads.inspect(root);
     await downloads.settled();
-    return view;
+    return controller.view;
   },
   {
     chooseBackup: async (fileName, signal) => {
@@ -234,7 +264,8 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
     comments.active ||
     drafts.active ||
     draftDeletions.active ||
-    captions.active,
+    captions.active ||
+    content.active,
 );
 let downloadCloseNoticeOpen = false;
 function explainActiveDownload(): void {
@@ -300,7 +331,13 @@ function createWindow(): void {
         !archives.active &&
         !edits.active &&
         !deletions.active &&
-        !(comments.active || drafts.active || draftDeletions.active || captions.active)) ||
+        !(
+          comments.active ||
+          drafts.active ||
+          draftDeletions.active ||
+          captions.active ||
+          content.active
+        )) ||
       closing
     )
       return;
@@ -314,6 +351,7 @@ function createWindow(): void {
       drafts.shutdown(),
       draftDeletions.shutdown(),
       captions.cancelAndWait(),
+      content.cancelAndWait(),
     ]).finally(() => {
       closing = true;
       window?.close();
@@ -344,7 +382,13 @@ if (!app.requestSingleInstanceLock()) {
       session.defaultSession.webRequest.onBeforeRequest((details, callback) =>
         callback({ cancel: !isLocalRequest(details.url, MAIN_WINDOW_WEBPACK_ENTRY) }),
       );
-      protocol.handle(MEDIA_SCHEME, (request) => registry.respond(request));
+      protocol.handle(MEDIA_SCHEME, (request) =>
+        request.url.startsWith('threads-media://ai/')
+          ? aiContentEnabled
+            ? content.respond(request)
+            : new Response(null, { status: 404 })
+          : registry.respond(request),
+      );
       const userData = app.getPath('userData');
       try {
         const settings =
@@ -381,6 +425,28 @@ if (!app.requestSingleInstanceLock()) {
             )
           )
             throw new Error('Unauthorized request');
+          if (channel === IPC.capabilities) {
+            if (args.length) throw new Error('Unexpected arguments');
+            return { aiContent: aiContentEnabled };
+          }
+          if (
+            !aiContentEnabled &&
+            [
+              IPC.generateContent,
+              IPC.loadContent,
+              IPC.revealContent,
+              IPC.copyContentCaption,
+              IPC.cancelContent,
+            ].some((value) => value === channel)
+          ) {
+            return {
+              status: 'error',
+              problem: {
+                code: 'content_development_only',
+                message: 'AI 이미지 생성은 개발 실행에서만 사용할 수 있습니다.',
+              },
+            };
+          }
           if (channel === IPC.openPostLink) {
             if (args.length !== 1)
               return {
@@ -414,7 +480,11 @@ if (!app.requestSingleInstanceLock()) {
             channel === IPC.savePostDraft ||
             channel === IPC.deletePostDraft ||
             channel === IPC.exportPostDraft ||
-            channel === IPC.generateCaption
+            channel === IPC.generateCaption ||
+            channel === IPC.generateContent ||
+            channel === IPC.loadContent ||
+            channel === IPC.revealContent ||
+            channel === IPC.copyContentCaption
           ) {
             if (args.length !== 1) throw new Error('Unexpected arguments');
           } else if (args.length) throw new Error('Unexpected arguments');
@@ -458,6 +528,66 @@ if (!app.requestSingleInstanceLock()) {
               if (result.status === 'error')
                 controller.view = { ...controller.view, error: result.problem };
               return controller.view;
+            }
+            return result;
+          }
+          if (channel === IPC.cancelContent) {
+            await content.cancelAndWait();
+            return;
+          }
+          if (
+            [IPC.generateContent, IPC.loadContent, IPC.revealContent, IPC.copyContentCaption].some(
+              (value) => value === channel,
+            )
+          ) {
+            const input = parseContentInput(args[0]);
+            if (
+              !controller.root ||
+              !controller.view.snapshot?.posts.some((p) => p.key === input.postKey)
+            )
+              return {
+                status: 'error',
+                problem: { code: 'content_source', message: '원본 게시글을 찾을 수 없습니다.' },
+              };
+            if (
+              maintenance.active ||
+              controller.loading ||
+              downloads.active ||
+              archives.active ||
+              edits.active ||
+              deletions.active ||
+              comments.active ||
+              drafts.active ||
+              draftDeletions.active ||
+              captions.active ||
+              content.active ||
+              deletionNeedsRecovery()
+            )
+              return {
+                status: 'error',
+                problem: {
+                  code: 'content_busy',
+                  message: '진행 중인 작업이 끝난 뒤 AI 초안을 여세요.',
+                },
+              };
+            if (channel === IPC.generateContent) {
+              const result = await content.generate(controller.root, input);
+              if (result.status === 'generated') await controller.refresh();
+              return result;
+            }
+            const result = await content.load(controller.root, input);
+            if (channel === IPC.revealContent || channel === IPC.copyContentCaption) {
+              if (result.status !== 'generated')
+                return {
+                  status: 'error',
+                  problem: {
+                    code: 'content_saved',
+                    message: '저장된 AI 초안을 확인하지 못했습니다.',
+                  },
+                };
+              if (channel === IPC.copyContentCaption) clipboard.writeText(result.draft.caption);
+              else shell.showItemInFolder(join(result.draft.directory, 'draft.json'));
+              return { status: 'opened' };
             }
             return result;
           }
@@ -533,7 +663,8 @@ if (!app.requestSingleInstanceLock()) {
                 comments.active ||
                 drafts.active ||
                 draftDeletions.active ||
-                captions.active
+                captions.active ||
+                content.active
               )
                 return {
                   status: 'error',
@@ -583,6 +714,7 @@ if (!app.requestSingleInstanceLock()) {
               drafts.active ||
               draftDeletions.active ||
               captions.active ||
+              content.active ||
               !controller.root
             )
               return {
@@ -604,7 +736,8 @@ if (!app.requestSingleInstanceLock()) {
             comments.active ||
             drafts.active ||
             draftDeletions.active ||
-            captions.active
+            captions.active ||
+            content.active
           )
             return channel.startsWith('tmm:download:') ? downloads.view : controller.view;
           if (controller.loading) {
@@ -623,12 +756,12 @@ if (!app.requestSingleInstanceLock()) {
           }
           if (downloads.active) return controller.view;
           if (channel === IPC.refresh) {
-            const view = await controller.refresh();
+            await controller.refresh();
             if (controller.root) {
               downloads.inspect(controller.root);
               await downloads.settled();
             }
-            return view;
+            return controller.view;
           }
           return controller.view;
         });
@@ -657,7 +790,13 @@ if (!app.requestSingleInstanceLock()) {
         !archives.active &&
         !edits.active &&
         !deletions.active &&
-        !(comments.active || drafts.active || draftDeletions.active || captions.active)) ||
+        !(
+          comments.active ||
+          drafts.active ||
+          draftDeletions.active ||
+          captions.active ||
+          content.active
+        )) ||
       closing
     )
       return;
@@ -671,6 +810,7 @@ if (!app.requestSingleInstanceLock()) {
       drafts.shutdown(),
       draftDeletions.shutdown(),
       captions.shutdown(),
+      content.shutdown(),
     ]).finally(() => {
       closing = true;
       app.quit();

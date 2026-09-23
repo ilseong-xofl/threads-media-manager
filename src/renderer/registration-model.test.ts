@@ -8,6 +8,7 @@ import {
   registrationChanged,
   registrationInput,
   registrationMedia,
+  registrationMediaLabel,
   selectedRegistrationMedia,
   toggleRegistrationMedia,
 } from './registration-model';
@@ -228,4 +229,74 @@ it('detects caption whitespace changes, additions, removals, and order changes f
   expect(registrationChanged(baseline, baseline.caption, [...baseline.mediaIds, videoId])).toBe(
     true,
   );
+});
+
+it('lists originals, edits, and all AI generation versions in order and labels them separately', () => {
+  const aiFirst = media('d'.repeat(32), 4, {
+    aiGenerated: true,
+    generationId: '1'.repeat(32),
+  });
+  const aiSecond = media('e'.repeat(32), 5, {
+    aiGenerated: true,
+    generationId: '2'.repeat(32),
+  });
+  const withAI = { ...post, aiImages: [aiFirst, aiSecond] };
+  const before = structuredClone(withAI);
+  const available = registrationMedia(withAI);
+  expect(available.map((item) => item.mediaId)).toEqual([
+    imageId,
+    videoId,
+    editId,
+    aiFirst.mediaId,
+    aiSecond.mediaId,
+  ]);
+  expect(available.map(registrationMediaLabel)).toEqual([
+    '원본',
+    '원본',
+    '편집본',
+    'AI 생성본',
+    'AI 생성본',
+  ]);
+  available.reverse();
+  expect(withAI).toEqual(before);
+});
+
+it('selects and reorders mixed AI, edited and original media without changing the typed caption', () => {
+  const aiId = 'd'.repeat(32);
+  const withAI = { ...post, aiImages: [media(aiId, 4, { aiGenerated: true })] };
+  let selected = addRegistrationMedia(withAI, [], imageId);
+  selected = addRegistrationMedia(withAI, selected, aiId);
+  selected = addRegistrationMedia(withAI, selected, editId);
+  expect(addRegistrationMedia(withAI, selected, aiId)).toEqual(selected);
+  selected = moveRegistrationMedia(selected, aiId, 0);
+  expect(selected).toEqual([aiId, imageId, editId]);
+  expect(
+    selectedRegistrationMedia(withAI, selected).map((item) => item.attachment?.mediaId),
+  ).toEqual(selected);
+  expect(registrationInput(withAI, '직접 작성한 캡션', selected, 5)).toEqual({
+    postKey: post.key,
+    caption: '직접 작성한 캡션',
+    mediaIds: selected,
+    expectedRevision: 5,
+  });
+  expect(captionGenerationInput(withAI, selected, 'ko', 5).mediaIds).toEqual(selected);
+  expect(toggleRegistrationMedia(withAI, selected, aiId)).toEqual([imageId, editId]);
+  expect(registrationInput(withAI, '', [aiId], null).mediaIds).toEqual([aiId]);
+});
+
+it('keeps an unavailable AI selection visible but requires explicit removal before saving', () => {
+  const aiId = 'd'.repeat(32);
+  const unavailable = {
+    ...post,
+    aiImages: [media(aiId, 4, { aiGenerated: true, status: 'unavailable', localUrl: null })],
+  };
+  expect(addRegistrationMedia(unavailable, [], aiId)).toEqual([]);
+  const selected = [imageId, aiId, editId];
+  expect(selectedRegistrationMedia(unavailable, selected)[1].attachment?.aiGenerated).toBe(true);
+  expect(() => registrationInput(unavailable, '캡션 유지', selected, 3)).toThrow('제거');
+  expect(captionImageIds(unavailable, selected)).toEqual([imageId, editId]);
+  expect(toggleRegistrationMedia(unavailable, selected, aiId)).toEqual([imageId, editId]);
+  // A production response with no AI candidates must not silently drop a saved AI selection.
+  expect(selectedRegistrationMedia(post, selected)[1].attachment).toBeUndefined();
+  expect(() => registrationInput(post, '캡션 유지', selected, 3)).toThrow('제거');
 });

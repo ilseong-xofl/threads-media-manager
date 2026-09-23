@@ -102,6 +102,18 @@ describe('snapshot adoption', () => {
   });
 });
 describe('runtime response boundary', () => {
+  it('accepts explicit download exclusion without changing local media', () => {
+    const input = editedOutput();
+    Object.assign(input.snapshot.posts[0], { downloadExcluded: true });
+    const result = parseRuntimeResult(JSON.stringify(input), '/example');
+    expect(result.snapshot.posts[0].downloadExcluded).toBe(true);
+    expect(result.files).toEqual(input.files);
+  });
+  it.each(['true', 1, null, {}])('rejects malformed download exclusion: %j', (downloadExcluded) => {
+    const input = editedOutput();
+    Object.assign(input.snapshot.posts[0], { downloadExcluded });
+    expect(() => parseRuntimeResult(JSON.stringify(input), '/example')).toThrow(ViewError);
+  });
   it('accepts optional per-post comments without changing media or old snapshot contracts', () => {
     const input = editedOutput();
     const comment = {
@@ -221,4 +233,33 @@ describe('runtime response boundary', () => {
     ];
     expect(() => parseRuntimeResult(JSON.stringify({ ok: true, ...bad }), '/example')).toThrow();
   });
+});
+
+it('admits generated attachments only with development opt-in and explicit AI metadata', () => {
+  const input = editedOutput('image', 'crop');
+  const ai = {
+    ...input.snapshot.posts[0].attachments[0],
+    ordinal: 3,
+    kind: 'image',
+    mediaId: 'e'.repeat(32),
+    localUrl: `threads-media://file/${'e'.repeat(32)}`,
+    aiGenerated: true,
+    generationId: 'f'.repeat(32),
+    createdAt: '2026-09-22T03:00:00Z',
+  };
+  Object.assign(input.snapshot.posts[0], { aiImages: [ai] });
+  expect(() => parseRuntimeResult(JSON.stringify(input), '/example')).toThrow();
+  expect(
+    parseRuntimeResult(JSON.stringify(input), '/example', true).snapshot.posts[0].aiImages,
+  ).toEqual([ai]);
+  for (const invalid of [
+    { aiGenerated: false },
+    { generationId: '../other' },
+    { kind: 'video' },
+    { editType: 'crop' },
+    { createdAt: null },
+  ]) {
+    Object.assign(input.snapshot.posts[0], { aiImages: [{ ...ai, ...invalid }] });
+    expect(() => parseRuntimeResult(JSON.stringify(input), '/example', true)).toThrow();
+  }
 });

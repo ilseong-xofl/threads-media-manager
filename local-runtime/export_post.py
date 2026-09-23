@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ import zipfile
 # The Electron worker runs with -I; import only this application's runtime.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from collection_view import EDIT_FORMAT, FILE, MAX_DRAFT_REVISION, InputError, read_snapshot
+import ai_media
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
 from threads_runner.deletion_state import require_no_pending
 from threads_runner.state import StateError
@@ -95,6 +97,7 @@ def selected_post(snapshot, post_key, expected_revision=None):
         draft = post.get("draft")
         if draft is None or draft["revision"] != expected_revision:
             raise ExportError("draft_conflict", "등록 게시글이 변경되었습니다. 최신 게시글을 다시 열어 다운로드하세요.")
+        attachments += post.get("aiImages", [])
         by_id = {item.get("mediaId"): item for item in attachments if item.get("mediaId")}
         if any(media_id not in by_id for media_id in draft["mediaIds"]):
             raise ExportError("attachments_incomplete", "선택한 첨부를 찾을 수 없습니다. 등록 게시글을 수정한 뒤 다운로드하세요.")
@@ -114,18 +117,20 @@ def selected_post(snapshot, post_key, expected_revision=None):
                 item["id"] in seen_media):
             raise ExportError("attachments_incomplete", "게시글의 이미지와 영상을 모두 저장한 뒤 ZIP으로 저장하세요.")
         match = FILE.fullmatch(item.get("relativePath", ""))
-        if (not match or match[1] != item["id"] or
-                (item["kind"] == "image") != (match[2] in {"jpg", "jpeg", "png", "webp", "gif"}) or
+        ai_extension = ai_media.file_extension(item.get("relativePath", ""), item["id"]) if attachment.get("aiGenerated") is True else None
+        extension = match[2] if match and match[1] == item["id"] else ai_extension
+        if (not extension or
+                (item["kind"] == "image") != (extension in {"jpg", "jpeg", "png", "webp", "gif"}) or
                 type(item.get("size")) is not int or item["size"] <= 0 or
                 not isinstance(item.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", item["sha256"])):
             raise ExportError("invalid_local_path", "저장된 첨부 파일 연결을 확인하세요.")
         if attachment.get('editType') is not None:
             expected = EDIT_FORMAT.get(attachment['editType'])
-            if not expected or expected != (item['kind'], match[2]):
+            if not expected or expected != (item['kind'], extension):
                 raise ExportError('invalid_edit', '편집 결과의 종류와 저장 형식을 확인하세요.')
         seen_ordinals.add(ordinal)
         seen_media.add(item["id"])
-        files.append({**item, "archiveName": f"{ordinal:02d}.{match[2]}"})
+        files.append({**item, "archiveName": f"{ordinal:02d}.{extension}"})
     return post, files
 
 
@@ -180,7 +185,7 @@ def copy_media(archive, root, item, check):
     return before
 
 
-def export_post(data, *, check=lambda: False):
+def export_post(data, *, check=lambda: False, include_ai=False):
     fields = {"root", "postKey", "destination"}
     if (not isinstance(data, dict) or set(data) not in (fields, fields | {"expectedRevision"}) or
             not all(isinstance(data[key], str) and data[key] for key in fields) or
@@ -191,7 +196,7 @@ def export_post(data, *, check=lambda: False):
     require_no_pending(root)
     destination, parents, existing = destination_state(root, data["destination"])
     cancelled(check)
-    snapshot = read_snapshot(root)
+    snapshot = read_snapshot(root, include_ai=include_ai)
     post, files = selected_post(snapshot, data["postKey"], data.get("expectedRevision"))
     metadata = post_text(post)
     cancelled(check)
@@ -214,7 +219,7 @@ def export_post(data, *, check=lambda: False):
         cancelled(check)
         # Re-read the authoritative source and read-only DB, including file hashes.
         # No collection lock/DB writes are needed; a concurrent active owner blocks this read.
-        if stable_snapshot(read_snapshot(root)) != stable_snapshot(snapshot):
+        if stable_snapshot(read_snapshot(root, include_ai=include_ai)) != stable_snapshot(snapshot):
             raise ExportError("source_changed", "저장하는 동안 게시글 정보가 바뀌었습니다. 목록을 새로고침하세요.")
         for item, before in zip(files, media_stamps):
             if regular(safe_path(root, item["relativePath"], require_file=True)) != before:
@@ -238,7 +243,10 @@ def export_post(data, *, check=lambda: False):
                 pass
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--include-ai", action="store_true")
+    args = parser.parse_args(argv)
     stopped = False
     monitor = None
 
@@ -253,7 +261,7 @@ def main():
         raw = sys.stdin.buffer.read(INPUT_LIMIT + 1)
         if not raw or len(raw) > INPUT_LIMIT:
             raise ExportError("invalid_request", "게시글 ZIP 저장 요청이 올바르지 않습니다.")
-        result = export_post(parse_json(raw), check=lambda: stopped or monitor.cancelled())
+        result = export_post(parse_json(raw), check=lambda: stopped or monitor.cancelled(), include_ai=args.include_ai)
     except (ExportError, SourceError, InputError, MonitorError, StateError) as exc:
         result = {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
     except Exception:
@@ -266,4 +274,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

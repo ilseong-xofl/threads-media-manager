@@ -7,7 +7,7 @@ export const isSavedPost = (post: Post) =>
     (attachment) => attachment.status === 'saved' && !!attachment.localUrl && !!attachment.mediaId,
   );
 export const pendingPostCount = (posts: Post[]) =>
-  posts.filter((post) => !isSavedPost(post)).length;
+  posts.filter((post) => !post.downloadExcluded && !isSavedPost(post)).length;
 export const savedCount = (post: Post) =>
   post.attachments.filter((a) => a.status === 'saved').length;
 export function storageStatus(post: Post): string {

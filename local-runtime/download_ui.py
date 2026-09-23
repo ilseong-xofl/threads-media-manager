@@ -11,7 +11,7 @@ import time
 
 # -I does not put the script directory on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from threads_runner import inspection, runner, transport, recovery, batch
+from threads_runner import inspection, runner, transport, recovery, batch, source_cleanup
 from threads_runner.state import StateError
 from threads_runner.parent_monitor import ParentMonitor, MonitorError
 
@@ -53,6 +53,10 @@ def execute(root, data, cancel, *, transfer=None, output=emit):
         if set(data) != {'command'}:
             raise StateError('invalid_request', '상태 조회는 별도 입력을 받지 않습니다.')
         return recovery.read_status(root)
+    if command == 'cleanup-source':
+        if set(data) != {'command'}:
+            raise StateError('invalid_request', '정리 대상은 현재 수집 원본에서 확인합니다.')
+        return source_cleanup.clean(root)
     if command in {'resume', 'continue'}:
         if set(data) != {'command'}:
             raise StateError('invalid_request', '기존 다운로드 대상만 이어서 처리할 수 있습니다.')
@@ -60,7 +64,12 @@ def execute(root, data, cancel, *, transfer=None, output=emit):
     if command == 'batch':
         if set(data) != {'command'}:
             raise StateError('invalid_request', '전체 다운로드는 앱에서 현재 원본으로 계획합니다.')
-        return batch.run(root, cancel, transfer=transfer, output=output)
+        if cancel():
+            raise StateError('cancelled', '사용자 중지로 다운로드하지 않았습니다.')
+        cleaned = source_cleanup.clean(root)
+        if cleaned['problem']:
+            return cleaned
+        return {**batch.run(root, cancel, transfer=transfer, output=output), 'cleanedPosts': cleaned['cleanedPosts'], 'releasedPosts': cleaned['releasedPosts']}
     if command == 'preview':
         return inspection.preview_one(root, data.get('account'))
     if command == 'recover':

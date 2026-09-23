@@ -11,7 +11,11 @@ export const MAX_DRAFT_MEDIA = 100;
 export const MAX_DRAFT_CAPTION = 10000;
 
 export function registrationMedia(post: Post): Attachment[] {
-  return [...post.attachments, ...(post.edits ?? [])];
+  return [...post.attachments, ...(post.edits ?? []), ...(post.aiImages ?? [])];
+}
+
+export function registrationMediaLabel(item: Attachment): string {
+  return item.aiGenerated ? 'AI 생성본' : item.editType ? '편집본' : '원본';
 }
 
 export function selectableMedia(item: Attachment): boolean {

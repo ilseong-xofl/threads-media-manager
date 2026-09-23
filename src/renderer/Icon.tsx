@@ -19,11 +19,14 @@ type IconName =
   | 'trash'
   | 'scissors'
   | 'plus'
-  | 'eye';
+  | 'eye'
+  | 'sparkles';
 
 const paths: Record<IconName, string> = {
   settings:
     'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z',
+  sparkles:
+    'm12 3 2.3 6.7L21 12l-6.7 2.3L12 21l-2.3-6.7L3 12l6.7-2.3L12 3ZM4 2v4M2 4h4M20 18v4M18 20h4',
   eye: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
   plus: 'M12 5v14M5 12h14',
   grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',

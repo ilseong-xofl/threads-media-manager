@@ -89,7 +89,7 @@ class BatchDownloadTests(unittest.TestCase):
         result = self.run_batch()
         self.assertIsNone(result["problem"])
         self.assertEqual(result["batch"], {"totalPosts": 3, "completedPosts": 3, "totalFiles": 4,
-            "completedFiles": 4, "totalRounds": 2, "currentRound": 2, "deferredPosts": 0})
+            "completedFiles": 4, "totalRounds": 2, "currentRound": 2, "deferredPosts": 0, "skippedPosts": 0})
         self.assertEqual([request["url"].split("/")[-1].split("?")[0] for request in self.requests],
             ["alpha_000-1.jpg", "alpha_000-2.jpg", "alpha_001-1.jpg", "zeta_000-1.jpg"])
         self.assertEqual([round(self.requests[i]["time"]-self.completions[i-1], 4) for i in range(1, 4)], [3, 3, 60])
@@ -129,12 +129,12 @@ class BatchDownloadTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
         self.assertIn("alpha_001", self.requests[0]["url"])
 
-    def test_partial_carousel_observation_does_not_block_download(self):
+    def test_incomplete_carousel_is_deferred_without_attempting_download(self):
         self.fixture([("alpha", [2])])
         self.data["게시글"][0]["첨부 상태"] = "partial"
         make_book(self.book, self.data)
-        self.assertIsNone(self.run_batch()["problem"])
-        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.run_batch()["problem"]["code"], "posts_deferred")
+        self.assertEqual(len(self.requests), 0)
 
     def test_oversized_post_or_impossible_middle_round_blocks_later_accounts(self):
         for sizes in ([46, 1], [24, 24, 1]):

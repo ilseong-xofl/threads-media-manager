@@ -1,6 +1,7 @@
 """Prepare bounded, metadata-free caption inputs without writing to the collection."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -70,7 +71,7 @@ def output_directory(raw, token, root):
     return path
 
 
-def prepare(data):
+def prepare(data, *, include_ai=False):
     if not isinstance(data, dict):
         raise PrepareError("caption_input", "캡션 생성 입력을 확인하세요.")
     ids, key = data.get("mediaIds"), data.get("postKey")
@@ -81,13 +82,17 @@ def prepare(data):
     root = view.collection_root(Path(data.get("root", "")))
     output = output_directory(data.get("output"), data.get("token"), root)
     check()
-    snapshot = view.read_snapshot(root)
+    snapshot = view.read_snapshot(root, include_ai=include_ai)
     if any(w["code"] == "deletion_recovery_required" for w in snapshot["snapshot"]["warnings"]):
         raise PrepareError("deletion_recovery_required", "중단된 삭제 작업을 먼저 복구하세요.")
     post = next((p for p in snapshot["snapshot"]["posts"] if p["key"] == key), None)
     if post is None:
         raise PrepareError("caption_source", "게시글을 찾을 수 없습니다. 목록을 새로고침하세요.")
-    media = {a["mediaId"]: a for a in post["attachments"] + post.get("edits", []) if a["status"] == "saved" and a.get("localUrl")}
+    media = {a["mediaId"]: a for a in post["attachments"] + post.get("edits", []) + post.get("aiImages", []) if a["status"] == "saved" and a.get("localUrl")}
+    if data.get("originalOnly") is True:
+        originals = [a for a in post["attachments"] if a["kind"] == "image"]
+        if ids != [a["mediaId"] for a in originals] or any(a.get("editType") or a["status"] != "saved" for a in originals):
+            raise PrepareError("caption_source", "원본 이미지 전체를 순서대로 전달해야 합니다.")
     registry = {f["id"]: f for f in snapshot["files"]}
     if any(media_id not in media or media_id not in registry for media_id in ids):
         raise PrepareError("caption_source", "선택한 미디어의 저장 상태를 확인하세요.")
@@ -111,13 +116,13 @@ def prepare(data):
             raise PrepareError("caption_image_limit", "선택한 파일이 생성 준비 한도를 초과합니다.")
         row = {"final_rel": item["relativePath"], "media_id": media_id,
                "size": item["size"], "sha256": item["sha256"], "kind": item["kind"]}
-        view.local_file(root, row)
+        view.local_file(root, row, include_ai=include_ai)
         source = view.safe_path(root, item["relativePath"], require_file=True)
         filename = f"image-{index + 1:02d}.jpg"
         destination = output / filename
         normalize_image(source, destination)
         check()
-        view.local_file(root, row)
+        view.local_file(root, row, include_ai=include_ai)
         total += destination.stat().st_size
         if total > MAX_TOTAL_BYTES:
             raise PrepareError("caption_image_limit", "선택한 이미지의 총 크기가 생성 한도를 초과합니다.")
@@ -126,7 +131,10 @@ def prepare(data):
     return {"ok": True, "caption": caption, "images": images}
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--include-ai", action="store_true")
+    args = parser.parse_args(argv)
     global _cancelled
     def stop(_signal, _frame):
         global _cancelled
@@ -136,7 +144,7 @@ def main():
     try:
         raw = sys.stdin.buffer.read(64 * 1024 + 1)
         if len(raw) > 64 * 1024: raise ValueError("input limit")
-        result = prepare(json.loads(raw))
+        result = prepare(json.loads(raw), include_ai=args.include_ai)
     except (PrepareError, view.SourceError) as exc:
         result = {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
     except Exception:
@@ -145,4 +153,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

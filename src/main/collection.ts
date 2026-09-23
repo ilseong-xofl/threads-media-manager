@@ -62,7 +62,7 @@ function validComment(value: unknown): boolean {
   }
 }
 
-export function parseRuntimeResult(raw: string, root: string): RuntimeResult {
+export function parseRuntimeResult(raw: string, root: string, includeAI = false): RuntimeResult {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -112,16 +112,19 @@ export function parseRuntimeResult(raw: string, root: string): RuntimeResult {
       !['publishedAt', 'collectedAt', 'observedAt', 'captionObservedAt'].every((k) =>
         nullable(p[k]),
       ) ||
+      (p.downloadExcluded !== undefined && typeof p.downloadExcluded !== 'boolean') ||
       !Array.isArray(p.reasons) ||
       !p.reasons.every(string) ||
       !Array.isArray(p.attachments) ||
       (p.edits !== undefined && !Array.isArray(p.edits)) ||
+      (p.aiImages !== undefined && (!includeAI || !Array.isArray(p.aiImages))) ||
       (p.comment !== undefined && !validComment(p.comment)) ||
       (p.draft !== undefined && !validPostDraft(p.draft))
     )
       return invalid();
     const edits = Array.isArray(p.edits) ? p.edits : [];
-    for (const a of [...p.attachments, ...edits]) {
+    const aiImages = Array.isArray(p.aiImages) ? p.aiImages : [];
+    for (const a of [...p.attachments, ...edits, ...aiImages]) {
       if (
         !object(a) ||
         !Number.isSafeInteger(a.ordinal) ||
@@ -140,6 +143,15 @@ export function parseRuntimeResult(raw: string, root: string): RuntimeResult {
       )
         return invalid();
       if (
+        (aiImages.includes(a)
+          ? a.aiGenerated !== true ||
+            a.kind !== 'image' ||
+            typeof a.generationId !== 'string' ||
+            !/^[a-f0-9]{32}$/.test(a.generationId) ||
+            a.createdAt === undefined ||
+            a.editType !== undefined ||
+            a.sourceMediaId !== undefined
+          : a.aiGenerated !== undefined || a.generationId !== undefined) ||
         (edits.includes(a) &&
           (a.editType === undefined ||
             a.sourceMediaId === undefined ||
@@ -176,7 +188,11 @@ export function parseRuntimeResult(raw: string, root: string): RuntimeResult {
   return { snapshot: s as unknown as Snapshot, files: data.files as LocalFile[] };
 }
 
-export async function readRuntime(projectRoot: string, root: string): Promise<RuntimeResult> {
+export async function readRuntime(
+  projectRoot: string,
+  root: string,
+  includeAI = false,
+): Promise<RuntimeResult> {
   const { command, prefix } = pythonCommand(projectRoot);
   return new Promise((resolve, reject) => {
     execFile(
@@ -188,6 +204,7 @@ export async function readRuntime(projectRoot: string, root: string): Promise<Ru
         join(projectRoot, 'local-runtime', 'collection_view.py'),
         '--collection-root',
         root,
+        ...(includeAI ? ['--include-ai'] : []),
       ],
       { timeout: 60_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, encoding: 'utf8' },
       (error, stdout) => {
@@ -201,7 +218,7 @@ export async function readRuntime(projectRoot: string, root: string): Promise<Ru
           return;
         }
         try {
-          resolve(parseRuntimeResult(stdout, root));
+          resolve(parseRuntimeResult(stdout, root, includeAI));
         } catch (error) {
           reject(error);
         }

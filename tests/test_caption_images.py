@@ -68,6 +68,24 @@ class CaptionImagesTests(unittest.TestCase):
         self.assertEqual(before, self.fixture.preserved())
         self.assertFalse((self.fixture.root / "_work/collector.lock").exists())
 
+    def test_original_only_rejects_edited_inputs_and_keeps_original_unchanged(self):
+        import edit_media
+        edit_id = edit_media.execute(self.fixture.request)["mediaId"]
+        before = self.fixture.preserved()
+        with self.assertRaises(prepare.PrepareError):
+            prepare.prepare({**self.data, "originalOnly": True, "mediaIds": [edit_id]})
+        result = prepare.prepare({**self.data, "originalOnly": True})
+        self.assertEqual(result["images"], ["image-01.jpg"])
+        self.assertEqual(before, self.fixture.preserved())
+
+    def test_original_only_requires_all_originals_in_source_order(self):
+        snapshot = self.fixture.snapshot()
+        original = snapshot["snapshot"]["posts"][0]["attachments"][0]
+        snapshot["snapshot"]["posts"][0]["attachments"].append({**original, "mediaId": "d" * 32, "ordinal": 3})
+        with patch.object(prepare.view, "read_snapshot", return_value=snapshot), self.assertRaises(prepare.PrepareError):
+            prepare.prepare({**self.data, "originalOnly": True})
+        self.assertEqual([p.name for p in self.output.iterdir()], [".owner"])
+
     def test_saved_edit_is_supported(self):
         import edit_media
         edit_id = edit_media.execute(self.fixture.request)["mediaId"]

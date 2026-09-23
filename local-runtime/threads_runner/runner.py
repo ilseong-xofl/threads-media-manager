@@ -11,7 +11,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from . import attempts, deletion_state, excel_input, transport
+from . import attempts, deletion_state, excel_input, source_readiness, transport
 from .state import State, StateError, POLICY, file_hash, safe_path, sync_directory
 
 
@@ -47,15 +47,8 @@ def _source(root, *, db=None):
 
 def _eligible_post(data, post, *, saved=lambda media: False):
     key = (post["계정명"], post["게시글ID"])
-    run = next((r for r in data["runs"] if (r["계정명"], r["실행ID"]) ==
-                (key[0], post["확인실행ID"])), None)
     media = sorted([m for m in data["media"] if (m["계정명"], m["게시글ID"]) == key], key=lambda m: m["순서"])
-    if not run or run["결과"] not in (excel_input.COMMITTED - {"partial"}) or post.get("_blocked"):
-        return []
-    if (not media or [m["순서"] for m in media] != list(range(1, len(media)+1)) or
-            any((m.get("_blocked") or m["주소상태"] != "http_candidate" or not m["다운로드URL"]) and not saved(m) for m in media)):
-        return []
-    if sum(m["종류"] == "image" for m in media) != post["이미지 수"] or sum(m["종류"] == "video" for m in media) != post["영상 수"]:
+    if source_readiness.reason(data, post, media, saved=saved):
         return []
     return media
 

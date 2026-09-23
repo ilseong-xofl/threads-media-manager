@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
 const api: ThreadsMediaApi = {
+  capabilities: () => ipcRenderer.invoke(IPC.capabilities),
   current: () => ipcRenderer.invoke(IPC.current),
   chooseFolder: () => ipcRenderer.invoke(IPC.choose),
   refresh: () => ipcRenderer.invoke(IPC.refresh),
@@ -24,5 +25,10 @@ const api: ThreadsMediaApi = {
   savePostDraft: (input) => ipcRenderer.invoke(IPC.savePostDraft, input),
   generateCaption: (input) => ipcRenderer.invoke(IPC.generateCaption, input),
   cancelCaption: () => ipcRenderer.invoke(IPC.cancelCaption),
+  generateContent: (input) => ipcRenderer.invoke(IPC.generateContent, input),
+  loadContent: (input) => ipcRenderer.invoke(IPC.loadContent, input),
+  revealContent: (input) => ipcRenderer.invoke(IPC.revealContent, input),
+  cancelContent: () => ipcRenderer.invoke(IPC.cancelContent),
+  copyContentCaption: (input) => ipcRenderer.invoke(IPC.copyContentCaption, input),
 };
 contextBridge.exposeInMainWorld('threadsMedia', Object.freeze(api));

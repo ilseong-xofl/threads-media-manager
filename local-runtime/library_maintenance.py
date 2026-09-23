@@ -221,6 +221,28 @@ def maintenance_lock(root, *, recover_download=False):
             pass
 
 
+def validate_ai_drafts(db, root, available, deleted, *, drafts=None, check=lambda: False, strict=False):
+    """Resolve AI references for restore without enabling generation or changing files."""
+    drafts = view.read_drafts(root, db=db) if drafts is None else drafts
+    for key, draft in drafts.items():
+        if key in deleted or all(available.get(identifier) == key for identifier in draft["mediaIds"]):
+            continue
+        check_cancel(check)
+        original_ids = [row[0] for row in db.execute(
+            "SELECT media_id FROM media WHERE account=? AND post_id=? AND kind='image' ORDER BY ordinal", key)]
+        post_key = json.dumps(key, ensure_ascii=False, separators=(",", ":"))
+        try:
+            _items, files, _warnings = view.ai_media.read_post(root, post_key, original_ids)
+            for item in files:
+                if item["id"] in available and available[item["id"]] != key:
+                    raise ValueError("Conflicting AI identifier")
+                available[item["id"]] = key
+        except (SourceError, OSError, ValueError, TypeError) as exc:
+            raise MaintenanceError("restore_media_unavailable", "등록 게시글의 AI 생성 이미지를 확인할 수 없습니다.") from exc
+        if strict and any(available.get(identifier) != key for identifier in draft["mediaIds"]):
+            raise MaintenanceError("restore_media_unavailable", "등록 게시글의 미디어가 현재 라이브러리에 없습니다.")
+
+
 def validate_files(db, root, *, check=lambda: False):
     """Hash active completed files and edits, not tombstoned deleted files."""
     deleted, deleted_edits = database_deletions(root, db)
@@ -242,6 +264,7 @@ def validate_files(db, root, *, check=lambda: False):
         if path.stat().st_size != size or file_hash(path) != digest or signature(path) != before:
             raise MaintenanceError("media_mismatch", "완료 미디어가 누락되거나 변경되었습니다. 기존 파일은 보존했습니다.")
         available[media_id] = (account, post_id)
+    validate_ai_drafts(db, root, available, deleted, check=check)
     return available, deleted
 
 
@@ -335,6 +358,7 @@ def metadata_restore(db, backup, root, available, deleted, check):
     drafts = view.read_drafts(root, db=backup)
     current = view.read_drafts(root, db=db)
     accepted = {key: value for key, value in drafts.items() if key not in deleted}
+    validate_ai_drafts(db, root, available, deleted, drafts=accepted, check=check, strict=True)
     for key, draft in accepted.items():
         if any(available.get(media_id) != key for media_id in draft["mediaIds"]):
             raise MaintenanceError("restore_media_unavailable", "백업 등록 게시글의 미디어가 현재 라이브러리에 없습니다.")

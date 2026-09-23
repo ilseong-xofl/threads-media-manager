@@ -93,6 +93,7 @@ export function MediaCarousel({
   const index = found < 0 ? 0 : found;
   const item = items[index];
   const multiple = items.length > 1;
+  const versionLabel = item?.aiGenerated ? 'AI 생성본' : item?.editType ? '편집본' : null;
   const originals = includeEditsInType ? items : items.filter((attachment) => !attachment.editType);
   const hasImages = originals.some((attachment) => attachment.kind === 'image');
   const hasVideos = originals.some((attachment) => attachment.kind === 'video');
@@ -176,7 +177,7 @@ export function MediaCarousel({
             {mediaTypeLabel}
           </span>
         )}
-        {item?.editType && !detail && <span className="media-edit-badge">편집본</span>}
+        {versionLabel && !detail && <span className="media-edit-badge">{versionLabel}</span>}
         {item?.editType && item.mediaId && onDeleteEdit && (
           <button
             type="button"
@@ -192,9 +193,9 @@ export function MediaCarousel({
             <Icon name="trash" />
           </button>
         )}
-        {(multiple || (detail && item?.editType)) && (
+        {(multiple || (detail && versionLabel)) && (
           <div className="media-top-right">
-            {detail && item?.editType && <span className="media-edit-badge">편집본</span>}
+            {detail && versionLabel && <span className="media-edit-badge">{versionLabel}</span>}
             {multiple && (
               <span className="media-counter" aria-live={detail ? 'polite' : 'off'}>
                 {index + 1} / {items.length}

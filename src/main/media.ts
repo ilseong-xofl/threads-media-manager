@@ -27,17 +27,24 @@ const MIME: Record<string, string> = {
   webm: 'video/webm',
 };
 
-async function openLocal(root: string, file: LocalFile): Promise<FileHandle> {
+async function openLocal(root: string, file: LocalFile, includeAI: boolean): Promise<FileHandle> {
   const match =
     /^media\/files\/[a-f0-9]{32}\/([a-f0-9]{32})\.(jpg|jpeg|png|webp|gif|mp4|mov|webm)$/.exec(
       file.relativePath,
     );
-  if (
-    !match ||
-    match[1] !== file.id ||
-    (file.kind === 'image') !== MIME[match[2]].startsWith('image/')
-  )
-    throw new Error('Invalid registration');
+  const ai = includeAI
+    ? /^ai-drafts\/([a-f0-9]{32})\/([a-f0-9]{32})\/(0[12]\.(png|jpg|webp))$/.exec(file.relativePath)
+    : null;
+  const validOriginal =
+    match &&
+    match[1] === file.id &&
+    (file.kind === 'image') === MIME[match[2]].startsWith('image/');
+  const validAI =
+    ai &&
+    file.kind === 'image' &&
+    file.id ===
+      createHash('sha256').update(`ai:${ai[1]}:${ai[2]}:${ai[3]}`).digest('hex').slice(0, 32);
+  if (!validOriginal && !validAI) throw new Error('Invalid registration');
   if ((await realpath(root)) !== root) throw new Error('Root changed');
   let path = root;
   for (const part of file.relativePath.split('/')) {
@@ -89,12 +96,13 @@ export function byteRange(header: string, size: number): { start: number; end: n
 }
 
 export class MediaRegistry {
+  constructor(private includeAI = false) {}
   private files = new Map<string, Registration>();
   async adopt(root: string, files: LocalFile[]): Promise<void> {
     const next = new Map<string, Registration>();
     for (const file of files) {
       if (next.has(file.id)) throw new Error('Duplicate registration');
-      const handle = await openLocal(root, file);
+      const handle = await openLocal(root, file, this.includeAI);
       try {
         const before = signature(await handle.stat());
         const digest = createHash('sha256');
@@ -116,7 +124,7 @@ export class MediaRegistry {
     if (!file) return new Response(null, { status: 404 });
     let handle: FileHandle;
     try {
-      handle = await openLocal(file.root, file);
+      handle = await openLocal(file.root, file, this.includeAI);
       if (signature(await handle.stat()) !== file.stamp) {
         await handle.close();
         return new Response(null, { status: 409 });

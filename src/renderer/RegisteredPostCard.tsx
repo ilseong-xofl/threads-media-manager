@@ -1,6 +1,7 @@
 import type { Attachment, Post } from '../shared/contracts';
 import { MediaCarousel } from './MediaCarousel';
-import { displayDate, postMedia } from './view-model';
+import { displayDate } from './view-model';
+import { registrationMedia } from './registration-model';
 import { Icon } from './Icon';
 import { postDraftExportIssue } from '../shared/post-export';
 
@@ -25,7 +26,7 @@ export function RegisteredPostCard({
 }) {
   if (!post.draft) return null;
   const exportIssue = postDraftExportIssue(post);
-  const available = postMedia(post);
+  const available = registrationMedia(post);
   const items: Attachment[] = post.draft.mediaIds.map((id, index) => ({
     ...(available.find((item) => item.mediaId === id) ?? {
       kind: 'image',

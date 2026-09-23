@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from datetime import datetime, timezone
+import argparse
 import json
 from pathlib import Path
 import signal
@@ -68,7 +69,7 @@ def selected_post(snapshot, data):
         # Removing a draft releases references only; a missing media file must
         # not make a registered draft impossible to remove.
         return post
-    attachments = {item.get("mediaId"): item for item in [*post["attachments"], *post.get("edits", [])] if item.get("mediaId")}
+    attachments = {item.get("mediaId"): item for item in [*post["attachments"], *post.get("edits", []), *post.get("aiImages", [])] if item.get("mediaId")}
     registered = {item["id"]: item for item in snapshot["files"]}
     for media_id in data["mediaIds"]:
         item, file = attachments.get(media_id), registered.get(media_id)
@@ -121,20 +122,20 @@ def delete_draft(db, root, post, data):
         raise DraftError("draft_conflict", "등록 초안이 변경되었습니다. 최신 초안을 다시 열어 확인하세요.")
 
 
-def execute(data, *, check=lambda: False):
+def execute(data, *, check=lambda: False, include_ai=False):
     validate(data)
     root = collection_root(Path(data["root"]))
     require_no_pending(root)
     cancelled(check)
     with CollectionLock(root) as lock:
-        snapshot = view.read_snapshot(root, owned_lock=lock)
+        snapshot = view.read_snapshot(root, owned_lock=lock, include_ai=include_ai)
         post = selected_post(snapshot, data)
         cancelled(check)
         marker = parse_json(read_stable(safe_path(root, "media/.library.json", require_file=True), max_bytes=4096))
         library = marker.get("library_id")
         if not isinstance(library, str) or not view.UUID.fullmatch(library):
             raise DraftError("invalid_library", "미디어 폴더 연결을 확인하세요.")
-        current = view.read_snapshot(root, owned_lock=lock)
+        current = view.read_snapshot(root, owned_lock=lock, include_ai=include_ai)
         selected_post(current, data)
         if stable_snapshot(current) != stable_snapshot(snapshot):
             raise DraftError("source_changed", "저장하는 동안 게시글이나 파일 정보가 변경되었습니다. 다시 확인하세요.")
@@ -171,7 +172,10 @@ def execute(data, *, check=lambda: False):
         return result
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--include-ai", action="store_true")
+    args = parser.parse_args(argv)
     stopped = False
     monitor = None
     data = None
@@ -185,7 +189,7 @@ def main():
         if not raw or len(raw) > INPUT_LIMIT:
             raise DraftError("invalid_request", "등록 초안 저장 요청의 크기나 형식을 확인하세요.")
         data = parse_json(raw)
-        result = execute(data, check=lambda: stopped or monitor.cancelled())
+        result = execute(data, check=lambda: stopped or monitor.cancelled(), include_ai=args.include_ai)
     except (DraftError, SourceError, view.InputError, StateError, MonitorError) as exc:
         result = {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
     except Exception:
@@ -198,4 +202,4 @@ def main():
     return 0 if result["ok"] else 1
 
 
-if __name__ == "__main__": sys.exit(main())
+if __name__ == "__main__": sys.exit(main(sys.argv[1:]))

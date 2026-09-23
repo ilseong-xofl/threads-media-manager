@@ -18,6 +18,8 @@ interface Result {
   recoverable: boolean;
   resumable?: boolean;
   batch?: DownloadBatch | null;
+  cleanedPosts?: number;
+  releasedPosts?: number;
 }
 interface Progress {
   phase: 'checking' | 'downloading' | 'validating' | 'recovering' | 'waiting';
@@ -69,7 +71,11 @@ function batchProgress(value: unknown): DownloadBatch | null {
     'currentRound',
     'deferredPosts',
   ] as const;
-  if (!object(value) || fields.some((field) => !integer(value[field])))
+  if (
+    !object(value) ||
+    fields.some((field) => !integer(value[field])) ||
+    (value.skippedPosts !== undefined && !integer(value.skippedPosts))
+  )
     throw new ViewError('worker_response', '다운로드 진행 수량을 검증하지 못했습니다.');
   const batch = Object.fromEntries(
     fields.map((field) => [field, value[field]]),
@@ -80,6 +86,7 @@ function batchProgress(value: unknown): DownloadBatch | null {
     batch.currentRound > batch.totalRounds
   )
     throw new ViewError('worker_response', '다운로드 진행 수량이 올바르지 않습니다.');
+  if (value.skippedPosts !== undefined) batch.skippedPosts = Number(value.skippedPosts);
   return batch;
 }
 
@@ -120,7 +127,9 @@ export function parseResult(value: unknown): Result {
       (object(value.problem) && text(value.problem.code) && text(value.problem.message))
     ) ||
     typeof value.recoverable !== 'boolean' ||
-    (value.resumable !== undefined && typeof value.resumable !== 'boolean')
+    (value.resumable !== undefined && typeof value.resumable !== 'boolean') ||
+    (value.cleanedPosts !== undefined && !integer(value.cleanedPosts)) ||
+    (value.releasedPosts !== undefined && !integer(value.releasedPosts))
   )
     return invalid();
   if (value.target !== undefined && value.target !== null && !target(value.target))
@@ -157,6 +166,8 @@ export function parseResult(value: unknown): Result {
     plan,
     recoverable: raw.recoverable,
     resumable: raw.resumable ?? false,
+    ...(raw.cleanedPosts !== undefined ? { cleanedPosts: raw.cleanedPosts } : {}),
+    ...(raw.releasedPosts !== undefined ? { releasedPosts: raw.releasedPosts } : {}),
     nextAllowedAt: raw.nextAllowedAt,
     problem: raw.problem ? { code: raw.problem.code, message: raw.problem.message } : null,
     ...(value.batch !== undefined ? { batch: batchProgress(value.batch) } : {}),
@@ -192,7 +203,7 @@ export function launchWorker(project: string): Launch {
       let result: Result | undefined;
       let failure: ViewError | undefined;
       let timeout: ReturnType<typeof setTimeout>;
-      const batch = input.command === 'batch' || input.command === 'resume';
+      const batch = ['batch', 'resume', 'cleanup-source'].includes(String(input.command));
       let outputWindow = Date.now();
       const armTimeout = () => {
         clearTimeout(timeout);
@@ -354,12 +365,12 @@ export class DownloadController {
   }
   inspect(root: string): DownloadView {
     if (this.active) return this.view;
-    // A read-only refresh is not a new download outcome: preserve dismissed
-    // notices and the completion timer for the same library.
+    // Validate collection records locally without touching interrupted downloads.
+    // A no-op preserves dismissed notices and the completion timer.
     if (root !== this.root) this.view = { ...empty(), revision: this.view.revision + 1 };
     this.root = root;
     this.plan = null;
-    this.run({ command: 'status' }, false);
+    this.run({ command: 'cleanup-source' }, true);
     return this.view;
   }
   resume(root: string): DownloadView {
@@ -397,6 +408,8 @@ export class DownloadController {
       // Establish the active guard before starting a process, even if launch fails synchronously.
       await Promise.resolve();
       let outcome: DownloadView | null = null;
+      let changed = false;
+      const inspection = input.command === 'status' || input.command === 'cleanup-source';
       try {
         const worker = this.launch(this.root!, input, (event) => {
           if (this.view.phase !== 'stopping') this.view = { ...this.view, ...event };
@@ -404,6 +417,7 @@ export class DownloadController {
         this.process = worker;
         if (this.view.phase === 'stopping') worker.cancel();
         const result = await worker.result;
+        changed = (result.cleanedPosts ?? 0) + (result.releasedPosts ?? 0) > 0;
         if (input.command === 'preview' && this.view.phase === 'stopping')
           throw new ViewError('cancelled', '대상 확인을 중지했습니다.');
         this.plan = input.command === 'preview' ? (result.plan ?? null) : null;
@@ -412,12 +426,15 @@ export class DownloadController {
           target: result.target ?? this.view.target,
           nextAllowedAt: result.nextAllowedAt,
           problem:
-            input.command === 'status' && this.view.problem?.code === result.problem?.code
+            inspection && !changed && this.view.problem?.code === result.problem?.code
               ? this.view.problem
               : result.problem,
           recoverable: result.recoverable,
           resumable: result.resumable ?? false,
           batch: result.batch ?? this.view.batch,
+          ...(changed
+            ? { cleanedPosts: result.cleanedPosts, releasedPosts: result.releasedPosts }
+            : {}),
           phase:
             result.problem || result.recoverable || result.resumable
               ? 'blocked'
@@ -425,9 +442,9 @@ export class DownloadController {
                 ? this.plan
                   ? 'ready'
                   : 'blocked'
-                : ['download', 'batch', 'resume'].includes(String(input.command))
+                : changed || ['download', 'batch', 'resume'].includes(String(input.command))
                   ? 'complete'
-                  : input.command === 'status' && this.view.phase === 'complete'
+                  : inspection && this.view.phase === 'complete'
                     ? 'complete'
                     : 'idle',
         };
@@ -461,7 +478,7 @@ export class DownloadController {
         // stop/shutdown during refresh must not leave an inactive 'stopping' view.
         this.view = {
           ...(outcome ?? this.view),
-          revision: this.view.revision + (input.command === 'status' ? 0 : 1),
+          revision: this.view.revision + (inspection && !changed ? 0 : 1),
         };
         this.completion = null;
       }

@@ -26,7 +26,8 @@ from threads_source import excel_input
 from threads_source.files import SourceError, collection_root, read_stable, safe_path, parse_json, CollectionLock
 from threads_source.excel_input import InputError
 from threads_runner.state import APP_ID, SCHEMA_VERSION, StateError
-from threads_runner import attempts, deletion_state
+from threads_runner import attempts, deletion_state, source_readiness
+import ai_media
 
 UUID = re.compile(r"[0-9a-f]{32}")
 FILE = re.compile(r"media/files/[0-9a-f]{32}/([0-9a-f]{32})\.(jpg|jpeg|png|webp|gif|mp4|webm|mov)")
@@ -64,7 +65,14 @@ def state_signature(root):
     return result
 
 
-def local_file(root, row):
+def local_file(root, row, *, include_ai=False):
+    if include_ai and isinstance(row["final_rel"], str) and row["final_rel"].startswith("ai-drafts/"):
+        if row["kind"] != "image":
+            raise SourceError("invalid_ai_media", "AI 생성 이미지의 종류를 확인하세요.")
+        record = ai_media.file_record(root, row["final_rel"], row["media_id"], row["sha256"])
+        if record["size"] != row["size"]:
+            raise SourceError("ai_media_changed", "AI 생성 이미지의 크기가 변경되었습니다.")
+        return record
     relative = row["final_rel"]
     match = FILE.fullmatch(relative or "")
     if not match or match[1] != row["media_id"]:
@@ -325,14 +333,13 @@ def read_drafts(root, excluded_posts=None, *, db=None):
         return _read_drafts(connection, excluded_posts)
 
 
-def read_snapshot(path, *, owned_lock=None):
+def read_snapshot(path, *, owned_lock=None, include_ai=False):
     root = collection_root(Path(path))
     idle(root, owned_lock)
-    source = excel_input.load_collection(root)
-    # A running/invalid/conflicting record is not adopted as a new good snapshot.
-    if source["errors"]:
-        first = source["errors"][0]
-        raise SourceError(first["code"], "원본 기록의 연결 또는 관찰 값이 충돌합니다. 마지막 정상 목록을 유지합니다.")
+    try:
+        source = source_readiness.normalize(root, excel_input.load_collection(root))
+    except (StateError, source_readiness.excel_input.InputError) as exc:
+        raise SourceError(exc.code, str(exc)) from exc
     excluded_posts = deletion_state.excel_deletions(root, source["sources"])
     observations = {}
     for item in source["sources"]:
@@ -341,7 +348,10 @@ def read_snapshot(path, *, owned_lock=None):
             raise SourceError("source_changed", "읽는 중 원본이 변경되었습니다.")
         for post in current["posts"]:
             observations.setdefault((post["계정명"], post["게시글ID"]), []).append(post)
-    warnings = [{"code": item["code"], "message": "수집 기록의 주의 사항이 있습니다: " + item["code"]} for item in source["warnings"]]
+    # Historical scan interruptions/gaps do not require action on saved posts.
+    # Keep their source/run metadata, but do not show permanent global alerts.
+    warnings = [{"code": item["code"], "message": "수집 기록의 주의 사항이 있습니다: " + item["code"]}
+                for item in source["warnings"] if item["code"] not in {"partial_collection", "possible_gap"}]
     if deletion_state.deletion_pending(root):
         warnings.append({"code": "deletion_recovery_required", "message": "완료되지 않은 삭제 작업이 있습니다. 삭제 작업 복구를 실행하세요."})
     state_stamp = None
@@ -353,6 +363,11 @@ def read_snapshot(path, *, owned_lock=None):
         warnings.append({"code": exc.code if isinstance(exc, (SourceError, StateError)) else "state_unavailable",
                          "message": str(exc) if isinstance(exc, (SourceError, StateError)) else "기존 저장 상태를 읽을 수 없습니다. DB와 파일을 보존했습니다."})
     source = deletion_state.filter_source(source, excluded_posts)
+    # Only errors owned by tombstoned source posts can be removed. Preserve the
+    # existing unavailable-state view for a damaged DB or stored media file.
+    if source["errors"]:
+        first = source["errors"][0]
+        raise SourceError(first["code"], "원본 기록의 연결 또는 관찰 값이 충돌합니다. 마지막 정상 목록을 유지합니다.")
     attachments = {}
     for row in source["media"]:
         key = row["계정명"], row["게시글ID"], row["순서"]
@@ -419,9 +434,21 @@ def read_snapshot(path, *, owned_lock=None):
         except (SourceError, sqlite3.Error, ValueError, OSError, TypeError, KeyError):
             warnings.append({"code": "drafts_unavailable", "message": "등록 초안을 읽을 수 없습니다. 기존 초안을 보존하려면 저장 상태를 확인하세요."})
     for post in posts:
+        post["downloadExcluded"] = False
         after = max((item["ordinal"] for item in post["attachments"]), default=0)
         post["edits"] = [{**item, "ordinal": after + index} for index, item in
                          enumerate(edits.get((post["account"], post["postId"]), []), 1)]
+        if include_ai:
+            try:
+                originals = [item["mediaId"] for item in post["attachments"] if item["kind"] == "image"]
+                generated, generated_files, generated_warnings = ai_media.read_post(root, post["key"], originals)
+                offset = max((item["ordinal"] for item in [*post["attachments"], *post["edits"]]), default=0)
+                post["aiImages"] = [{**item, "ordinal": offset + index} for index, item in enumerate(generated, 1)]
+                files.extend(generated_files)
+                warnings.extend(generated_warnings)
+            except (SourceError, OSError, ValueError, TypeError):
+                post["aiImages"] = []
+                warnings.append({"code": "ai_media_unavailable", "message": "AI 생성 이미지를 확인하지 못했습니다. 기존 자료는 보존했습니다."})
         if (post["account"], post["postId"]) in comments:
             post["comment"] = comments[(post["account"], post["postId"])]
         if (post["account"], post["postId"]) in drafts:
@@ -439,9 +466,10 @@ def read_snapshot(path, *, owned_lock=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Read the local collection without changing it")
     parser.add_argument("--collection-root", required=True)
+    parser.add_argument("--include-ai", action="store_true")
     args = parser.parse_args(argv)
     try:
-        result = read_snapshot(args.collection_root)
+        result = read_snapshot(args.collection_root, include_ai=args.include_ai)
     except (SourceError, InputError, StateError) as exc:
         result = {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
     except Exception:

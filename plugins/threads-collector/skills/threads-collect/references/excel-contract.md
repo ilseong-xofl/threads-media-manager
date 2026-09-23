@@ -99,7 +99,7 @@ Excel 형식 버전은 `daily-v1`이다. `accounts.xlsx`는 `계정` 1개 시트
 | `running` | 기존 기준 유지 |
 | `initial_complete` | 최초 10건 중 첫 ID |
 | `anchor_reached` | 이번 첫 대상 ID; 대상이 없으면 기존 기준 |
-| `cap_reached` | **이번 20건 중 첫 ID**. 이전 기준 미발견과 possible_gap 기록 |
+| `cap_reached` | **이번 10건 중 첫 ID**. 이전 기준 미발견과 possible_gap 기록 |
 | `end_reached` | 명시적인 실제 목록 끝. 이번 첫 대상 ID, 대상 없으면 기존 기준. 이전 기준 미발견이면 possible_gap |
 | `partial` | 제한/오류/사용자 중단/시간·이동 상한/순서 판정 불가. 기존 기준 유지, 누락상태 unknown |
 | `skipped_daily` | 같은 날 이미 시도함. 기존 기준 유지 |

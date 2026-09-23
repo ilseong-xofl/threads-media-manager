@@ -20,6 +20,7 @@ import {
   registrationChanged,
   registrationInput,
   registrationMedia,
+  registrationMediaLabel,
   selectableMedia,
   selectedRegistrationMedia,
   toggleRegistrationMedia,
@@ -354,13 +355,15 @@ function RegistrationDialog({
             <section className="registration-section" aria-labelledby="registration-source-title">
               <div className="registration-section-heading">
                 <h3 id="registration-source-title">미디어 선택</h3>
-                <span>원본·편집본에서 선택</span>
+                <span>
+                  {post.aiImages ? '원본·편집본·AI 생성본에서 선택' : '원본·편집본에서 선택'}
+                </span>
               </div>
               <div className="registration-strip-wrapper">
                 <button
                   type="button"
                   className="icon-button"
-                  aria-label="이전 원본 미디어"
+                  aria-label="이전 미디어"
                   onClick={() => sourceStrip.current?.scrollBy({ left: -300, behavior: 'smooth' })}
                 >
                   <Icon name="left" />
@@ -368,7 +371,7 @@ function RegistrationDialog({
                 <div className="registration-strip registration-source-strip" ref={sourceStrip}>
                   {source.map((item, index) => {
                     const chosen = !!item.mediaId && mediaIds.includes(item.mediaId);
-                    const label = `${item.editType ? '편집본' : '원본'} ${index + 1}${item.kind === 'video' ? ' 영상' : ' 이미지'}`;
+                    const label = `${registrationMediaLabel(item)} ${index + 1}${item.kind === 'video' ? ' 영상' : ' 이미지'}`;
                     return (
                       <button
                         type="button"
@@ -404,7 +407,7 @@ function RegistrationDialog({
                           <span>
                             {index + 1}/{source.length}
                           </span>
-                          <span>{item.editType ? '편집본' : '원본'}</span>
+                          <span>{registrationMediaLabel(item)}</span>
                         </span>
                       </button>
                     );
@@ -413,7 +416,7 @@ function RegistrationDialog({
                 <button
                   type="button"
                   className="icon-button"
-                  aria-label="다음 원본 미디어"
+                  aria-label="다음 미디어"
                   onClick={() => sourceStrip.current?.scrollBy({ left: 300, behavior: 'smooth' })}
                 >
                   <Icon name="right" />
@@ -526,7 +529,9 @@ function RegistrationDialog({
                         </span>
                         <span>
                           {index + 1}
-                          {attachment?.editType ? ' · 편집본' : ''}
+                          {attachment && (attachment.aiGenerated || attachment.editType)
+                            ? ` · ${registrationMediaLabel(attachment)}`
+                            : ''}
                           {!attachment || !selectableMedia(attachment) ? ' · 확인 필요' : ''}
                         </span>
                       </button>

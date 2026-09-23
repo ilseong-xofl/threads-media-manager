@@ -57,14 +57,20 @@ export function parseExportResult(raw: string, expectedFileName: string): void {
   );
 }
 
-export function launchExport(projectRoot: string): LaunchExport {
+export function launchExport(projectRoot: string, includeAI = false): LaunchExport {
   return (input) => {
     const { command, prefix } = pythonCommand(projectRoot);
     let cancel = () => {};
     const result = new Promise<void>((resolve, reject) => {
       const child = execFile(
         command,
-        [...prefix, '-I', '-B', join(projectRoot, 'local-runtime', 'export_post.py')],
+        [
+          ...prefix,
+          '-I',
+          '-B',
+          join(projectRoot, 'local-runtime', 'export_post.py'),
+          ...(includeAI ? ['--include-ai'] : []),
+        ],
         { timeout: 600_000, maxBuffer: 64 * 1024, windowsHide: true, encoding: 'utf8' },
         (error, stdout) => {
           try {

@@ -631,6 +631,19 @@ describe('download state across collection refreshes', () => {
 });
 
 describe('batch worker response boundary', () => {
+  it('keeps skipped posts separate from blocked posts in a successful result', () => {
+    const counts = {
+      ...batch(),
+      completedPosts: 3,
+      completedFiles: 5,
+      currentRound: 2,
+      deferredPosts: 0,
+      skippedPosts: 1,
+    };
+    const result = parseResult({ ...batchResult(), batch: counts });
+    expect(result.batch).toEqual(counts);
+    expect(result.problem).toBeNull();
+  });
   it('accepts an absent batch for the existing single-file worker and a zero-work batch', () => {
     expect(parseResult(ready()).target).toEqual(target);
     const emptyBatch = {
@@ -668,6 +681,9 @@ describe('batch worker response boundary', () => {
     { ...batch(), totalRounds: Infinity },
     { ...batch(), currentRound: NaN },
     { ...batch(), deferredPosts: -1 },
+    { ...batch(), skippedPosts: -1 },
+    { ...batch(), skippedPosts: '1' },
+    { ...batch(), skippedPosts: 1.5 },
     { ...batch(), completedPosts: 4 },
     { ...batch(), completedFiles: 6 },
     { ...batch(), currentRound: 3 },
@@ -680,7 +696,7 @@ describe('batch worker response boundary', () => {
 });
 
 describe('persistent download recovery', () => {
-  it('reads interrupted state without writing or automatically starting a transfer', async () => {
+  it('checks collection records locally and preserves interrupted download state', async () => {
     const launch = vi.fn<Launch>(() => ({
       cancel: vi.fn(),
       result: Promise.resolve({
@@ -706,10 +722,10 @@ describe('persistent download recovery', () => {
     await controller.settled();
     expect(launch).toHaveBeenCalledExactlyOnceWith(
       '/library',
-      { command: 'status' },
+      { command: 'cleanup-source' },
       expect.any(Function),
     );
-    expect(refresh).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledOnce();
     expect(controller.view).toMatchObject({
       phase: 'blocked',
       recoverable: true,
@@ -719,7 +735,7 @@ describe('persistent download recovery', () => {
     });
   });
 
-  it('resumes only on the explicit recovery action, once, then refreshes saved files', async () => {
+  it('resumes the existing download only on an explicit action', async () => {
     const pending = deferred<Result>();
     const launch = vi.fn<Launch>(() => ({ result: pending.promise, cancel: vi.fn() }));
     const refresh = vi.fn().mockResolvedValue(undefined);
@@ -750,7 +766,7 @@ describe('persistent download recovery', () => {
   });
 });
 
-describe('read-only status refresh notices', () => {
+describe('unchanged collection inspection notices', () => {
   it('preserves the outcome identity and detail of a dismissed interruption', async () => {
     const result: Result = {
       target: null,
@@ -795,5 +811,86 @@ describe('read-only status refresh notices', () => {
     controller.inspect('/library');
     await controller.settled();
     expect(controller.view).toEqual(first);
+  });
+});
+
+describe('incomplete collection cleanup', () => {
+  it('refreshes the source list before publishing cleanup and retains interrupted downloads', async () => {
+    const refreshDone = deferred<void>();
+    const refreshStarted = deferred<void>();
+    const counts = { ...batch(), deferredPosts: 0 };
+    const launch = vi.fn<Launch>(() => ({
+      result: Promise.resolve({
+        ...batchResult(),
+        problem: { code: 'interrupted', message: '다운로드가 중단됐습니다.' },
+        resumable: true,
+        batch: counts,
+        cleanedPosts: 1,
+        nextAllowedAt: 2_000_000_000,
+      }),
+      cancel: vi.fn(),
+    }));
+    const controller = new DownloadController(launch, () => {
+      refreshStarted.resolve();
+      return refreshDone.promise;
+    });
+    controller.inspect('/library');
+    await refreshStarted.promise;
+    expect(controller.active).toBe(true);
+    controller.startAll('/library');
+    expect(launch).toHaveBeenCalledExactlyOnceWith(
+      '/library',
+      { command: 'cleanup-source' },
+      expect.any(Function),
+    );
+    refreshDone.resolve();
+    await controller.settled();
+    expect(controller.active).toBe(false);
+    expect(controller.view).toMatchObject({
+      phase: 'blocked',
+      problem: { code: 'interrupted' },
+      resumable: true,
+      nextAllowedAt: 2_000_000_000,
+      batch: counts,
+      cleanedPosts: 1,
+    });
+    expect(launch).toHaveBeenCalledOnce();
+  });
+
+  it.each(['1', -1, 1.5, null, {}])(
+    'rejects an invalid source cleanup count: %j',
+    (cleanedPosts) => {
+      expect(() => parseResult({ ...batchResult(), cleanedPosts })).toThrow(ViewError);
+    },
+  );
+
+  it.each(['1', -1, 1.5, null, {}])('rejects an invalid release count: %j', (releasedPosts) => {
+    expect(() => parseResult({ ...batchResult(), releasedPosts })).toThrow(ViewError);
+  });
+
+  it('reports a restored valid source without counting it as deleted', async () => {
+    const controller = new DownloadController(
+      () => ({
+        result: Promise.resolve({ ...batchResult(), cleanedPosts: 0, releasedPosts: 1 }),
+        cancel: vi.fn(),
+      }),
+      vi.fn(),
+    );
+    controller.inspect('/library');
+    await controller.settled();
+    expect(controller.view).toMatchObject({ phase: 'complete', cleanedPosts: 0, releasedPosts: 1 });
+    expect(parseResult({ ...batchResult(), cleanedPosts: 0, releasedPosts: 1 }).releasedPosts).toBe(
+      1,
+    );
+  });
+
+  it('passes only the source cleanup counter without private cleanup data', () => {
+    const result = parseResult({
+      ...batchResult(),
+      cleanedPosts: 2,
+      cleanupPaths: ['/private/file'],
+    });
+    expect(result.cleanedPosts).toBe(2);
+    expect(result).not.toHaveProperty('cleanupPaths');
   });
 });

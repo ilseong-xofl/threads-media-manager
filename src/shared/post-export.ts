@@ -18,7 +18,10 @@ export function validPostDraftActionInput(value: unknown): value is PostDraftAct
 export function postDraftExportIssue(post: Post): string | null {
   if (!validPostDraft(post.draft)) return '등록 게시글을 찾을 수 없습니다. 목록을 새로고침하세요.';
   const media = new Map(
-    [...post.attachments, ...(post.edits ?? [])].map((item) => [item.mediaId, item]),
+    [...post.attachments, ...(post.edits ?? []), ...(post.aiImages ?? [])].map((item) => [
+      item.mediaId,
+      item,
+    ]),
   );
   if (
     post.draft.mediaIds.some((id) => {

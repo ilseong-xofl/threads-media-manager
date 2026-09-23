@@ -6,7 +6,7 @@ import secrets
 import time
 import uuid
 
-from . import attempts, deletion_state, inspection, recovery, resume, runner, transport
+from . import attempts, deletion_state, inspection, recovery, resume, runner, source_readiness, transport
 from .state import POLICY, State, StateError, safe_path
 
 META = "download_batch"
@@ -25,7 +25,7 @@ def public_batch(plan):
             "totalFiles": len(targets), "completedFiles": completed,
             "totalRounds": plan["totalRounds"],
             "currentRound": targets[min(completed, len(targets)-1)]["round"] if targets else 0,
-            "deferredPosts": len(plan["deferred"])}
+            "deferredPosts": len(plan["deferred"]), "skippedPosts": len(plan.get("skipped", []))}
 
 
 def _sample(name):
@@ -93,24 +93,8 @@ def _prepare_posts(state, data):
             remaining.append((item, previous["media_id"] if previous else uuid.uuid4().hex))
         if media and not remaining:
             continue
-        run = next((r for r in data["runs"] if (r["계정명"], r["실행ID"]) == (key[0], post["확인실행ID"])), None)
-        reason = None
-        if not run or run["결과"] not in (runner.excel_input.COMMITTED - {"partial"}) or post.get("_blocked"):
-            reason = "source_not_ready"
-        elif (not media or [m["순서"] for m in media] != list(range(1, len(media)+1)) or
-                sum(m["종류"] == "image" for m in media) != post["이미지 수"] or
-                sum(m["종류"] == "video" for m in media) != post["영상 수"]):
-            reason = "attachment_not_ready"
-        else:
-            for item, _ in remaining:
-                if item.get("_blocked") or item["주소상태"] != "http_candidate" or not item["다운로드URL"]:
-                    reason = "attachment_not_ready"
-                    break
-                try:
-                    transport.validate_url(item["다운로드URL"])
-                except transport.TransferError:
-                    reason = "attachment_not_ready"
-                    break
+        remaining_orders = {item["순서"] for item, _ in remaining}
+        reason = source_readiness.reason(data, post, media, saved=lambda item: item["순서"] not in remaining_orders)
         if reason:
             deferred.append({"account": key[0], "postId": key[1], "reason": reason})
         else:
@@ -251,7 +235,7 @@ def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.ti
                 initial["links"][(item["계정명"], item["게시글ID"], item["순서"])]["kind"] == item["종류"]
                 for item in source["media"]))):
             return {**inspection.public_status(initial), "batch": {"totalPosts": 0, "completedPosts": 0,
-                "totalFiles": 0, "completedFiles": 0, "totalRounds": 0, "currentRound": 0, "deferredPosts": 0}}
+                "totalFiles": 0, "completedFiles": 0, "totalRounds": 0, "currentRound": 0, "deferredPosts": 0, "skippedPosts": 0}}
     with State(root, clock=clock) as state:
         saved_stamps = {}
         if resume_requested:

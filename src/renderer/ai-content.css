@@ -1,0 +1,125 @@
+.ai-generate-action {
+  margin-right: auto;
+  color: #6255d9;
+  border-color: #dad6fb;
+  background: #f7f5ff;
+}
+.ai-content-subtitle {
+  margin: 6px 0 0;
+  color: #858fa0;
+  font-size: 12px;
+  font-weight: 400;
+}
+.ai-content-body {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ai-content-toolbar {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: #7a8496;
+  font-size: 12px;
+}
+.ai-content-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-content-toolbar select {
+  padding: 7px 10px;
+  border: 1px solid #e1e4ed;
+  border-radius: 8px;
+  background: white;
+  color: #3b4252;
+}
+.ai-content-progress {
+  padding: 36px 20px;
+  border: 1px solid #e2dcff;
+  border-radius: 14px;
+  background: #f7f5ff;
+  color: #6255d9;
+  text-align: center;
+}
+.ai-content-progress > .icon {
+  display: block;
+  width: 30px;
+  height: 30px;
+  margin: 0 auto 14px;
+}
+.ai-content-progress p {
+  margin-bottom: 0;
+  font-size: 12px;
+}
+.ai-content-images {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.ai-content-images figure {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #e5e8ee;
+  border-radius: 14px;
+  background: white;
+}
+.ai-content-images img {
+  width: 100%;
+  height: 340px;
+  display: block;
+  object-fit: contain;
+  background: #181e27;
+}
+.ai-content-images figcaption {
+  padding: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #7a8496;
+}
+.ai-content-caption > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.ai-content-caption button {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.ai-content-product {
+  color: #858fa0;
+  font-size: 12px;
+}
+.ai-content-analysis {
+  font-size: 12px;
+  color: #6e778a;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.ai-content-analysis summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.ai-content-saved {
+  margin: 0;
+  font-size: 12px;
+  color: #658473;
+}
+.ai-content-folder {
+  margin-right: auto;
+}
+@media (max-width: 600px) {
+  .ai-content-body {
+    padding: 14px;
+  }
+  .ai-content-images {
+    gap: 8px;
+  }
+  .ai-content-images img {
+    height: 220px;
+  }
+}

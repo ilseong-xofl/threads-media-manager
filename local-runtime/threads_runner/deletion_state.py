@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from . import excel_input
+from . import excel_input, source_readiness
 from .state import APP_ID, SCHEMA_VERSION, StateError, safe_path
 
 
@@ -141,11 +141,12 @@ def deleted_posts(root, *, db=None, sources=None):
 
 def filter_source(data, deleted):
     return {**data, "posts": [post for post in data["posts"] if (post["계정명"], post["게시글ID"]) not in deleted],
-            "media": [item for item in data["media"] if (item["계정명"], item["게시글ID"]) not in deleted]}
+            "media": [item for item in data["media"] if (item["계정명"], item["게시글ID"]) not in deleted],
+            "errors": [error for error in data["errors"] if not source_readiness.error_is_owned(error, deleted)]}
 
 
 def load_source(root, *, db=None):
-    data = excel_input.load_collection(root)
+    data = source_readiness.normalize(root, excel_input.load_collection(root))
     return filter_source(data, deleted_posts(root, db=db, sources=data["sources"]))
 
 

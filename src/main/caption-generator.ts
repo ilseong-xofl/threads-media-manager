@@ -133,7 +133,7 @@ function environment(): NodeJS.ProcessEnv {
   return result;
 }
 
-function codexCommand(): string {
+export function codexCommand(): string {
   if (process.platform === 'darwin') {
     for (const path of ['/opt/homebrew/bin/codex', '/usr/local/bin/codex'])
       if (existsSync(path)) return path;
@@ -191,7 +191,7 @@ function cliError(detail: string, missing = false): ViewError {
 
 type ProcessJob = { result: Promise<string>; cancel(): void };
 
-function runProcess(
+export function runProcess(
   command: string,
   args: string[],
   cwd: string,
@@ -311,6 +311,7 @@ export class CaptionGenerator {
   constructor(
     private projectRoot: string,
     private refresh: (root: string) => Promise<CollectionView>,
+    private includeAI = false,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -350,7 +351,11 @@ export class CaptionGenerator {
         view.snapshot?.root === root
           ? view.snapshot.posts.find((p) => p.key === input.postKey)
           : undefined;
-      const media = [...(post?.attachments ?? []), ...(post?.edits ?? [])];
+      const media = [
+        ...(post?.attachments ?? []),
+        ...(post?.edits ?? []),
+        ...(this.includeAI ? (post?.aiImages ?? []) : []),
+      ];
       const selected = input.mediaIds.map((id) => media.find((item) => item.mediaId === id));
       if (
         !post ||
@@ -389,6 +394,7 @@ export class CaptionGenerator {
           '-I',
           '-B',
           join(this.projectRoot, 'local-runtime', 'caption_images.py'),
+          ...(this.includeAI ? ['--include-ai'] : []),
         ],
         directory,
         JSON.stringify({

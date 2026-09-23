@@ -16,6 +16,7 @@ export function PostDetailModal({
   editDisabled,
   onEdit,
   onRegister,
+  onGenerateContent,
 }: {
   post: Post;
   ordinal?: number;
@@ -24,6 +25,7 @@ export function PostDetailModal({
   editDisabled: boolean;
   onEdit(input: MediaEditInput): Promise<Attachment | null>;
   onRegister(): void;
+  onGenerateContent?(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -263,6 +265,21 @@ export function PostDetailModal({
             />
           ) : (
             <>
+              {onGenerateContent && (
+                <button
+                  type="button"
+                  className="post-detail-action ai-generate-action"
+                  disabled={
+                    editDisabled ||
+                    working ||
+                    !post.attachments.some((a) => a.kind === 'image' && a.status === 'saved')
+                  }
+                  onClick={onGenerateContent}
+                >
+                  <Icon name="sparkles" />
+                  AI 생성
+                </button>
+              )}
               <button
                 type="button"
                 className="post-detail-action"

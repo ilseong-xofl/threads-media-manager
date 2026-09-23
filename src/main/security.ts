@@ -3,7 +3,7 @@ export function isLocalRequest(url: string, entry: string): boolean {
     const target = new URL(url);
     const page = new URL(entry);
     if (target.protocol === 'threads-media:')
-      return /^threads-media:\/\/file\/[a-f0-9]{32}$/.test(url);
+      return /^threads-media:\/\/(?:file\/[a-f0-9]{32}|ai\/[a-f0-9]{32}\/[12])$/.test(url);
     // Forge serves scripts and its HMR socket on the same dedicated loopback port.
     return (
       ['http:', 'ws:'].includes(target.protocol) &&
