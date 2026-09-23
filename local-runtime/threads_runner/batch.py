@@ -196,12 +196,15 @@ def _persist_plan(state):
     return plan
 
 
-def _result(state, plan, problem=None):
+def _result(state, plan, problem=None, completed_since=None):
     next_allowed = state.meta("next_allowed", 0)
+    completed_keys = [] if completed_since is None or plan["status"] != "complete" else [
+        [target["account"], target["postId"]] for target in plan["targets"][completed_since:plan["nextIndex"]]
+        if target["lastInPost"]]
     return {"nextAllowedAt": next_allowed if next_allowed > state.clock() else None, "problem": problem,
             "recoverable": bool(attempts.current_jobs(state, {'running', 'staged'})),
             "resumable": resume.possible({META: plan, "stop": state.meta("stop")}) and state.clock() >= state.meta("last_clock", state.clock()) - 1,
-            "batch": public_batch(plan)}
+            "batch": public_batch(plan), "_completedPostKeys": completed_keys}
 
 
 def _deferred_problem(plan):
@@ -240,6 +243,7 @@ def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.ti
         saved_stamps = {}
         if resume_requested:
             plan = state.meta(META)
+            completed_since = plan.get("nextIndex") if isinstance(plan, dict) and type(plan.get("nextIndex")) is int else None
             try:
                 if not resume.possible({META: plan, "stop": state.meta("stop")}):
                     raise StateError("resume_review_required", "현재 중단 사유 또는 다운로드 계획을 먼저 확인해야 합니다.")
@@ -254,7 +258,7 @@ def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.ti
                     return _result(state, state.meta(META), {"code": exc.code, "message": str(exc)})
                 raise
             if plan["status"] == "complete":
-                return _result(state, plan, _deferred_problem(plan))
+                return _result(state, plan, _deferred_problem(plan), completed_since)
         else:
             try:
                 state.guard()
@@ -272,6 +276,7 @@ def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.ti
                     return _result(state, plan, {"code": exc.code, "message": str(exc)})
             else:
                 plan = _persist_plan(state)
+            completed_since = plan["nextIndex"]
         last_emit = -float("inf")
 
         def emit(phase, received=0, total=None, target=None):
@@ -321,7 +326,7 @@ def run(root, cancel, *, transfer=None, output=lambda event: None, clock=time.ti
                     source_guard=lambda: _source_guard(state, plan))
                 plan = state.meta(META)
                 emit("checking", target=target)
-            return _result(state, plan, _deferred_problem(plan))
+            return _result(state, plan, _deferred_problem(plan), completed_since)
         except BaseException as exc:
             code = getattr(exc, "code", "interrupted" if isinstance(exc, KeyboardInterrupt) else "download_failed")
             state.stop(code, retry_at=getattr(exc, "retry_at", None), requires_review=True)

@@ -9,7 +9,7 @@ python <plugin>/scripts/collection_source.py --collection-root <root> inspect
 python <plugin>/scripts/collection_source.py --collection-root <root> commit-source --input <root>/_work/<실행ID>/normalized.json --journal <root>/_work/<실행ID>/0001.jsonl
 ```
 
-`inspect`는 Excel의 게시글·미디어·실행기록을 검증하고 계정별 최신 완료 기준과 최근 시도를 반환한다. `accounts[].next_anchor`는 완료 실행의 기준이고 `last_attempt`·`last_attempt_run`·`last_result`에는 partial도 포함한다. 하루 한 번 판정은 실제 시도의 KST 날짜다. errors가 있으면 원본을 보존하고 복구 전 수집하지 않는다. 계정 파일의 기준·실행 열은 결과 Excel에서 복구할 수 있는 표시 사본이다.
+`inspect`는 Excel의 게시글·미디어·실행기록을 검증하고 계정별 최신 완료 기준과 최근 시도를 반환한다. `accounts[].next_anchor`는 완료 실행의 기준이고 `last_attempt`·`last_attempt_run`·`last_result`에는 partial도 포함한다. 최근 시도는 복구·보고용이며 같은 KST 날짜의 재요청을 차단하지 않는다. errors가 있으면 원본을 보존하고 복구 전 수집하지 않는다. 계정 파일의 기준·실행 열은 결과 Excel에서 복구할 수 있는 표시 사본이다.
 
 `commit-source` 입력은 [daily-v1 필드](../skills/threads-collect/references/excel-contract.md)의 `{posts, media, run}`이다. 중복 관찰을 메모리에서 정규화하고 하나의 실제 종료 상태로 전달한다. run.실행ID·계정명은 종료된 임시 journal과 같아야 한다. running·불완전 tail·다른 실행·충돌은 확정하지 않는다.
 

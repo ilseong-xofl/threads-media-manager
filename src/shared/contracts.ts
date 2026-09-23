@@ -230,6 +230,7 @@ export type DownloadPhase =
   | 'ready'
   | 'downloading'
   | 'validating'
+  | 'deduplicating'
   | 'waiting'
   | 'stopping'
   | 'recovering'
@@ -259,6 +260,8 @@ export interface DownloadView {
   batch?: DownloadBatch | null;
   cleanedPosts?: number;
   releasedPosts?: number;
+  downloadedPosts?: number;
+  duplicatePostsRemoved?: number;
 }
 
 export type LibraryMaintenanceOperation = 'backup' | 'restore' | 'reconnect';

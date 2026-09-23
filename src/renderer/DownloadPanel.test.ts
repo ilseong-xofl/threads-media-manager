@@ -33,6 +33,39 @@ it('shows skipped posts as information alongside a successful completion', () =>
   expect(markup).not.toContain('이어서 다운로드');
 });
 
+it('shows the downloaded and exact-hash duplicate totals after cleanup', () => {
+  const markup = renderToStaticMarkup(
+    createElement(DownloadOverlay, {
+      view: {
+        ...idleDownload(),
+        phase: 'complete',
+        downloadedPosts: 2,
+        duplicatePostsRemoved: 1,
+      },
+      starting: false,
+      enabled: true,
+      resume: () => undefined,
+      recover: () => undefined,
+    }),
+  );
+  expect(markup).toContain('게시글 2개 다운로드 · 중복 1개 제거');
+});
+
+it('keeps the overlay active while checking first-media duplicates', () => {
+  const markup = renderToStaticMarkup(
+    createElement(DownloadOverlay, {
+      view: { ...idleDownload(), phase: 'deduplicating', received: 1, total: 2 },
+      starting: false,
+      enabled: true,
+      resume: () => undefined,
+      recover: () => undefined,
+    }),
+  );
+  expect(markup).toContain('중복 게시글 확인 중');
+  expect(markup).toContain('중복 확인 1/2');
+  expect(markup).not.toContain('download-status-dismissible');
+});
+
 it('offers resume for an interrupted valid post while identifying only invalid collection cleanup', () => {
   const markup = renderToStaticMarkup(
     createElement(DownloadOverlay, {
@@ -90,6 +123,7 @@ it('warns before starting or resuming a download', () => {
       }),
     );
     expect(markup).toContain('게시글을 확인하거나 편집·작성할 수 없습니다');
+    expect(markup).toContain('첫 이미지·영상의 SHA-256');
     expect(markup).toContain(resuming ? '이어서 다운로드' : '다운로드 시작');
   }
 });

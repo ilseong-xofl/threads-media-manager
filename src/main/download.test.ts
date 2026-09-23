@@ -157,6 +157,14 @@ describe('worker response boundary', () => {
   ])('rejects invalid or inconsistent worker results', (input) => {
     expect(() => parseResult(input)).toThrow(ViewError);
   });
+  it('accepts only bounded whole-post duplicate counts', () => {
+    expect(
+      parseResult({ ...batchResult(), downloadedPosts: 2, duplicatePostsRemoved: 1 }),
+    ).toMatchObject({ downloadedPosts: 2, duplicatePostsRemoved: 1 });
+    expect(() =>
+      parseResult({ ...batchResult(), downloadedPosts: 1, duplicatePostsRemoved: 2 }),
+    ).toThrow(ViewError);
+  });
 });
 
 const batch = () => ({

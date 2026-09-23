@@ -398,47 +398,52 @@ def finish_committed(root, folder, document, lock):
     clean_journal(root, folder, document)
 
 
+def commit_current(root, current, lock, check):
+    """Commit a validated post plan while the caller owns the collection lock."""
+    stopped(check)
+    folder, document = prepare_journal(root, current, lock, check)
+    try:
+        register_operation(root, document)
+        for item in document["files"]:
+            lock.assert_owned()
+            stopped(check)
+            file_record(root, item["path"], item["size"], item["sha256"])
+            os.replace(safe_path(root, item["path"], require_file=True), folder/item["slot"])
+            sync_directory(folder)
+            sync_directory((root/item["path"]).parent)
+        for item in document["books"]:
+            lock.assert_owned()
+            stopped(check)
+            path = safe_path(root, item["path"], require_file=True)
+            writer.unlocked(path)
+            if digest(read_stable(path, max_bytes=excel.MAX_ARCHIVE_BYTES)) != item["before"]:
+                raise DeleteError("deletion_changed", "삭제 중 Excel 원본이 변경되었습니다.")
+            raw = read_stable(folder/item["replacement"], max_bytes=excel.MAX_ARCHIVE_BYTES)
+            if digest(raw) != item["after"]: raise DeleteError("deletion_changed", "삭제 표시 Excel 사본이 변경되었습니다.")
+            write_atomic(path, raw)
+        stopped(check)
+        lock.assert_owned()
+        apply_tombstone(root, document)
+    except BaseException:
+        # The DB receipt resolves uncertain commit outcomes; never undo a committed deletion.
+        if operation_status(root, document) == "committed":
+            finish_committed(root, folder, document, lock)
+            return {"ok": True}
+        try:
+            rollback(root, folder, document, lock)
+        except BaseException as recovery_error:
+            raise DeleteError("deletion_recovery_required", "삭제를 완료하지 못했습니다. '삭제 작업 복구'로 기존 자료를 복원하세요.") from recovery_error
+        raise
+    finish_committed(root, folder, document, lock)
+    return {"ok": True}
+
+
 def commit(root, data, check):
     with DeleteLock(root) as lock:
         current = plan(root, data, lock)
         if current["fingerprint"] != data["fingerprint"]:
             raise DeleteError("deletion_changed", "확인창을 연 뒤 삭제 대상이 변경되었습니다. 다시 확인하세요.")
-        stopped(check)
-        folder, document = prepare_journal(root, current, lock, check)
-        try:
-            register_operation(root, document)
-            for item in document["files"]:
-                lock.assert_owned()
-                stopped(check)
-                file_record(root, item["path"], item["size"], item["sha256"])
-                os.replace(safe_path(root, item["path"], require_file=True), folder/item["slot"])
-                sync_directory(folder)
-                sync_directory((root/item["path"]).parent)
-            for item in document["books"]:
-                lock.assert_owned()
-                stopped(check)
-                path = safe_path(root, item["path"], require_file=True)
-                writer.unlocked(path)
-                if digest(read_stable(path, max_bytes=excel.MAX_ARCHIVE_BYTES)) != item["before"]:
-                    raise DeleteError("deletion_changed", "삭제 중 Excel 원본이 변경되었습니다.")
-                raw = read_stable(folder/item["replacement"], max_bytes=excel.MAX_ARCHIVE_BYTES)
-                if digest(raw) != item["after"]: raise DeleteError("deletion_changed", "삭제 표시 Excel 사본이 변경되었습니다.")
-                write_atomic(path, raw)
-            stopped(check)
-            lock.assert_owned()
-            apply_tombstone(root, document)
-        except BaseException:
-            # The DB receipt resolves uncertain commit outcomes; never undo a committed deletion.
-            if operation_status(root, document) == "committed":
-                finish_committed(root, folder, document, lock)
-                return {"ok": True}
-            try:
-                rollback(root, folder, document, lock)
-            except BaseException as recovery_error:
-                raise DeleteError("deletion_recovery_required", "삭제를 완료하지 못했습니다. '삭제 작업 복구'로 기존 자료를 복원하세요.") from recovery_error
-            raise
-        finish_committed(root, folder, document, lock)
-        return {"ok": True}
+        return commit_current(root, current, lock, check)
 
 
 def release_dead_lock(root):

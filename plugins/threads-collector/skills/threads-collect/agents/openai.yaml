@@ -1,4 +1,4 @@
 interface:
   display_name: "Threads 수집 · 플러그인"
   short_description: "내부 브라우저로 Threads 원글과 미디어 링크를 일별 엑셀에 저장"
-  default_prompt: "$threads-collect로 저장된 계정 목록의 수집을 시작해줘. 최초 10건, 이후 이전 기준 ID까지 최대 10건을 확인하고 다운로드는 하지 마."
+  default_prompt: "$threads-collect로 저장된 계정 목록의 새 게시글을 수집해줘. 시작 전에 활성 계정 수와 계정당 수집 건수를 알려줘."

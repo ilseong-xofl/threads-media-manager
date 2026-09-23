@@ -23,7 +23,7 @@ def _load(root):
 
 
 def inspect_source(root: Path) -> dict:
-    """Pure read, including attempt dates so partial runs cannot bypass daily limits."""
+    """Pure read of source and run history, including partial attempts."""
     data = _load(collection_root(root))
     accounts = {}
     for run in sorted(data['runs'], key=lambda row: (row.get('시작(KST)') or '', row.get('실행ID') or '')):

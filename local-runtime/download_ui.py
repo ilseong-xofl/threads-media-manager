@@ -14,6 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from threads_runner import inspection, runner, transport, recovery, batch, source_cleanup
 from threads_runner.state import StateError
 from threads_runner.parent_monitor import ParentMonitor, MonitorError
+import delete_media
+from threads_source.files import SourceError
+from threads_source.excel_input import InputError
+import duplicate_posts
 
 
 def emit(value):
@@ -47,6 +51,31 @@ def watch_input(stopped):
         stopped.set()
 
 
+def finish_batch(root, result, cancel, output):
+    keys = result.pop('_completedPostKeys', [])
+    if result.get('problem') and not keys:
+        return result
+    result['downloadedPosts'] = len(keys)
+    result['duplicatePostsRemoved'] = 0
+    if not keys:
+        return result
+    output({'type': 'progress', 'phase': 'deduplicating', 'received': 0, 'total': len(keys), 'target': None,
+            'batch': result['batch']})
+    def progress(processed, removed):
+        result['duplicatePostsRemoved'] = removed
+        output({'type': 'progress', 'phase': 'deduplicating', 'received': processed, 'target': None,
+                'total': len(keys), 'batch': result['batch']})
+    try:
+        result['duplicatePostsRemoved'] = duplicate_posts.remove_new_duplicates(
+            root, keys, check=cancel, progress=progress)
+    except (delete_media.DeleteError, SourceError, InputError, StateError) as exc:
+        result['problem'] = {'code': exc.code, 'message': '중복 게시글 정리를 완료하지 못했습니다. ' + str(exc)}
+    except Exception:
+        result['problem'] = {'code': 'duplicate_cleanup_failed',
+                             'message': '중복 게시글 정리를 완료하지 못했습니다. 저장 상태와 삭제 작업 복구를 확인하세요.'}
+    return result
+
+
 def execute(root, data, cancel, *, transfer=None, output=emit):
     command = data.get('command')
     if command == 'status':
@@ -60,7 +89,7 @@ def execute(root, data, cancel, *, transfer=None, output=emit):
     if command in {'resume', 'continue'}:
         if set(data) != {'command'}:
             raise StateError('invalid_request', '기존 다운로드 대상만 이어서 처리할 수 있습니다.')
-        return batch.run(root, cancel, transfer=transfer, output=output, resume_requested=True)
+        return finish_batch(root, batch.run(root, cancel, transfer=transfer, output=output, resume_requested=True), cancel, output)
     if command == 'batch':
         if set(data) != {'command'}:
             raise StateError('invalid_request', '전체 다운로드는 앱에서 현재 원본으로 계획합니다.')
@@ -69,7 +98,8 @@ def execute(root, data, cancel, *, transfer=None, output=emit):
         cleaned = source_cleanup.clean(root)
         if cleaned['problem']:
             return cleaned
-        return {**batch.run(root, cancel, transfer=transfer, output=output), 'cleanedPosts': cleaned['cleanedPosts'], 'releasedPosts': cleaned['releasedPosts']}
+        return {**finish_batch(root, batch.run(root, cancel, transfer=transfer, output=output), cancel, output),
+                'cleanedPosts': cleaned['cleanedPosts'], 'releasedPosts': cleaned['releasedPosts']}
     if command == 'preview':
         return inspection.preview_one(root, data.get('account'))
     if command == 'recover':

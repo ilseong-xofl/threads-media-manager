@@ -11,9 +11,15 @@ const date = (time: number) =>
 const bytes = (n: number) =>
   n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
 export const activeDownload = (view: DownloadView) =>
-  ['checking', 'downloading', 'validating', 'waiting', 'stopping', 'recovering'].includes(
-    view.phase,
-  );
+  [
+    'checking',
+    'downloading',
+    'validating',
+    'deduplicating',
+    'waiting',
+    'stopping',
+    'recovering',
+  ].includes(view.phase);
 export const idleDownload = (): DownloadView => ({
   phase: 'idle',
   target: null,
@@ -53,7 +59,10 @@ export function DownloadConfirmation({
       <h2 id="download-confirmation-title">
         {resuming ? '다운로드를 이어서 진행할까요?' : '다운로드를 시작할까요?'}
       </h2>
-      <p>다운로드 중에는 게시글을 확인하거나 편집·작성할 수 없습니다. 진행하시겠습니까?</p>
+      <p>
+        다운로드 중에는 게시글을 확인하거나 편집·작성할 수 없습니다. 저장 후 첫 이미지·영상의
+        SHA-256이 같은 새 게시글은 전체 삭제합니다. 진행하시겠습니까?
+      </p>
       <div className="download-confirmation-actions">
         <button type="button" onClick={onCancel}>
           취소
@@ -130,6 +139,7 @@ export function DownloadOverlay({
         ready: '다운로드 준비됨',
         downloading: '다운로드 중…',
         validating: '저장 파일 확인 중…',
+        deduplicating: '중복 게시글 확인 중…',
         waiting: '다음 다운로드를 기다리는 중…',
         stopping: '다운로드를 중지하는 중…',
         recovering: '저장 파일 복구 중…',
@@ -176,6 +186,12 @@ export function DownloadOverlay({
           <h2 id="download-status-title" role="status">
             {label}
           </h2>
+          {view.downloadedPosts !== undefined && (complete || !active) && (
+            <p>
+              게시글 {view.downloadedPosts}개 다운로드 · 중복 {view.duplicatePostsRemoved ?? 0}개
+              제거
+            </p>
+          )}
           {!!view.cleanedPosts && (
             <p>수집이 불완전한 게시글 {view.cleanedPosts}개를 삭제했습니다.</p>
           )}
@@ -200,6 +216,11 @@ export function DownloadOverlay({
                 <p>
                   @{view.target.account} · {view.target.ordinal}번째{' '}
                   {view.target.kind === 'image' ? '이미지' : '영상'}
+                </p>
+              )}
+              {view.phase === 'deduplicating' && view.total !== null && (
+                <p>
+                  중복 확인 {view.received}/{view.total}
                 </p>
               )}
               {view.nextAllowedAt && ['waiting', 'blocked'].includes(view.phase) && (

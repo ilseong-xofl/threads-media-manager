@@ -20,9 +20,11 @@ interface Result {
   batch?: DownloadBatch | null;
   cleanedPosts?: number;
   releasedPosts?: number;
+  downloadedPosts?: number;
+  duplicatePostsRemoved?: number;
 }
 interface Progress {
-  phase: 'checking' | 'downloading' | 'validating' | 'recovering' | 'waiting';
+  phase: 'checking' | 'downloading' | 'validating' | 'deduplicating' | 'recovering' | 'waiting';
   received: number;
   total: number | null;
   target?: DownloadTarget | null;
@@ -92,7 +94,7 @@ function batchProgress(value: unknown): DownloadBatch | null {
 
 function parseProgress(value: Record<string, unknown>): Progress {
   if (
-    !['checking', 'downloading', 'validating', 'recovering', 'waiting'].includes(
+    !['checking', 'downloading', 'validating', 'deduplicating', 'recovering', 'waiting'].includes(
       String(value.phase),
     ) ||
     !integer(value.received) ||
@@ -129,7 +131,12 @@ export function parseResult(value: unknown): Result {
     typeof value.recoverable !== 'boolean' ||
     (value.resumable !== undefined && typeof value.resumable !== 'boolean') ||
     (value.cleanedPosts !== undefined && !integer(value.cleanedPosts)) ||
-    (value.releasedPosts !== undefined && !integer(value.releasedPosts))
+    (value.releasedPosts !== undefined && !integer(value.releasedPosts)) ||
+    (value.downloadedPosts !== undefined && !integer(value.downloadedPosts)) ||
+    (value.duplicatePostsRemoved !== undefined && !integer(value.duplicatePostsRemoved)) ||
+    (value.duplicatePostsRemoved !== undefined &&
+      (value.downloadedPosts === undefined ||
+        Number(value.duplicatePostsRemoved) > Number(value.downloadedPosts)))
   )
     return invalid();
   if (value.target !== undefined && value.target !== null && !target(value.target))
@@ -168,6 +175,10 @@ export function parseResult(value: unknown): Result {
     resumable: raw.resumable ?? false,
     ...(raw.cleanedPosts !== undefined ? { cleanedPosts: raw.cleanedPosts } : {}),
     ...(raw.releasedPosts !== undefined ? { releasedPosts: raw.releasedPosts } : {}),
+    ...(raw.downloadedPosts !== undefined ? { downloadedPosts: raw.downloadedPosts } : {}),
+    ...(raw.duplicatePostsRemoved !== undefined
+      ? { duplicatePostsRemoved: raw.duplicatePostsRemoved }
+      : {}),
     nextAllowedAt: raw.nextAllowedAt,
     problem: raw.problem ? { code: raw.problem.code, message: raw.problem.message } : null,
     ...(value.batch !== undefined ? { batch: batchProgress(value.batch) } : {}),
@@ -434,6 +445,12 @@ export class DownloadController {
           batch: result.batch ?? this.view.batch,
           ...(changed
             ? { cleanedPosts: result.cleanedPosts, releasedPosts: result.releasedPosts }
+            : {}),
+          ...(result.downloadedPosts !== undefined
+            ? {
+                downloadedPosts: result.downloadedPosts,
+                duplicatePostsRemoved: result.duplicatePostsRemoved,
+              }
             : {}),
           phase:
             result.problem || result.recoverable || result.resumable

@@ -130,7 +130,41 @@ class ExcelCommitTests(unittest.TestCase):
         account = excel._read_tables(self.accounts, {'계정': excel.ACCOUNT_HEADERS})['계정'][0]
         self.assertEqual(account['최근실행ID'], 'RunB')
 
-    def test_partial_counts_as_daily_attempt_and_preserves_completed_anchor(self):
+    def test_same_day_new_request_collects_one_new_post_then_zero(self):
+        self.commit()
+        one_new = payload('RunB')
+        one_new['posts'][0].update({'게시글ID': 'New_02', '원문URL': 'https://www.threads.com/@example/post/New_02',
+                                    '수집일(KST)': '2026-09-21T13:00:00+09:00',
+                                    '최근확인시각(KST)': '2026-09-21T13:00:00+09:00'})
+        one_new['media'][0].update({'게시글ID': 'New_02', 'URL확보시각(KST)': '2026-09-21T13:00:00+09:00'})
+        one_new['run'].update({'시작(KST)': '2026-09-21T13:00:00+09:00',
+                               '종료(KST)': '2026-09-21T13:10:00+09:00', '방식': 'incremental',
+                               '기존기준ID': 'AbC_01', '다음기준ID': 'New_02', '최하단확인ID': 'New_02',
+                               '기준발견': 'Y', '결과': 'anchor_reached', '누락상태': 'boundary_reached',
+                               '이전반영실행ID': 'RunA'})
+        self.write(one_new)
+        self.commit()
+        no_new = payload('RunC')
+        no_new['posts'] = []
+        no_new['media'] = []
+        no_new['run'].update({'시작(KST)': '2026-09-21T13:15:00+09:00',
+                              '종료(KST)': '2026-09-21T13:16:00+09:00', '방식': 'incremental',
+                              '기존기준ID': 'New_02', '다음기준ID': 'New_02', '최하단확인ID': '',
+                              '기준발견': 'Y', '대상확인수': 0, '신규저장수': 0,
+                              '결과': 'anchor_reached', '누락상태': 'boundary_reached',
+                              '이전반영실행ID': 'RunB'})
+        self.write(no_new)
+        self.commit()
+        loaded = excel.read_workbook(self.source)
+        self.assertEqual(loaded['errors'], [])
+        self.assertEqual({row['게시글ID'] for row in loaded['posts']}, {'AbC_01', 'New_02'})
+        self.assertEqual([row['결과'] for row in loaded['runs']],
+                         ['initial_complete', 'anchor_reached', 'anchor_reached'])
+        account = service.inspect_source(self.root)['accounts'][0]
+        self.assertEqual(account['next_anchor'], 'New_02')
+        self.assertEqual(account['last_attempt_run'], 'RunC')
+
+    def test_partial_records_attempt_and_preserves_completed_anchor(self):
         self.commit()
         data = payload('PartialB', '2026-09-22')
         data['run'].update({'결과': 'partial', '기존기준ID': 'AbC_01', '다음기준ID': 'AbC_01', '종료(KST)': None})
