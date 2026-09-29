@@ -202,6 +202,84 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+describe('publication history when moving computers', () => {
+  it('exports only this library, without calling credentials or remote APIs', async () => {
+    const f = await fixture([savedRecord(1), savedRecord(2, { libraryId: 'd'.repeat(32) })]);
+    const exported = await f.controller.exportLibraryHistory(LIBRARY);
+    expect(exported.records).toHaveLength(1);
+    expect(exported.records[0].postKey).toBe('source:1');
+    expect(JSON.stringify(exported)).not.toContain(TOKEN);
+    expect(f.accounts.credentials).not.toHaveBeenCalled();
+    expect(f.storage.upload).not.toHaveBeenCalled();
+    expect(f.client.publishContainer).not.toHaveBeenCalled();
+    exported.records[0].text = 'changed copy';
+    expect((await f.controller.exportLibraryHistory(LIBRARY)).records[0].text).toBe('saved post 1');
+  });
+  it('retains publication completion and blocks a duplicate upload on the new PC', async () => {
+    const source = await fixture([savedRecord(1, { postKey: request.postKey })]);
+    const target = await fixture();
+    const copied = await source.controller.exportLibraryHistory(LIBRARY);
+    await target.controller.importLibraryHistory(LIBRARY, copied);
+    expect((await target.controller.state()).publications[0]).toMatchObject({
+      status: 'published',
+      remoteId: '1001',
+    });
+    expect(await target.controller.publish(request, 'post')).toMatchObject({
+      status: 'error',
+      problem: { code: 'threads_duplicate' },
+    });
+    expect(target.client.createContainer).not.toHaveBeenCalled();
+    expect(target.storage.upload).not.toHaveBeenCalled();
+  });
+  it('does not roll back newer local success when restoring an older transfer copy', async () => {
+    const record = savedRecord(1);
+    const f = await fixture([record]);
+    await f.controller.importLibraryHistory(LIBRARY, {
+      version: 1,
+      records: [{ ...record, status: 'failed', remoteId: null, publishedAt: null }],
+      sync: {},
+    });
+    expect((await f.controller.exportLibraryHistory(LIBRARY)).records).toEqual([record]);
+    expect(f.history.write).not.toHaveBeenCalled();
+  });
+  it('keeps an in-flight transferred publication unresolved without sending it again', async () => {
+    const f = await fixture();
+    await f.controller.importLibraryHistory(LIBRARY, {
+      version: 1,
+      records: [
+        savedRecord(1, {
+          postKey: request.postKey,
+          status: 'publishing',
+          remoteId: null,
+          publishedAt: null,
+        }),
+      ],
+      sync: {},
+    });
+    expect((await f.controller.state()).publications[0].status).toBe('uncertain');
+    expect(await f.controller.publish(request, 'post')).toMatchObject({
+      status: 'error',
+      problem: { code: 'threads_duplicate' },
+    });
+    expect(f.client.publishContainer).not.toHaveBeenCalled();
+  });
+  it('rejects mixed libraries or conflicting identities and preserves current history', async () => {
+    const record = savedRecord(1);
+    const f = await fixture([record]);
+    for (const changed of [{ libraryId: 'b'.repeat(32) }, { postKey: 'other-post' }]) {
+      await expect(
+        f.controller.importLibraryHistory(LIBRARY, {
+          version: 1,
+          records: [{ ...record, ...changed }],
+          sync: {},
+        }),
+      ).rejects.toMatchObject({ code: 'threads_transfer_history' });
+    }
+    expect((await f.controller.exportLibraryHistory(LIBRARY)).records).toEqual([record]);
+    expect(f.history.write).not.toHaveBeenCalled();
+  });
+});
+
 describe('Threads publish journal and recovery', () => {
   it('persists intent before publishing and records the actual remote ID without token or signed URLs', async () => {
     const f = await fixture();

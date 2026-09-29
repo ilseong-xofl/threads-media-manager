@@ -29,6 +29,10 @@ export interface MaintenanceDialogs {
   confirmRestore(sourcePath: string, signal: AbortSignal): Promise<boolean>;
   chooseReconnect(currentRoot: string | null, signal: AbortSignal): Promise<string | null>;
 }
+export interface LibraryTransfer {
+  backup(root: string, libraryId: string): Promise<void>;
+  connect(root: string, libraryId: string): Promise<void>;
+}
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -86,7 +90,7 @@ export function parseMaintenanceResult(raw: string, input: MaintenanceCommand): 
   if (input.command === 'restore') {
     if (
       !['metadata', 'full'].includes(String(value.restore_mode)) ||
-      value.history_review_required !== (value.restore_mode === 'full')
+      value.history_review_required !== false
     )
       return invalid();
     receipt.restoreMode = value.restore_mode as 'metadata' | 'full';
@@ -173,6 +177,7 @@ export class LibraryMaintenanceController {
     private dialogs: MaintenanceDialogs,
     private launch: LaunchMaintenance,
     private busy: () => boolean = () => false,
+    private transfer?: LibraryTransfer,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -268,6 +273,10 @@ export class LibraryMaintenanceController {
       started = true;
       const receipt = await this.job.result;
       this.job = null;
+      if (receipt.libraryId && this.transfer) {
+        if (operation === 'backup') await this.transfer.backup(input.root, receipt.libraryId);
+        else await this.transfer.connect(input.root, receipt.libraryId);
+      }
       const view = await this.refreshed(input.root);
       return {
         status: 'complete',

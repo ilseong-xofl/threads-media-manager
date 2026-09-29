@@ -167,24 +167,46 @@ class LibraryMaintenanceTests(unittest.TestCase):
             self.run_command("restore", path=str(self.backup))
         self.assertEqual(self.data(), before)
 
-    def test_missing_db_full_restore_requires_history_review_and_keeps_original_files(self):
+    def test_missing_db_full_restore_keeps_original_stop_wait_and_files(self):
         self.make_backup()
         old = self.data()
         media = self.media_bytes()
         self.db_path.unlink()
         result = self.run_command("restore", path=str(self.backup))
         self.assertEqual(result["restore_mode"], "full")
-        self.assertTrue(result["history_review_required"])
+        self.assertFalse(result["history_review_required"])
         self.assertNotIn("automatic_backup_path", result)
         now = self.data()
         for table in ("jobs", "requests", "media", "post_drafts", "post_comments"):
             self.assertEqual(now[table], old[table])
         meta = {key: json.loads(value) for key, value in now["meta"]}
-        self.assertEqual(meta["stop"]["code"], "database_restored")
-        self.assertEqual(meta["stop"]["previous_stop"]["code"], "prior_stop")
+        self.assertEqual(meta["stop"]["code"], "prior_stop")
         self.assertEqual(meta["next_allowed"], 2_000_000_000)
         with State(self.root) as state, self.assertRaises(StateError): state.guard()
         self.assertEqual(self.media_bytes(), media)
+
+    def test_explicit_reconnect_releases_only_legacy_restore_hold(self):
+        with State(self.root) as state, state.db:
+            prior = state.meta("stop")
+            state.set_meta("stop", {"code": "database_restored", "requires_review": True, "previous_stop": prior})
+            state.set_meta("restore_history_review", {"history_after_backup_unknown": True})
+        before = self.data()
+        self.run_command("reconnect")
+        after = self.data()
+        self.assertEqual(json.loads(dict(after["meta"])["stop"]), prior)
+        for table in ("jobs", "requests", "media", "post_drafts", "post_comments"):
+            self.assertEqual(after[table], before[table])
+        self.assertEqual(dict(after["meta"])["restore_history_review"], dict(before["meta"])["restore_history_review"])
+
+    def test_full_restore_releases_legacy_wrapper_but_preserves_server_stop(self):
+        with State(self.root) as state, state.db:
+            state.set_meta("stop", {"code": "database_restored", "previous_stop": {"code": "rate_limited", "retry_at": 2_000_000_000}})
+        self.make_backup()
+        self.db_path.unlink()
+        self.run_command("restore", path=str(self.backup))
+        meta = {key: json.loads(value) for key, value in self.data()["meta"]}
+        self.assertEqual(meta["stop"], {"code": "rate_limited", "retry_at": 2_000_000_000})
+        self.assertEqual(meta["next_allowed"], 2_000_000_000)
 
     def test_corrupt_current_db_saved_raw_before_disaster_restore(self):
         self.make_backup()

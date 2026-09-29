@@ -48,6 +48,7 @@ import {
   postDraftDeleteConfirmation,
 } from './post-draft-delete';
 import { LibraryMaintenanceController, launchLibraryMaintenance } from './library-maintenance';
+import { readLibraryPublications, saveLibraryPublications } from './library-publications';
 
 app.setName('Threads Media Manager');
 app.setAppUserModelId('com.threadsmediamanager.desktop');
@@ -242,7 +243,7 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
         title: '데이터베이스 복원',
         message: '선택한 백업에서 데이터를 복원할까요?',
         detail:
-          '현재 DB는 먼저 별도 보관합니다. 정상 DB에서는 등록·댓글 정보를 복원하고 다운로드·삭제 이력은 유지합니다. DB가 없거나 손상된 경우에는 백업 시점으로 복원하며 다운로드를 보류합니다. 이미지·영상과 수집 Excel은 변경하지 않습니다.',
+          '옮긴 작업 폴더와 함께 보관한 백업을 선택하세요. 현재 DB는 먼저 별도 보관하고, 기존 이미지·영상은 다시 다운로드하지 않습니다. 정상 DB의 최신 다운로드·삭제 이력은 유지합니다. Threads 토큰과 파일 서버 연결코드는 새 컴퓨터에서 다시 입력하세요.',
         buttons: ['취소', '복원'],
         defaultId: 0,
         cancelId: 0,
@@ -273,7 +274,17 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
     drafts.active ||
     draftDeletions.active ||
     captions.active ||
-    content.active,
+    content.active ||
+    threads.active,
+  {
+    backup: async (root, libraryId) => {
+      await saveLibraryPublications(root, libraryId, await threads.exportLibraryHistory(libraryId));
+    },
+    connect: async (root, libraryId) => {
+      const history = await readLibraryPublications(root, libraryId);
+      if (history) await threads.importLibraryHistory(libraryId, history);
+    },
+  },
 );
 let downloadCloseNoticeOpen = false;
 const encryption = {

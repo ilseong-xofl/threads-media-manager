@@ -11,6 +11,7 @@ import {
   type MaintenanceCommand,
   type MaintenanceDialogs,
   type MaintenanceReceipt,
+  type LibraryTransfer,
 } from './library-maintenance';
 
 vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
@@ -57,7 +58,7 @@ function deferred<T>() {
 const flush = async () => {
   for (let i = 0; i < 12; i += 1) await Promise.resolve();
 };
-function setup() {
+function setup(transfer?: LibraryTransfer) {
   const refresh = vi.fn().mockResolvedValue(view);
   const dialogs = {
     chooseBackup: vi.fn().mockResolvedValue(backupPath),
@@ -71,12 +72,47 @@ function setup() {
     cancel,
   }));
   const busy = vi.fn(() => false);
-  const controller = new LibraryMaintenanceController(refresh, dialogs, launch, busy);
+  const controller = new LibraryMaintenanceController(refresh, dialogs, launch, busy, transfer);
   return { refresh, dialogs, cancel, launch, busy, controller };
 }
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
+});
+
+describe('PC-transfer publication history', () => {
+  it.each(['backup', 'restore', 'reconnect'] as const)(
+    'carries library history through %s',
+    async (operation) => {
+      const transfer = { backup: vi.fn(async () => {}), connect: vi.fn(async () => {}) };
+      const { controller, refresh } = setup(transfer);
+      const result = await controller[operation](root);
+      expect(result.status).toBe('complete');
+      const called = operation === 'backup' ? transfer.backup : transfer.connect;
+      expect(called).toHaveBeenCalledWith(root, library);
+      expect(called.mock.invocationCallOrder[0]).toBeLessThan(refresh.mock.invocationCallOrder[0]);
+    },
+  );
+  it('does not export history when backup selection is cancelled', async () => {
+    const transfer = { backup: vi.fn(async () => {}), connect: vi.fn(async () => {}) };
+    const { controller, dialogs } = setup(transfer);
+    dialogs.chooseBackup.mockResolvedValue(null);
+    expect((await controller.backup(root)).status).toBe('cancelled');
+    expect(transfer.backup).not.toHaveBeenCalled();
+  });
+  it('reports a transfer failure instead of claiming the PC backup is complete', async () => {
+    const transfer = {
+      backup: vi.fn(async () => {
+        throw new ViewError('library_publications', '게시 이력 저장 실패');
+      }),
+      connect: vi.fn(async () => {}),
+    };
+    const { controller } = setup(transfer);
+    expect(await controller.backup(root)).toMatchObject({
+      status: 'error',
+      problem: { code: 'library_publications' },
+    });
+  });
 });
 
 describe('maintenance worker receipts', () => {
@@ -125,22 +161,22 @@ describe('maintenance worker receipts', () => {
       parseMaintenanceResult(rawReceipt(reconnect, { library_id: undefined }), reconnect),
     ).toThrow(ViewError);
   });
-  it('accepts missing-current-DB full restore only with the history-review flag', () => {
+  it('accepts a transferred full restore without a download-review hold', () => {
     expect(
       parseMaintenanceResult(
         rawReceipt(restore, {
           restore_mode: 'full',
-          history_review_required: true,
+          history_review_required: false,
           automatic_backup_path: undefined,
         }),
         restore,
       ),
-    ).toMatchObject({ restoreMode: 'full', historyReviewRequired: true });
+    ).toMatchObject({ restoreMode: 'full', historyReviewRequired: false });
     expect(() =>
       parseMaintenanceResult(
         rawReceipt(restore, {
           restore_mode: 'full',
-          history_review_required: false,
+          history_review_required: true,
         }),
         restore,
       ),
@@ -261,14 +297,14 @@ describe('native maintenance flow', () => {
       expect(refresh).not.toHaveBeenCalled();
     },
   );
-  it('reports full disaster restoration and review requirements without inventing a safety-backup path', async () => {
+  it('reports full PC-transfer restoration without inventing a safety-backup path', async () => {
     const { controller, launch, cancel } = setup();
     launch.mockReturnValue({
       result: Promise.resolve({
         operation: 'restore',
         libraryId: library,
         restoreMode: 'full',
-        historyReviewRequired: true,
+        historyReviewRequired: false,
       }),
       cancel,
     });
@@ -276,7 +312,7 @@ describe('native maintenance flow', () => {
       status: 'complete',
       operation: 'restore',
       restoreMode: 'full',
-      historyReviewRequired: true,
+      historyReviewRequired: false,
       view,
     });
   });

@@ -104,11 +104,11 @@ export function SettingsModal({
           ? `DB 백업을 저장했습니다.${result.filePath ? `\n${result.filePath}` : ''}`
           : operation === 'reconnect'
             ? '선택한 작업 폴더를 연결했습니다.'
-            : result.historyReviewRequired
-              ? '백업 시점의 DB를 복원했습니다. 이후 다운로드 이력을 확인할 수 없어 다운로드는 보류됩니다.'
+            : result.restoreMode === 'full'
+              ? 'DB를 복원했습니다. 옮긴 자료를 다시 다운로드하지 않고 사용할 수 있습니다.'
               : '등록·댓글 정보를 복원했습니다. 현재 다운로드·삭제 이력은 유지됩니다.';
       setNotice({
-        error: !!result.view.error || !!result.historyReviewRequired,
+        error: !!result.view.error,
         message:
           message +
           (result.automaticBackupPath ? `\n복원 전 DB: ${result.automaticBackupPath}` : '') +
@@ -172,15 +172,17 @@ export function SettingsModal({
           </div>
         </section>
         <section className="settings-section">
-          <h3>데이터베이스 백업·복원</h3>
+          <h3>컴퓨터 이전용 DB 백업·복원</h3>
           <p>
-            DB에는 다운로드 이력, 편집본 정보, 등록한 게시글과 댓글이 저장됩니다. 이미지·영상과 수집
-            Excel은 포함되지 않으므로 수집 폴더도 별도로 보관하세요.
+            DB 백업 후 앱을 종료하고 작업 폴더 전체와 백업 파일을 새 컴퓨터로 옮기세요. 새
+            컴퓨터에서 옮긴 폴더를 선택하고 DB를 복원하면 기존 자료를 그대로 사용할 수 있습니다.
+            이미지·영상과 수집 Excel은 작업 폴더에, 게시 완료 이력은 백업 시 작업 폴더에 함께
+            보관됩니다. Threads 토큰과 파일 서버 연결코드는 새 컴퓨터에서 다시 입력하세요.
           </p>
           <div className="settings-row">
             <div>
               <strong>DB 백업</strong>
-              <p>현재 라이브러리의 DB를 파일로 저장합니다.</p>
+              <p>DB 파일을 저장하고, 게시 완료 이력을 작업 폴더에 보관합니다.</p>
             </div>
             <button
               disabled={!root || !enabled || !!working || apiWorking}
@@ -194,8 +196,8 @@ export function SettingsModal({
             <div>
               <strong>DB 복원</strong>
               <p>
-                같은 라이브러리의 백업을 불러옵니다. 정상 DB의 다운로드·삭제 이력은 유지하며, DB가
-                없거나 손상됐다면 백업 시점으로 복원합니다. 현재 DB는 먼저 별도 보관합니다.
+                옮긴 작업 폴더와 함께 보관한 DB 백업을 불러옵니다. 파일을 다시 다운로드하지
+                않습니다. 현재 DB가 있으면 먼저 별도 보관하며 최신 다운로드·삭제 이력은 유지합니다.
               </p>
             </div>
             <button

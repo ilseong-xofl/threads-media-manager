@@ -289,6 +289,92 @@ export class ThreadsPublishingController {
       throw error;
     }
   }
+  async exportLibraryHistory(libraryId: string): Promise<ThreadsHistory> {
+    await this.load();
+    if (this.active)
+      throw new ViewError('threads_busy', '진행 중인 게시 작업이 끝난 뒤 이전하세요.');
+    const records = this.data.records
+      .filter((item) => item.libraryId === libraryId)
+      .map((item) => ({
+        ...publicRecord(item),
+        libraryId: item.libraryId,
+        parentRemoteId: item.parentRemoteId,
+        containerId: item.containerId,
+        childIds: [...item.childIds],
+        media: item.media.map(({ mediaId, sha256, kind }) => ({ mediaId, sha256, kind })),
+      }));
+    const accounts = new Set(records.map((item) => item.accountId));
+    return structuredClone({
+      version: 1,
+      records,
+      sync: Object.fromEntries(Object.entries(this.data.sync).filter(([id]) => accounts.has(id))),
+    });
+  }
+  async importLibraryHistory(libraryId: string, imported: ThreadsHistory): Promise<void> {
+    await this.load();
+    if (this.active)
+      throw new ViewError('threads_busy', '진행 중인 게시 작업이 끝난 뒤 이전하세요.');
+    const invalid = () =>
+      new ViewError(
+        'threads_transfer_history',
+        '옮긴 게시 이력이 현재 라이브러리와 맞지 않습니다. 기존 이력은 보존했습니다.',
+      );
+    if (
+      !validThreadsHistory(imported) ||
+      imported.records.some((item) => item.libraryId !== libraryId)
+    )
+      throw invalid();
+    const records = structuredClone(this.data.records);
+    for (const raw of imported.records) {
+      const item: PublicationRecord = { ...structuredClone(raw) };
+      // An exported in-flight publication is never permission to publish again.
+      if (['preparing', 'processing', 'publishing'].includes(item.status)) {
+        item.status = 'uncertain';
+        item.problem = uncertain;
+      }
+      const index = records.findIndex(
+        (current) =>
+          current.id === item.id || (item.remoteId !== null && current.remoteId === item.remoteId),
+      );
+      if (index < 0) {
+        records.push(item);
+        continue;
+      }
+      const current = records[index];
+      if (
+        ['libraryId', 'accountId', 'postKey', 'kind'].some(
+          (key) => current[key as keyof PublicationRecord] !== item[key as keyof PublicationRecord],
+        ) ||
+        (current.remoteId && item.remoteId && current.remoteId !== item.remoteId)
+      )
+        throw invalid();
+      // Older copies cannot undo a confirmed publication or an unresolved result.
+      if (current.status === 'published') continue;
+      if (
+        item.status === 'published' ||
+        (current.status !== 'uncertain' && item.status === 'uncertain')
+      )
+        records[index] = item;
+    }
+    const sync = structuredClone(this.data.sync);
+    const accounts = new Set(imported.records.map((item) => item.accountId));
+    for (const [id, value] of Object.entries(imported.sync)) {
+      if (!accounts.has(id)) continue;
+      const latest = (a: string | null, b: string | null) =>
+        !a ? b : !b || Date.parse(a) >= Date.parse(b) ? a : b;
+      const current = sync[id];
+      sync[id] = current
+        ? {
+            attemptedAt: latest(current.attemptedAt, value.attemptedAt),
+            succeededAt: latest(current.succeededAt, value.succeededAt),
+            retryAt: latest(current.retryAt, value.retryAt),
+          }
+        : { ...value };
+    }
+    const next: ThreadsHistory = { version: 1, records, sync };
+    if (!validThreadsHistory(next)) throw invalid();
+    if (JSON.stringify(next) !== JSON.stringify(this.data)) await this.commit(next);
+  }
   private record(id: string) {
     const item = this.data.records.find((r) => r.id === id);
     if (!item) throw new ViewError('threads_record', 'API 게시 이력을 찾을 수 없습니다.');

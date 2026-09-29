@@ -176,13 +176,13 @@ class SourceRetentionTests(unittest.TestCase):
         self.assertEqual(deletion_state.source_deletions(self.root), {self.key})
         self.assertEqual(deletion_state.database_deletions(self.root)[0], {self.key})
 
-    def test_full_restore_retains_source_marker_and_files_and_requires_review(self):
+    def test_full_restore_retains_source_marker_and_files_without_new_hold(self):
         self.maintain('backup')
         before_media = self.media_hashes()
         self.db_path.unlink()
         result = self.maintain('restore')
         self.assertEqual(result['restore_mode'], 'full')
-        self.assertTrue(result['history_review_required'])
+        self.assertFalse(result['history_review_required'])
         self.assertEqual(deletion_state.source_deletions(self.root), {self.key})
         self.assert_retained()
         self.assertEqual(self.media_hashes(), before_media)
@@ -194,7 +194,7 @@ class SourceRetentionTests(unittest.TestCase):
         before_media = self.media_hashes()
         self.db_path.unlink()
         result = self.maintain('restore')
-        self.assertTrue(result['history_review_required'])
+        self.assertFalse(result['history_review_required'])
         self.assertEqual(self.snapshot()['snapshot']['posts'], [])
         self.assertEqual(self.snapshot()['files'], [])
         self.assertEqual(self.media_hashes(), before_media)

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Explicit local library backup, conservative restore, and relocation.
+"""Back up and reconnect a complete library when moving to another computer.
 
-Normal restores replace publication metadata only: all current download, media,
-edit and deletion records remain authoritative. Disaster restores require the
-same media marker and place a permanent review stop on downloads because events
-after the backup cannot be reconstructed. Media and Excel are never modified.
+Restoration uses the matching copied media and Excel without downloading them.
+A healthy current DB retains its newer operational history; an absent/corrupt
+DB is replaced by the validated backup. Restoration adds no download hold.
 """
 from __future__ import annotations
 
@@ -13,7 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import signal
@@ -123,7 +122,8 @@ def validate_db(db, *, backup=False):
             raise MaintenanceError("invalid_schema", "DB 열 형식이 현재 앱과 맞지 않습니다.")
     meta = json_meta(db)
     if (not isinstance(meta.get("library_id"), str) or not re.fullmatch(r"[a-f0-9]{32}", meta["library_id"]) or
-            not isinstance(meta.get("root"), str) or not Path(meta["root"]).is_absolute() or
+            not isinstance(meta.get("root"), str) or
+            not (PurePosixPath(meta["root"]).is_absolute() or PureWindowsPath(meta["root"]).is_absolute()) or
             not supported_policy(meta.get("policy"))):
         raise MaintenanceError("invalid_database", "DB의 라이브러리 식별 정보·정책을 확인해야 합니다.")
     view.read_drafts(None, db=db)
@@ -313,6 +313,20 @@ def safe_db_path(root):
     return path
 
 
+def release_restore_hold(db):
+    """An explicit, validated PC move releases only obsolete restore holds.
+
+Keep their audit metadata and any actual interruption/server stop underneath.
+Ordinary status polling and download resume never call this migration.
+"""
+    stop = json_meta(db).get("stop")
+    original = stop
+    while isinstance(stop, dict) and stop.get("code") in {"database_restored", "restored_history_review"}:
+        stop = stop.get("previous_stop")
+    if stop != original:
+        db.execute("INSERT OR REPLACE INTO meta VALUES('stop',?)", (json.dumps(stop),))
+
+
 def reconnect(root, db_path, library, check, assert_owned):
     """Connect without initializing absent state; rebind only validated state."""
     result = {"ok": True, "operation": "reconnect", "library_id": library}
@@ -355,6 +369,7 @@ def reconnect(root, db_path, library, check, assert_owned):
             if marker_id(root) != library:
                 raise MaintenanceError("library_mismatch", "재연결 도중 라이브러리 식별 정보가 변경되었습니다.")
             db.execute("UPDATE meta SET value=? WHERE key='root'", (json.dumps(str(root)),))
+            release_restore_hold(db)
     return result
 
 
@@ -389,6 +404,9 @@ def metadata_restore(db, backup, root, available, deleted, check):
                 json.dumps(draft["mediaIds"]), draft["createdAt"], draft["updatedAt"],
                 max(draft["revision"], current.get((account, post_id), {}).get("revision", 0)) + 1))
         db.executemany("INSERT INTO post_comments VALUES(?,?,?,?,?)", comments)
+        if json_meta(db).get("root") != str(root):
+            db.execute("UPDATE meta SET value=? WHERE key='root'", (json.dumps(str(root), ensure_ascii=False),))
+        release_restore_hold(db)
         check_cancel(check)
     return len(accepted), len(comments)
 
@@ -406,13 +424,7 @@ def disaster_restore(backup, root, db_path, library, app_version, check, assert_
         with closing(open_db(temporary)) as copy:
             with copy:
                 copy.execute("INSERT OR REPLACE INTO meta VALUES('root',?)", (json.dumps(str(root)),))
-                prior = json_meta(copy).get("stop")
-                copy.execute("INSERT OR REPLACE INTO meta VALUES('stop',?)", (json.dumps({"code": "database_restored", "requires_review": True,
-                    "previous_stop": prior}),))
-                copy.execute("INSERT OR REPLACE INTO meta VALUES('restore_history_review',?)", (json.dumps({
-                    "backup_created_at": copy.execute("SELECT created_at FROM backup_manifest").fetchone()[0],
-                    "restored_at": datetime.now(timezone.utc).isoformat(), "history_after_backup_unknown": True}),))
-                # Roots and recovery stop changed, not the SQL schema.
+                release_restore_hold(copy)
             validate_db(copy, backup=True)
             validate_files(copy, root, check=check)
         if db_path.exists() or any(Path(str(db_path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")):
@@ -527,8 +539,6 @@ def execute(data, *, check=lambda: False):
                     try:
                         if current["library_id"] != library:
                             raise MaintenanceError("library_mismatch", "현재 DB가 다른 라이브러리입니다. 덮어쓰지 않았습니다.")
-                        if current["root"] != str(root):
-                            raise MaintenanceError("root_changed", "폴더 재연결 후 백업을 복원하세요.")
                         if db.execute("SELECT 1 FROM jobs WHERE status IN ('running','staged')").fetchone():
                             raise MaintenanceError("recovery_required", "다운로드 파일 복구를 먼저 진행하세요.")
                         available, deleted = validate_files(db, root, check=check)
@@ -549,7 +559,7 @@ def execute(data, *, check=lambda: False):
                 assert_owned()
                 automatic = disaster_restore(backup, root, db_path, library, app_version, check, assert_owned)
                 result = {"ok": True, "operation": command, "library_id": library,
-                          "restore_mode": "full", "history_review_required": True}
+                          "restore_mode": "full", "history_review_required": False}
                 if automatic:
                     result["automatic_backup_path"] = str(Path(data["root"]) / automatic.relative_to(root))
                 return result
