@@ -14,6 +14,7 @@ from threads_runner.parent_monitor import ParentMonitor, MonitorError
 
 
 def main(argv=None):
+    sys.stdout.reconfigure(encoding="utf-8")
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collection-root",type=Path,required=True)
     sub=parser.add_subparsers(dest="command",required=True)

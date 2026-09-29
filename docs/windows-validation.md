@@ -42,3 +42,11 @@ pnpm verify:windows
 - 자동 업데이트 구현, 서로 다른 버전 간 갱신과 사용자 데이터 보존, 코드 서명 및 정식 Release.
 
 자동 테스트·설치 파일 생성 성공을 실제 설치·UI·업데이트 통과로 보고하지 않는다.
+
+## Windows CI에서 확인한 호환성 보정
+
+- Windows에 없는 `O_NOFOLLOW`만으로 파일 서버 업로드를 보호하지 않도록, 파일을 열기 전후의 `lstat`와 열린 파일 정보를 비교한다.
+- Python의 Windows `stat`/`fstat` ctime 의미 차이는 파일 생성 시각을 공통 비교값으로 사용하고, 열린 파일의 읽기 전후 change time은 별도로 검증한다. 파일 ID·크기·수정 시각·SHA-256 검사도 유지한다. [CPython 이슈](https://github.com/python/cpython/issues/157671)를 참고한다.
+- 모든 앱 Python 명령의 JSON 출력은 UTF-8로 고정한다. 한글 파일명·오류 메시지를 Windows 기본 코드페이지에 맡기지 않는다.
+- 테스트용 SQLite 연결을 명시적으로 닫고 경로 구분자와 영상 실행 파일의 `.exe` 차이를 반영했다.
+- POSIX SIGTERM 전달 검증은 Windows에서 실행하지 않는다. Windows의 직접 취소·인코더 정리는 별도 공통 테스트로 검사하지만, 설치 앱에서 종료·강제 종료 시 전체 프로세스 정리는 여전히 실기 검증 대상이다. POSIX 전용 파일 형식 검증도 Windows에서는 제외한다.

@@ -23,7 +23,7 @@ from urllib.parse import unquote, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/threads-collector/scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from threads_source import excel_input
-from threads_source.files import SourceError, collection_root, read_stable, safe_path, parse_json, CollectionLock
+from threads_source.files import stat_signature, SourceError, collection_root, read_stable, safe_path, parse_json, CollectionLock
 from threads_source.excel_input import InputError
 from threads_runner.state import APP_ID, SCHEMA_VERSION, StateError
 from threads_runner import attempts, deletion_state, source_readiness
@@ -50,7 +50,7 @@ def idle(root, owned_lock=None):
 
 def stamp(path):
     info = path.stat()
-    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+    return stat_signature(info)
 
 
 def state_signature(root):
@@ -87,10 +87,12 @@ def local_file(root, row, *, include_ai=False):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     with os.fdopen(os.open(path, flags), "rb") as stream:
         opened = os.fstat(stream.fileno())
-        if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != before:
+        if stat_signature(opened) != before:
             raise SourceError("local_file_changed", "읽는 중 저장 파일이 변경되었습니다.")
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+        if os.fstat(stream.fileno()).st_ctime_ns != opened.st_ctime_ns:
+            raise SourceError("local_file_changed", "읽는 중 저장 파일이 변경되었습니다.")
     safe_path(root, relative, require_file=True)
     if stamp(path) != before or digest.hexdigest() != row["sha256"]:
         raise SourceError("local_file_changed", "저장 파일의 해시가 다릅니다. 파일을 보존했습니다.")
@@ -493,6 +495,7 @@ def read_snapshot(path, *, owned_lock=None, include_ai=False):
 
 
 def main(argv=None):
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Read the local collection without changing it")
     parser.add_argument("--collection-root", required=True)
     parser.add_argument("--include-ai", action="store_true")

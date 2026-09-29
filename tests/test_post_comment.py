@@ -324,7 +324,7 @@ import save_post_comment as worker
 real=worker.write_comment
 def writing(*args):
     real(*args)
-    os.kill(os.getpid(),signal.SIGTERM)
+    signal.raise_signal(signal.SIGTERM)
 worker.write_comment=writing
 sys.exit(worker.main())
 """

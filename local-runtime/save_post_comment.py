@@ -139,6 +139,7 @@ def execute(data, *, check=lambda: False):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     stopped = False
     monitor = None
     def stop(*_):

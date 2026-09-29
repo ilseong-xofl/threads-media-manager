@@ -343,7 +343,7 @@ import post_draft as worker
 real=worker.write_draft
 def writing(*args):
     result=real(*args)
-    os.kill(os.getpid(),signal.SIGTERM)
+    signal.raise_signal(signal.SIGTERM)
     return result
 worker.write_draft=writing
 sys.exit(worker.main())

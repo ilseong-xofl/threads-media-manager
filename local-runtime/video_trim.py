@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import time
 
-from threads_source.files import safe_path
+from threads_source.files import safe_path, stat_signature
 
 PROBE_TIMEOUT = 30
 ENCODE_TIMEOUT = 1800
@@ -158,14 +158,16 @@ def fingerprint(root, relative, check, maximum=MAX_OUTPUT_BYTES):
         raise TrimError("video_limit", "편집 결과의 파일 크기를 확인하세요.")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     checksum = hashlib.sha256()
-    stamp = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    stamp = stat_signature
     with os.fdopen(os.open(path, flags), "rb") as stream:
-        if stamp(os.fstat(stream.fileno())) != stamp(before):
+        opened = os.fstat(stream.fileno())
+        if stamp(opened) != stamp(before):
             raise TrimError("edit_file_changed", "편집 파일이 변경되었습니다.")
         for block in iter(lambda: stream.read(1024*1024), b""):
             cancelled(check)
             checksum.update(block)
-        if stamp(os.fstat(stream.fileno())) != stamp(before):
+        after_read = os.fstat(stream.fileno())
+        if stamp(after_read) != stamp(before) or after_read.st_ctime_ns != opened.st_ctime_ns:
             raise TrimError("edit_file_changed", "편집 파일이 변경되었습니다.")
     safe_path(root, relative, require_file=True)
     if stamp(path.stat()) != stamp(before): raise TrimError("edit_file_changed", "편집 파일이 변경되었습니다.")

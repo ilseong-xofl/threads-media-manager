@@ -57,10 +57,12 @@ def file_record(root, relative, expected_size=None, expected_hash=None):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     with os.fdopen(os.open(path, flags), "rb") as stream:
         info = os.fstat(stream.fileno())
-        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != before:
+        if view.stat_signature(info) != before:
             raise DeleteError("deletion_changed", "삭제 확인 중 파일이 변경되었습니다. 다시 확인하세요.")
         for block in iter(lambda: stream.read(1024*1024), b""):
             checksum.update(block)
+        if os.fstat(stream.fileno()).st_ctime_ns != info.st_ctime_ns:
+            raise DeleteError("deletion_changed", "삭제 확인 중 파일이 변경되었습니다.")
     safe_path(root, relative, require_file=True)
     sha = checksum.hexdigest()
     if (view.stamp(path) != before or (expected_size is not None and before[2] != expected_size) or
@@ -631,6 +633,7 @@ def execute(data, *, check=lambda: False):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     stopped_flag = False
     monitor = None
     def stop(*_):

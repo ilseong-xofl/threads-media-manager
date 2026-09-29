@@ -135,6 +135,7 @@ def execute(root, data, cancel, *, transfer=None, output=emit):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--collection-root', type=Path, required=True)
     args = parser.parse_args()

@@ -22,7 +22,7 @@ import ai_media
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
 from threads_runner.deletion_state import require_no_pending
 from threads_runner.state import StateError
-from threads_source.files import SourceError, collection_root, no_symlinks, parse_json, safe_path
+from threads_source.files import stat_signature, SourceError, collection_root, no_symlinks, parse_json, safe_path
 
 INPUT_LIMIT = 32 * 1024
 CHUNK_SIZE = 1024 * 1024
@@ -36,8 +36,7 @@ class ExportError(ValueError):
 
 
 def signature(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
-            info.st_ctime_ns, info.st_mode, info.st_nlink)
+    return (*stat_signature(info), info.st_mode, info.st_nlink)
 
 
 def cancelled(check):
@@ -165,7 +164,8 @@ def copy_media(archive, root, item, check):
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     digest, size = hashlib.sha256(), 0
     with os.fdopen(os.open(path, flags), "rb") as source:
-        if signature(os.fstat(source.fileno())) != before:
+        opened = os.fstat(source.fileno())
+        if signature(opened) != before:
             raise ExportError("local_file_changed", "읽는 중 첨부 파일이 변경되었습니다.")
         with archive.open(item["archiveName"], "w", force_zip64=True) as output:
             while True:
@@ -178,7 +178,8 @@ def copy_media(archive, root, item, check):
                     raise ExportError("local_file_changed", "읽는 중 첨부 파일이 변경되었습니다.")
                 digest.update(chunk)
                 output.write(chunk)
-        if signature(os.fstat(source.fileno())) != before:
+        after_read = os.fstat(source.fileno())
+        if signature(after_read) != before or after_read.st_ctime_ns != opened.st_ctime_ns:
             raise ExportError("local_file_changed", "읽는 중 첨부 파일이 변경되었습니다.")
     if regular(path) != before or size != item["size"] or digest.hexdigest() != item["sha256"]:
         raise ExportError("local_file_changed", "저장된 첨부 파일 검증에 실패했습니다. 기존 파일을 보존했습니다.")
@@ -244,6 +245,7 @@ def export_post(data, *, check=lambda: False, include_ai=False):
 
 
 def main(argv=()):
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("--include-ai", action="store_true")
     args = parser.parse_args(argv)

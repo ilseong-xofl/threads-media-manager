@@ -86,7 +86,9 @@ def _child(node, name):
 
 
 def _signature(value):
-    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+    # Windows stat/fstat disagree on ctime; birth time is consistent across both.
+    timestamp = getattr(value, "st_birthtime_ns", value.st_ctime_ns) if os.name == "nt" else value.st_ctime_ns
+    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, timestamp
 
 
 def _no_symlinks(path: Path):
@@ -116,7 +118,8 @@ def _read_stable(path: Path) -> bytes:
         after = path.stat()
         if len(data) > MAX_ARCHIVE_BYTES:
             _fail("input_limit", "Workbook exceeds the compressed input limit.")
-        if _signature(before) != _signature(after_read) or _signature(before) != _signature(after) or len(data) != before.st_size:
+        if (_signature(before) != _signature(after_read) or _signature(before) != _signature(after)
+                or opened.st_ctime_ns != after_read.st_ctime_ns or len(data) != before.st_size):
             _fail("source_changed", "Workbook changed while reading it.")
         return data
     except InputError:

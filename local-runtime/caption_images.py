@@ -132,6 +132,7 @@ def prepare(data, *, include_ai=False):
 
 
 def main(argv=()):
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("--include-ai", action="store_true")
     args = parser.parse_args(argv)

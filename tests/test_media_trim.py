@@ -237,7 +237,7 @@ class MediaTrimTests(unittest.TestCase):
         children = []
         def spawning(command, **kwargs):
             child = actual(command, **kwargs)
-            if Path(command[0]).name == "ffmpeg": children.append(child)
+            if Path(command[0]).stem == "ffmpeg": children.append(child)
             return child
         with patch.object(video_trim.subprocess, "Popen", side_effect=spawning):
             with self.assertRaises(video_trim.TrimError) as caught:
@@ -262,6 +262,7 @@ class MediaTrimTests(unittest.TestCase):
         self.assertEqual(self.edit_rows(), [])
         self.clean()
 
+    @unittest.skipIf(os.name == "nt", "Windows TerminateProcess has no catchable POSIX SIGTERM; cancellation is tested directly")
     def test_sigterm_worker_cleans_encoder_before_returning_cancelled(self):
         marker = self.fixture.base / "encoder-pid"
         code = """
@@ -271,9 +272,9 @@ sys.path.insert(0,sys.argv[1])
 import edit_media,video_trim
 real=video_trim.subprocess.Popen
 def spawn(command,**kwargs):
-    if Path(command[0]).name=='ffmpeg': command=command[:1]+['-re']+command[1:]
+    if Path(command[0]).stem=='ffmpeg': command=command[:1]+['-re']+command[1:]
     child=real(command,**kwargs)
-    if Path(command[0]).name=='ffmpeg': Path(sys.argv[2]).write_text(str(child.pid))
+    if Path(command[0]).stem=='ffmpeg': Path(sys.argv[2]).write_text(str(child.pid))
     return child
 video_trim.subprocess.Popen=spawn
 sys.exit(edit_media.main())

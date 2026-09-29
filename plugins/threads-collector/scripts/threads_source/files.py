@@ -17,8 +17,13 @@ class SourceError(ValueError):
         super().__init__(message)
 
 
-def _signature(value):
-    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+def stat_signature(value, *, windows=None):
+    # CPython on Windows returns birth time from stat(), but change time from fstat().
+    # Use birth time for cross-API comparisons; readers separately compare fstat ctime.
+    if windows is None:
+        windows = os.name == "nt"
+    timestamp = getattr(value, "st_birthtime_ns", value.st_ctime_ns) if windows else value.st_ctime_ns
+    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, timestamp
 
 
 def no_symlinks(path: Path):
@@ -70,7 +75,8 @@ def read_stable(path: Path, *, max_bytes: int) -> bytes:
             raise SourceError("input_limit", "수집 입력 파일 크기 제한을 초과했습니다.")
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         with os.fdopen(os.open(path, flags), "rb") as stream:
-            if _signature(os.fstat(stream.fileno())) != _signature(before):
+            opened = os.fstat(stream.fileno())
+            if stat_signature(opened) != stat_signature(before):
                 raise SourceError("source_changed", "읽기 시작 시 수집 입력이 변경되었습니다.")
             raw = stream.read(max_bytes + 1)
             after_read = os.fstat(stream.fileno())
@@ -78,7 +84,8 @@ def read_stable(path: Path, *, max_bytes: int) -> bytes:
         after = path.stat()
         if len(raw) > max_bytes:
             raise SourceError("input_limit", "수집 입력 파일 크기 제한을 초과했습니다.")
-        if _signature(before) != _signature(after_read) or _signature(before) != _signature(after) or len(raw) != before.st_size:
+        if (stat_signature(before) != stat_signature(after_read) or stat_signature(before) != stat_signature(after)
+                or opened.st_ctime_ns != after_read.st_ctime_ns or len(raw) != before.st_size):
             raise SourceError("source_changed", "읽는 중 수집 입력이 변경되었습니다.")
         return raw
     except SourceError:
