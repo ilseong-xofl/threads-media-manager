@@ -1,4 +1,5 @@
 """Finite batch integration uses synthetic Excel, virtual time, and no network."""
+from contextlib import closing
 import copy
 import hashlib
 import json
@@ -72,7 +73,7 @@ class BatchDownloadTests(unittest.TestCase):
                 monotonic=self.clock, **kwargs)
 
     def meta(self, key=batch.META):
-        with sqlite3.connect(self.root / "state/state.db") as db:
+        with closing(sqlite3.connect(self.root / "state/state.db")) as db, db:
             row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
             return json.loads(row[0]) if row else None
 
@@ -242,7 +243,7 @@ class BatchDownloadTests(unittest.TestCase):
         self.assertEqual(result["problem"]["code"], "timeout")
         self.assertEqual(result["batch"]["completedFiles"], 0)
         self.assertEqual(len(self.requests), 1)
-        with sqlite3.connect(self.root / "state/state.db") as db:
+        with closing(sqlite3.connect(self.root / "state/state.db")) as db, db:
             self.assertEqual(db.execute("SELECT count(*) FROM requests").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE status='planned'").fetchone()[0], 2)
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
 import { request } from 'node:https';
 import { isAbsolute } from 'node:path';
 import { Readable } from 'node:stream';
@@ -328,9 +328,27 @@ export class FileServerStorage {
       if (!connection) throw new FileServerError('file_server_missing');
       let handle;
       try {
+        // Windows has no O_NOFOLLOW: inspect the named file before and after opening.
+        const before = await lstat(file.path);
+        if (!before.isFile() || before.isSymbolicLink()) throw new Error();
         handle = await open(file.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
         const stat = await handle.stat();
-        if (!stat.isFile() || stat.size !== file.size) throw new Error();
+        const after = await lstat(file.path);
+        if (
+          !stat.isFile() ||
+          stat.size !== file.size ||
+          !after.isFile() ||
+          after.isSymbolicLink() ||
+          [before, after].some(
+            (value) =>
+              value.dev !== stat.dev ||
+              value.ino !== stat.ino ||
+              value.size !== stat.size ||
+              value.mtimeMs !== stat.mtimeMs ||
+              value.ctimeMs !== stat.ctimeMs,
+          )
+        )
+          throw new Error();
       } catch {
         await handle?.close().catch(() => {});
         throw new FileServerError('file_server_file');

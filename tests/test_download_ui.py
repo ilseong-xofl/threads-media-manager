@@ -1,4 +1,5 @@
 """App worker integration with synthetic Excel and offline transfer only."""
+from contextlib import closing
 import hashlib
 import io
 import json
@@ -94,7 +95,7 @@ class DownloadUITests(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.book.read_bytes(), self.source)
         self.assertTrue(any(e['phase'] == 'validating' for e in self.events))
-        with sqlite3.connect(self.root / 'state/state.db') as db:
+        with closing(sqlite3.connect(self.root / 'state/state.db')) as db, db:
             self.assertNotIn('TEST_ONLY', '\n'.join(db.iterdump()))
             self.assertEqual(db.execute('SELECT count(*) FROM requests').fetchone()[0], 2)
             self.assertEqual(db.execute("SELECT count(*) FROM jobs WHERE status='complete'").fetchone()[0], 2)
@@ -157,7 +158,7 @@ class DownloadUITests(unittest.TestCase):
             with state.db:
                 state.db.execute("UPDATE jobs SET source_type='jsonl',source_rel='old.jsonl'")
         self.assertEqual(self.preview()['target']['ordinal'], 2)
-        with sqlite3.connect(self.root / 'state/state.db') as db:
+        with closing(sqlite3.connect(self.root / 'state/state.db')) as db, db:
             self.assertEqual(db.execute('SELECT source_type FROM jobs').fetchone()[0], 'jsonl')
 
     def test_process_protocol_returns_safe_json_and_no_db(self):
@@ -223,7 +224,7 @@ with State(root) as state:
         self.assertFalse(lock.exists())
         self.assertEqual(runner.status(self.root)['requests_24h'], 1)
         self.assertEqual(result['problem']['code'], 'stopped')
-        with sqlite3.connect(self.root / 'state/state.db') as db:
+        with closing(sqlite3.connect(self.root / 'state/state.db')) as db, db:
             self.assertEqual(db.execute('SELECT status FROM jobs').fetchone()[0], 'interrupted')
 
     def test_legacy_policy_migration_preserves_history_waits_stops_and_ids(self):
@@ -267,7 +268,7 @@ with State(root) as state:
         with self.assertRaises(StateError):
             with State(self.root):
                 pass
-        with sqlite3.connect(self.root / 'state/state.db') as db:
+        with closing(sqlite3.connect(self.root / 'state/state.db')) as db, db:
             self.assertEqual(json.loads(db.execute("SELECT value FROM meta WHERE key='policy'").fetchone()[0]), unknown)
 
     def test_policy_migration_rolls_back_if_history_cannot_be_saved(self):
@@ -282,7 +283,7 @@ with State(root) as state:
         with patch.object(State, 'set_meta', fail), self.assertRaises(StateError):
             with State(self.root):
                 pass
-        with sqlite3.connect(self.root / 'state/state.db') as db:
+        with closing(sqlite3.connect(self.root / 'state/state.db')) as db, db:
             self.assertEqual(json.loads(db.execute("SELECT value FROM meta WHERE key='policy'").fetchone()[0]), LEGACY_POLICY)
             self.assertIsNone(db.execute("SELECT value FROM meta WHERE key='policy_migration'").fetchone())
 

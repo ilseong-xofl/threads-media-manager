@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { execFile, type ChildProcess } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CollectionView } from '../shared/contracts';
@@ -471,7 +472,7 @@ describe('maintenance process adapter', () => {
     const job = launchLibraryMaintenance('/app folder')(backup);
     expect(execFile).toHaveBeenCalledWith(
       'python',
-      ['-3', '-I', '-B', '/app folder/local-runtime/library_maintenance.py'],
+      ['-3', '-I', '-B', join('/app folder', 'local-runtime', 'library_maintenance.py')],
       expect.objectContaining({ shell: false, windowsHide: true, maxBuffer: 65536 }),
       expect.any(Function),
     );

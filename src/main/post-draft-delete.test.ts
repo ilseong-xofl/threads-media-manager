@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { execFile, type ChildProcess } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CollectionView, Post } from '../shared/contracts';
@@ -285,7 +286,7 @@ describe('draft deletion worker boundary', () => {
     const command = { root, kind: 'delete' as const, ...input, expectedSourceDeleted: false };
     const operation = launchPostDraftDelete('/synthetic-app')(command);
     const call = vi.mocked(execFile).mock.calls.at(-1)!;
-    expect(call[1]).toEqual(['-I', '-B', '/synthetic-app/local-runtime/post_draft.py']);
+    expect(call[1]).toEqual(['-I', '-B', join('/synthetic-app', 'local-runtime', 'post_draft.py')]);
     expect(call[2]).toMatchObject({ timeout: 120_000, maxBuffer: 64 * 1024 });
     expect(JSON.parse(child.stdin.end.mock.calls[0][0])).toEqual(command);
     await vi.advanceTimersByTimeAsync(120_000);

@@ -9,6 +9,7 @@ import {
   symlink,
   unlink,
   stat,
+  utimes,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,6 +112,9 @@ describe('development AI media registrations', () => {
     expect(response.headers.get('content-type')).toBe('image/png');
     expect(await response.text()).toBe('0123456789');
     await writeFile(join(root, generated.relativePath), '9876543210');
+    // The cache invalidation contract uses metadata; make the change independent of NTFS clock granularity.
+    const changedAt = new Date(Date.now() + 2000);
+    await utimes(join(root, generated.relativePath), changedAt, changedAt);
     expect(
       (await registry.respond(new Request(`threads-media://file/${generated.id}`))).status,
     ).toBe(409);

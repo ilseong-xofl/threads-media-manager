@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFile, type ChildProcess } from 'node:child_process';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -444,7 +445,11 @@ describe('comment preload registration and worker serialization', () => {
     vi.mocked(execFile).mockReturnValue(child as unknown as ChildProcess);
     const operation = launchPostComment('/synthetic-app')({ root, ...input() });
     const call = vi.mocked(execFile).mock.calls.at(-1)!;
-    expect(call[1]).toEqual(['-I', '-B', '/synthetic-app/local-runtime/save_post_comment.py']);
+    expect(call[1]).toEqual([
+      '-I',
+      '-B',
+      join('/synthetic-app', 'local-runtime', 'save_post_comment.py'),
+    ]);
     expect(call[2]).toMatchObject({ timeout: 120_000, maxBuffer: 128 * 1024 });
     expect(JSON.parse(child.stdin.end.mock.calls[0][0])).toEqual({ root, ...input() });
     expect(String(call[1])).not.toContain(input().caption);

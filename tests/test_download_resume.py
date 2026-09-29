@@ -1,4 +1,5 @@
 """Explicit recovery integration: synthetic libraries, fake GETs and virtual time."""
+from contextlib import closing
 import copy
 import hashlib
 import json
@@ -33,7 +34,7 @@ class DownloadResumeTests(unittest.TestCase):
         return transfer
 
     def rows(self, table):
-        with sqlite3.connect(self.root / 'state/state.db') as db:
+        with closing(sqlite3.connect(self.root / 'state/state.db')) as db, db:
             db.row_factory = sqlite3.Row
             return [dict(row) for row in db.execute('SELECT * FROM ' + table)]
 
