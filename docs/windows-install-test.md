@@ -2,7 +2,9 @@
 
 수집 플러그인 테스트를 마친 **동일한 깨끗한 Windows x64 PC**에서 이어서 진행합니다. 첫 사용 흐름이 기준이며, 기존 Mac 자료 이전이나 DB 복원으로 시작하지 않습니다.
 
-자동 업데이트가 포함된 **앱 0.1.1**의 `ThreadsMediaManager-win32-x64-Setup.exe`를 사용합니다. 이전 0.1.0에는 업데이트 코드가 없으므로, 이미 설치했다면 새 설치 파일을 한 번 실행해야 합니다. Windows 브라우저에서 [0.1.1 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.1/ThreadsMediaManager-win32-x64-Setup.exe)를 눌러 직접 받습니다. [Release 페이지](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.1)에서도 같은 파일을 받을 수 있습니다. 수집 플러그인은 [전용 GitHub 주소](https://github.com/ilseong-xofl/threads-collector)로 설치합니다. 이 후보는 내부 검수용이며 Windows에서 실제 설치·로그인·업로드한 결과는 아직 없습니다. Python·Pillow·ffmpeg·ffprobe·Codex CLI는 앱에 포함되어 있어 사용자가 터미널을 열거나 따로 설치하지 않습니다.
+자동 업데이트가 포함된 **앱 0.1.2**의 `ThreadsMediaManager-win32-x64-Setup.exe`를 사용합니다. 이전 0.1.0에는 업데이트 코드가 없으므로, 이미 설치했다면 새 설치 파일을 한 번 실행해야 합니다. Windows 브라우저에서 [0.1.2 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.2/ThreadsMediaManager-win32-x64-Setup.exe)를 눌러 직접 받습니다. [Release 페이지](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.2)에서도 같은 파일을 받을 수 있습니다. 수집 플러그인은 [전용 GitHub 주소](https://github.com/ilseong-xofl/threads-collector)로 설치합니다. 이 후보는 내부 검수용이며 Windows에서 실제 설치·로그인·업로드한 결과는 아직 없습니다. Python·Pillow·ffmpeg·ffprobe·Codex CLI는 앱에 포함되어 있어 사용자가 터미널을 열거나 따로 설치하지 않습니다.
+
+0.1.1에서 창만 보이고 내용이 비어 있었다면 앱을 닫고 0.1.2 설치 파일을 실행합니다. 0.1.2는 설치된 화면 파일 로딩과 Windows 주소 비교를 수정한 버전입니다. 기존 작업 폴더나 계정 정보를 삭제하지 않습니다.
 
 ## 시작 전에 준비할 것
 

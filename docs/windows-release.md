@@ -22,7 +22,7 @@ Release에는 다음을 함께 올린다.
 - `SHA256SUMS.txt`
 - `verification.json`
 
-`verify:windows`는 기존 내장 실행기 검사에 더해 RELEASES SHA-1·크기, NuGet 앱 ID/버전, x64 PE, ASAR 앱 버전·GitHub updater 원본 및 알려진 인증/사용자 파일명 미포함을 검사한다. 이것은 설치 실행·실제 업데이트 완료 검사가 아니다.
+`verify:windows`는 기존 내장 실행기 검사에 더해 RELEASES SHA-1·크기, NuGet 앱 ID/버전, x64 PE, ASAR 앱 버전·GitHub updater 원본 및 알려진 인증/사용자 파일명 미포함을 검사한다. 0.1.2부터 Windows CI는 생성한 패키지 실행 파일을 실제로 띄워 renderer·preload·조회 IPC도 확인하고 `verification.json`에 `ui` 결과를 넣는다. 게시 작업은 이 결과가 모두 성공해야 진행한다. Setup.exe 전체 설치·제거 및 실제 버전 간 업데이트 완료는 별도 검증이다.
 
 배포할 소스의 `package.json`을 기존 공개 버전보다 높이고 CI를 한 번 통과시킨다. 그 커밋에 동일한 `v<version>` 태그를 push한다. `release-windows.yml`은 공개 저장소·태그/버전 일치·기존 버전 미중복과 동일 커밋의 CI 성공을 확인하고, 이미 검증된 설치 파일을 GitHub 안에서 Release로 옮긴다. 전체 테스트와 빌드를 다시 실행하지 않는다. 전달받은 파일의 SHA-256과 Squirrel 패키지 무결성만 확인한 뒤 모든 파일을 draft에 올리고 일반 Release로 전환한다. 기존 Release 파일은 덮어쓰지 않는다. 필요하면 태그와 성공한 CI 실행 번호를 지정해 수동 게시한다. 태그는 원래 검증한 앱 소스를 유지하며 게시 작업만 수정해도 앱을 재빌드하지 않는다.
 

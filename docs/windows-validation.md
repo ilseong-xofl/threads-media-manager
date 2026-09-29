@@ -1,6 +1,6 @@
 # Windows 자동 검증과 설치 후보
 
-GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.1`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
+GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.2`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
 
 ## 자동으로 확인하는 범위
 
@@ -11,6 +11,14 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 5. 산출물 SHA-256과 `verification.json`을 저장한다. 검사 결과에는 설치 파일 실제 실행 및 자동 업데이트가 미검증임을 별도로 기록한다.
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
+
+## 2026-09-29 설치 앱의 빈 화면 수정: 0.1.2
+
+0.1.1 실제 Windows 설치에서 창 제목과 메뉴만 보이고 콘텐츠가 없는 오류가 보고됐다. 개발 서버의 HTTP 주소만 허용하던 앱 요청 필터가 설치 앱의 `file:` HTML·JavaScript까지 차단했다. Windows에서 Forge가 만든 원문 주소와 Chromium의 정규화된 주소가 달라 IPC 인증도 실패할 수 있었다.
+
+설치 앱은 `pathToFileURL`로 생성한 동일한 화면 주소를 로딩·요청 필터·IPC에 사용한다. 패키지 renderer 폴더의 로컬 파일만 허용하며 외부 파일·네트워크·다른 프레임은 계속 차단한다. 공백·한글·`#`·`%`가 포함된 Windows 경로를 회귀 검사한다.
+
+`verify:windows`에 실제 패키지 실행 검사를 추가했다. GitHub Windows runner에서 생성한 실행 파일을 띄우고 화면의 앱 제목/설정 버튼, preload API, 실제 조회 IPC를 확인해야 성공한다. 이 검사는 사용자 데이터가 없는 CI에서만 실행하며 설치 프로그램의 전체 설치·제거 시험을 대신하지 않는다. 결과는 `verification.json`의 `ui`에 기록하고 Release 게시에서도 통과 여부를 확인한다. 검사·빌드는 한 번 수행하고 성공한 파일을 그대로 게시한다.
 
 ## 2026-09-29 자동 업데이트 포함: 0.1.1
 

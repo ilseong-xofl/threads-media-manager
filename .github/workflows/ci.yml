@@ -67,6 +67,14 @@ jobs:
         if: runner.os == 'Windows' && steps.package.outcome == 'success'
         continue-on-error: true
         run: pnpm verify:windows
+      - name: Save packaged Windows UI evidence
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: threads-media-manager-windows-ui-${{ github.sha }}
+          path: out/windows-ui-smoke.png
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Python tests
         id: python
         continue-on-error: true

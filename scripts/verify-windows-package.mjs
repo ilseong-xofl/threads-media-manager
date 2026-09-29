@@ -126,6 +126,16 @@ const release = JSON.parse(
   ),
 );
 console.log(JSON.stringify({ release }));
+const ui = JSON.parse(
+  execFileSync(process.execPath, [resolve('scripts/verify-windows-ui.mjs')], {
+    encoding: 'utf8',
+    timeout: 90_000,
+    windowsHide: true,
+  }),
+);
+for (const field of ['packagedAppLaunched', 'rendererReady', 'preloadReady', 'ipcReady'])
+  assert.equal(ui[field], true, `Windows packaged UI verification: ${field}`);
+console.log(JSON.stringify({ ui }));
 const files = (await readdir(output)).filter(
   (name) => name !== 'SHA256SUMS.txt' && name !== 'verification.json',
 );
@@ -146,6 +156,7 @@ await writeFile(
       runtime: JSON.parse(result),
       codex: codexVerification,
       release,
+      ui,
       installerCreated: true,
       installerExecuted: false,
       automaticUpdateTested: false,

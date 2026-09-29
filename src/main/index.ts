@@ -16,6 +16,7 @@ import { configureRuntime } from './runtime';
 import { configureAutoUpdates } from './updates';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { IPC, MEDIA_SCHEME } from '../shared/contracts';
 import {
   CollectionController,
@@ -55,6 +56,9 @@ import { LibraryMaintenanceController, launchLibraryMaintenance } from './librar
 import { readLibraryPublications, saveLibraryPublications } from './library-publications';
 
 const runtimeRoot = configureRuntime(app.isPackaged, app.getAppPath(), process.resourcesPath);
+const rendererEntry = app.isPackaged
+  ? pathToFileURL(join(__dirname, '..', 'renderer', 'main_window', 'index.html')).href
+  : MAIN_WINDOW_WEBPACK_ENTRY;
 
 app.setName('Threads Media Manager');
 app.setAppUserModelId(
@@ -521,7 +525,7 @@ function createWindow(): void {
     rendererUpdateBlocked = true;
     window = null;
   });
-  void window.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+  void window.loadURL(rendererEntry);
 }
 
 if (squirrelStartup || !app.requestSingleInstanceLock()) {
@@ -534,13 +538,13 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
   void app
     .whenReady()
     .then(async () => {
-      // Dedicated dev session: no remote images, fonts, service requests, or navigation.
+      // Only the application renderer and managed local media may load in this session.
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
         callback(false),
       );
       session.defaultSession.setPermissionCheckHandler(() => false);
       session.defaultSession.webRequest.onBeforeRequest((details, callback) =>
-        callback({ cancel: !isLocalRequest(details.url, MAIN_WINDOW_WEBPACK_ENTRY) }),
+        callback({ cancel: !isLocalRequest(details.url, rendererEntry) }),
       );
       protocol.handle(MEDIA_SCHEME, (request) =>
         request.url.startsWith('threads-media://ai/')
@@ -581,7 +585,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               window.webContents.id,
               event.senderFrame === window.webContents.mainFrame,
               event.senderFrame?.url ?? '',
-              MAIN_WINDOW_WEBPACK_ENTRY,
+              rendererEntry,
             )
           )
             throw new Error('Unauthorized request');

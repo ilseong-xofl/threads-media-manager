@@ -166,6 +166,9 @@ jobs:
           verification = json.loads((output / "verification.json").read_text(encoding="utf-8"))
           require(verification["commit"] == os.environ["SOURCE_SHA"], "Candidate verification commit mismatch.")
           require(verification["installerCreated"] is True, "CI did not verify an installer.")
+          require(all(verification.get("ui", {}).get(field) is True for field in
+                      ("packagedAppLaunched", "rendererReady", "preloadReady", "ipcReady")),
+                  "CI must launch the packaged app and verify its renderer, preload and IPC before publishing.")
           require(verification["release"]["version"] == version and
                   verification["release"]["repository"] == os.environ["GITHUB_REPOSITORY"],
                   "Candidate release metadata mismatch.")
