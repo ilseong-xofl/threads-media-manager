@@ -163,3 +163,12 @@
 - 이 CI가 만든 artifact `11020356620`의 파일을 그대로 게시했다. 중복 검사·빌드를 시작했던 실행 `36541384373`은 취소했고, [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36542078768)은 49초에 성공했다. 배포 작업은 태그와 성공 CI의 커밋을 대조한 뒤 GitHub runner에서 동일 파일을 받아 SHA-256·Squirrel feed 무결성만 확인한다. 전체 테스트와 빌드를 반복하지 않는다. 게시 절차 변경은 `1454e9e`에 기록했으며 앱 코드·배포 태그는 바꾸지 않았다.
 - 공개 정식 Release의 5개 파일, 다운로드 링크 HTTP 200, GitHub asset digest와 SHA256SUMS 일치, 공개 Electron `/0.1.1/RELEASES` HTTP 200의 패키지 주소·SHA-1·크기, 현재 버전 조회 HTTP 204를 확인했다. 설치 파일 SHA-256은 `722a123ddb96dc6f081a183e7d73e277902cf7e0fa461c137882a288811582af`다.
 - 실제 Windows Setup.exe 실행·사용자 로그인·게시·버전 간 업데이트는 아직 미검증이다. 0.1.0에는 updater가 없어 0.1.1을 직접 설치해야 하며, 이후 더 높은 공개 버전으로 실제 업데이트를 시험한다. [수집 가이드](windows-collector-test.md)와 [앱 가이드](windows-install-test.md) 순서로 진행한다.
+
+
+## 2026-09-29 최초 수집 임시 하위 폴더 준비 수정
+
+- 실제 첫 수집에서 `_work/<실행ID>` 부모 폴더가 없어 입력 JSON/JSONL 저장이 실패한 원인을 합성 자료로 재현했다. 초기 설정은 `_work`까지만 만들고 실행별 준비 단계가 빠져 있었다.
+- `collection_journal.py prepare --collection-root ... --run-id ...`를 추가했다. 원본·활성 계정·복구 점검 후 브라우저 호출과 입력 JSON 작성 전에 실행 폴더 생성·쓰기·flush/fsync·확인용 파일 정리를 마친다. 준비 응답의 경로를 계정별 입력/JSONL/정규화에 함께 사용한다. 기존 계정·결과·임시 기록·공통 잠금은 변경하지 않는다. 파일 충돌·기존 미완료 실행·권한/디스크 오류는 브라우저 전에 알린다.
+- 초기 설정·수집 스킬, JSONL/저장 계약과 Windows 수집 가이드를 갱신했다. 계정당 최대 2건·대기 정책·실제 수집/저장 오류의 중단 원칙은 유지한다. 없는 폴더 생성은 정상 준비 절차이며 사용자에게 별도 재수집 요청을 요구하지 않는다.
+- 배포 버전 **`0.1.0+codex.20260929082903`**, [플러그인 커밋 2db6c6e](https://github.com/ilseong-xofl/threads-collector/commit/2db6c6e51ef4951ff58d8464bd73f9cf731b5057). 배포 파일 36개 해시·manifest·변경 스킬 형식을 검증했다. 한글/공백 경로·첫 입력/기록·기존 자료 보존·쓰기 실패·잘못된 경로를 포함한 수집 전용 테스트 62개와 [Mac/Windows CI](https://github.com/ilseong-xofl/threads-collector/actions/runs/36543189518)가 통과했다.
+- 사용자는 Windows에서 `수집 플러그인 업데이트해줘`를 요청하고 새 대화에서 수정 버전을 확인한 뒤 수집한다. 로컬 앱 0.1.1 설치 파일은 변경하거나 재빌드하지 않았다. 실제 사용자 Threads 수집·브라우저 로그인·계정 파일 변경은 이번 수정 검증에서 실행하지 않았다.

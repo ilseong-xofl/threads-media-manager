@@ -4,11 +4,12 @@
 
 ## 파일과 helper
 
-시작 전 수집 helper inspect로 원본을 확인하고 기존 수집 복구·잠금을 점검한다. 다운로드 DB의 중단 상태는 읽지 않는다. 수집 중에는 공통 잠금을 생성하지 않고, `_work/<실행ID>/0001.jsonl`처럼 계정 순번으로 파일을 정한다. 사용자가 입력한 계정명을 파일 경로로 이어 붙이지 않는다. 파일을 플러그인 소스·설치 캐시에 만들지 않는다.
+시작 전 수집 helper inspect로 원본을 확인하고 기존 수집 복구·잠금을 점검한다. 다운로드 DB의 중단 상태는 읽지 않는다. 활성 계정과 원본 검증을 마치면 브라우저 로그인 확인·프로필 방문·입력 JSON 작성 전에 아래 `prepare`를 실행한다. helper가 `_work/<실행ID>` 전체 경로를 생성하고 실제 쓰기·flush/fsync를 확인한 뒤 확인용 파일을 제거한다. 성공 응답의 `run_directory`를 입력 JSON·JSONL·정규화 출력의 공통 부모로 사용한다. 초기 설정은 `_work`까지만 만들므로 매 요청에서 실행 폴더 준비가 필요하다. 기존 실행 폴더가 비어 있지 않으면 덮어쓰지 않고 복구 상태를 확인한다. 수집 중에는 공통 잠금을 생성하지 않고, `_work/<실행ID>/0001.jsonl`처럼 계정 순번으로 파일을 정한다. 사용자가 입력한 계정명을 파일 경로로 이어 붙이지 않는다. 파일을 플러그인 소스·설치 캐시에 만들지 않는다.
 
 패키지 루트의 `scripts/collection_journal.py`를 제공된 Python으로 호출한다. 이 helper는 브라우저·Excel·네트워크를 사용하지 않는다.
 
 ```text
+python <plugin>/scripts/collection_journal.py prepare --collection-root <수집 루트 절대 경로> --run-id <고유 실행ID>
 python <plugin>/scripts/collection_journal.py append --journal <account.jsonl> --input <record.json>
 python <plugin>/scripts/collection_journal.py read --journal <account.jsonl> --output <records.json>
 ```

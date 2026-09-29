@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Offline append-only collection journal; Python standard library only.
 
-The caller MUST own the collection root's _work/collector.lock for the whole run.
-This helper does not acquire a second lock and does not support concurrent writers.
+Prepare the run directory before opening the browser or creating input records.
+Each run/account journal has one writer; exploration does not hold collector.lock.
+The source commit helper owns that lock only while publishing Excel files.
 It neither reads the browser nor accesses the network, Excel, or downloaded media.
 
 Input records contain v=1, type=start|batch|end, run_id, account, event_id, payload.
@@ -18,6 +19,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 from typing import Any
@@ -29,6 +31,47 @@ class JournalError(ValueError):
 
 INPUT_FIELDS = {"v", "type", "run_id", "account", "event_id", "payload"}
 RECORD_FIELDS = INPUT_FIELDS | {"seq"}
+
+
+def prepare_run(collection_root: Path, run_id: str) -> dict[str, Any]:
+    """Prepare and probe only a run's temporary directory before browser access."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", run_id) or re.fullmatch(
+        r"CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]", run_id, flags=re.IGNORECASE
+    ):
+        raise JournalError("Use a unique run ID containing only letters, digits, hyphens and underscores")
+    if not collection_root.is_absolute() or collection_root.is_symlink() or not collection_root.is_dir():
+        raise JournalError("Collection root must be an existing absolute directory; run setup first")
+    root = collection_root.resolve()
+    if any((path / ".codex-plugin/plugin.json").is_file() for path in (root, *root.parents)):
+        raise JournalError("Use user storage outside the plugin source or installation cache")
+    accounts = root / "accounts.xlsx"
+    if accounts.is_symlink() or not accounts.is_file():
+        raise JournalError("Existing accounts.xlsx is required; preparation never recreates user data")
+    work = root / "_work"
+    directory = work / run_id
+    for path in (work, directory):
+        if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+            raise JournalError("Temporary directory must not be a link")
+        if path.exists() and not path.is_dir():
+            raise JournalError("A file occupies the temporary directory; existing data was preserved")
+    if directory.exists() and any(directory.iterdir()):
+        raise JournalError("Run directory is not empty; inspect existing recovery data before using a new run ID")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        # Windows permits removal only after all handles have closed. A unique
+        # probe never touches accounts, history, existing journals or the lock.
+        with tempfile.NamedTemporaryFile(dir=directory, prefix=".prepare-", delete=False) as stream:
+            probe = Path(stream.name)
+            try:
+                stream.write(b"threads-collector-write-probe\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            finally:
+                stream.close()
+                probe.unlink()
+    except OSError as exc:
+        raise JournalError("Cannot prepare writable temporary storage; stop before opening the browser") from exc
+    return {"operation": "prepare", "prepared": True, "run_directory": str(directory)}
 
 
 def _json_tree(value: Any) -> None:
@@ -191,7 +234,7 @@ def append_record(journal: Path, record: dict[str, Any]) -> dict[str, Any]:
     data = _encode(persisted) + b"\n"
     try:
         # Exclusive creation protects an existing file. Subsequent writes append
-        # under the caller's collector.lock; any partial failure stays on disk.
+        # by the run's sole writer; any partial failure stays on disk.
         with journal.open("ab" if exists else "xb") as stream:
             stream.write(data)
             stream.flush()
@@ -228,7 +271,10 @@ def write_snapshot(journal: Path, output: Path, snapshot: dict[str, Any]) -> Non
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    append = commands.add_parser("append", help="Durably append one event under caller-owned collector.lock")
+    prepare = commands.add_parser("prepare", help="Create and probe temporary storage before browser access")
+    prepare.add_argument("--collection-root", required=True, type=Path)
+    prepare.add_argument("--run-id", required=True)
+    append = commands.add_parser("append", help="Durably append one event to a single-writer journal")
     append.add_argument("--journal", required=True, type=Path)
     append.add_argument("--input", required=True, type=Path, help="UTF-8 JSON record file (without seq)")
     read = commands.add_parser("read", help="Export complete records and recovery metadata without repairs")
@@ -236,7 +282,9 @@ def main(argv: list[str] | None = None) -> int:
     read.add_argument("--output", required=True, type=Path, help="Normalized snapshot JSON file")
     args = parser.parse_args(argv)
     try:
-        if args.command == "append":
+        if args.command == "prepare":
+            result = prepare_run(args.collection_root, args.run_id)
+        elif args.command == "append":
             try:
                 raw_input = args.input.read_bytes()
             except OSError as exc:
@@ -248,10 +296,11 @@ def main(argv: list[str] | None = None) -> int:
             result = {"operation": "read", "record_count": len(snapshot["records"]),
                       "closed": snapshot["state"]["closed"], "recovery": snapshot["recovery"]}
         # Captions, account identities, and media URLs belong only in files.
-        print(json.dumps(result, ensure_ascii=False))
+        # Keep machine-readable paths portable to redirected Windows consoles.
+        print(json.dumps(result, ensure_ascii=True))
         return 0
     except (JournalError, OSError) as exc:
-        print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({"error": str(exc)}, ensure_ascii=True), file=sys.stderr)
         return 2
 
 

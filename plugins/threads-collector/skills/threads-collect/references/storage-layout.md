@@ -29,7 +29,7 @@
 
 ## 저장·복구
 
-계정 접속 전 start를 기록하고, 탐색 중 [journal-contract.md](journal-contract.md)의 batch만 append한다. 탐색 중 Excel import/export·재열기·렌더·accounts 갱신은 하지 않는다.
+브라우저 호출 전에 `collection_journal.py prepare`로 `_work/<실행ID>` 생성·쓰기 확인을 마친다. 입력 JSON도 반환된 폴더 안에 작성한다. 로그인 확인 후 계정 접속 전 start를 기록하고, 탐색 중 [journal-contract.md](journal-contract.md)의 batch만 append한다. 탐색 중 Excel import/export·재열기·렌더·accounts 갱신은 하지 않는다.
 
 종료 후 end를 기록하고 완전한 관찰을 한 번 정규화한다. [helper 계약](../../../references/collection-source.md)의 `commit-source --input ... --journal ...`이 결과 Excel 작성·검증·교체, accounts 갱신·검증, 전달한 임시 두 파일 정리를 담당한다. 토큰 없이 호출한 helper가 Excel 반영 구간에만 잠금을 잡고 종료 시 해제한다. 탐색·JSONL 쓰기·정규화 중에는 공통 잠금을 잡지 않는다. 별도 보고서를 다시 만들지 않는다. 사용자 열·메모·서식은 보존한다.
 

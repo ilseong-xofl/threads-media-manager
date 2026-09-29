@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -37,6 +38,98 @@ class CollectionJournalTests(unittest.TestCase):
         with self.assertRaises(journal_module.JournalError):
             self.append(record)
         self.assertEqual(self.path.read_bytes(), before)
+
+    def test_prepare_cli_then_first_input_and_journal_in_fresh_nested_directory(self):
+        root = Path(self.directory.name) / "한글 공백 자료"
+        root.mkdir()
+        accounts = root / "accounts.xlsx"
+        accounts.write_bytes(b"existing account workbook")
+        result = subprocess.run([sys.executable, str(SCRIPT), "prepare", "--collection-root", str(root),
+                                 "--run-id", "20260929-test"], capture_output=True, text=True, encoding="utf-8",
+                                env=dict(os.environ, PYTHONIOENCODING="ascii"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        directory = Path(json.loads(result.stdout)["run_directory"])
+        self.assertEqual(directory, root.resolve() / "_work/20260929-test")
+        self.assertEqual(list(directory.iterdir()), [])
+        # A repeated preparation before collection is harmless.
+        self.assertTrue(journal_module.prepare_run(root, "20260929-test")["prepared"])
+        record = directory / "start.json"
+        record.write_text(json.dumps(self.event("start")), encoding="utf-8")
+        self.path = directory / "0001.jsonl"
+        result = subprocess.run([sys.executable, str(SCRIPT), "append", "--journal", str(self.path),
+                                 "--input", str(record)], capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.append(self.event("batch", payload={"posts": [{"id": "D123"}]}))
+        self.append(self.event("end"))
+        snapshot = journal_module.read_journal(self.path)
+        self.assertTrue(snapshot["state"]["closed"])
+        self.assertEqual(snapshot["state"]["next_seq"], 4)
+        self.assertEqual(accounts.read_bytes(), b"existing account workbook")
+        self.assertFalse((root / "_work/collector.lock").exists())
+        self.assertFalse((root / "results").exists())
+
+    def test_prepare_preserves_existing_run_and_rejects_path_collisions(self):
+        root = Path(self.directory.name)
+        (root / "accounts.xlsx").write_bytes(b"accounts")
+        directory = root / "_work/run-1"
+        directory.parent.mkdir()
+        directory.write_bytes(b"existing file")
+        with self.assertRaises(journal_module.JournalError):
+            journal_module.prepare_run(root, "run-1")
+        self.assertEqual(directory.read_bytes(), b"existing file")
+        directory.unlink()
+        directory.mkdir()
+        self.path = directory / "0001.jsonl"
+        self.start()
+        before = self.path.read_bytes()
+        with self.assertRaises(journal_module.JournalError):
+            journal_module.prepare_run(root, "run-1")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(directory.iterdir()), [self.path])
+
+    def test_prepare_new_run_preserves_old_journal_history_and_account_bytes(self):
+        root = Path(self.directory.name)
+        preserved = [root / "accounts.xlsx", root / "_work/old/0001.jsonl",
+                     root / "results/2026/09/threads-2026-09-29.xlsx"]
+        for path in preserved:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"existing " + path.name.encode())
+        before = {path: path.read_bytes() for path in preserved}
+        journal_module.prepare_run(root, "run-new")
+        self.assertEqual({path: path.read_bytes() for path in preserved}, before)
+        self.assertEqual(list((root / "_work/run-new").iterdir()), [])
+
+    def test_prepare_rejects_linked_work_directory(self):
+        root = Path(self.directory.name)
+        (root / "accounts.xlsx").write_bytes(b"accounts")
+        outside = root / "outside"
+        outside.mkdir()
+        try:
+            (root / "_work").symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"Directory symlinks unavailable: {exc}")
+        with self.assertRaises(journal_module.JournalError):
+            journal_module.prepare_run(root, "run-1")
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_prepare_write_failure_cleans_only_probe_and_never_changes_accounts(self):
+        root = Path(self.directory.name)
+        accounts = root / "accounts.xlsx"
+        accounts.write_bytes(b"accounts")
+        with mock.patch.object(journal_module.os, "fsync", side_effect=OSError("disk unavailable")):
+            with self.assertRaises(journal_module.JournalError):
+                journal_module.prepare_run(root, "run-1")
+        self.assertEqual(list((root / "_work/run-1").iterdir()), [])
+        self.assertEqual(accounts.read_bytes(), b"accounts")
+
+    def test_prepare_rejects_invalid_run_ids_and_missing_user_data_without_creation(self):
+        root = Path(self.directory.name)
+        for run_id in ("../outside", "nested/run", "..", "CON", "LPT1", "", "a" * 129):
+            with self.subTest(run_id=run_id), self.assertRaises(journal_module.JournalError):
+                journal_module.prepare_run(root, run_id)
+        with self.assertRaises(journal_module.JournalError):
+            journal_module.prepare_run(root, "run-1")
+        self.assertEqual(list(root.iterdir()), [])
 
     def test_roundtrip_literal_caption_and_signed_url(self):
         self.start()

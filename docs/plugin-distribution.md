@@ -8,7 +8,7 @@
 - Git 추적 브랜치: `main`
 - marketplace: `threads-collector`
 - plugin ID: `threads-collector@threads-collector`
-- 현재 버전: `0.1.0+codex.20260929065345`
+- 현재 버전: `0.1.0+codex.20260929082903`
 
 사용자는 Codex 대화에 GitHub README를 확인하고 설치해 달라고 요청한다. Codex가 앱 제공 실행기로 공식 Git marketplace 등록과 플러그인 설치를 수행한다. 사용자가 터미널·Git·Node·Python·Excel 프로그램을 설치하거나 저장소를 clone하는 절차는 없다. 기존 개인 목록은 보존하고 새 대화에서 실제 로드 경로와 버전을 확인한다. 명령과 사용자 복사 문장은 [배포 README](../distribution/github/README.md)에 있다.
 
@@ -29,7 +29,7 @@
 5. 배포 저장소 main에 커밋·push하고 해당 버전 태그를 남긴다. Mac·Windows CI를 확인한다.
 6. 서로 다른 두 버전으로 설치 캐시 갱신과 사용자 자료 보존을 확인하고 새 대화 적용은 별도 확인한다.
 
-배포에는 플러그인·빈 Excel 양식·설치 안내·검증 코드·56개 합성 테스트와 파일별 해시만 들어간다. 실제 계정 목록·수집 Excel·JSONL·미디어·DB·토큰·앱 런타임·개발 저장소 Git 이력을 복사하지 않는다. exporter는 알 수 없는 기존 파일이 있으면 중단하고, 검증 스크립트는 누락·변경·추가 파일을 검사한다. 배포 저장소에 사용자 자료를 넣지 않는다.
+배포에는 플러그인·빈 Excel 양식·설치 안내·검증 코드·62개 합성 테스트와 파일별 해시만 들어간다. 실제 계정 목록·수집 Excel·JSONL·미디어·DB·토큰·앱 런타임·개발 저장소 Git 이력을 복사하지 않는다. exporter는 알 수 없는 기존 파일이 있으면 중단하고, 검증 스크립트는 누락·변경·추가 파일을 검사한다. 배포 저장소에 사용자 자료를 넣지 않는다.
 
 `scripts/package-collector.py`와 `distribution/collector/`는 이전 오프라인 ZIP 형식 확인용으로 보존한다. 현재 최종 설치 경로는 GitHub이며 ZIP의 `threads-collector-testing`은 업데이트 스킬 대상이 아니다.
 
@@ -42,6 +42,6 @@
 1. [최종 테스트 1 — Codex·플러그인 설치·설정·계정 등록·수집·업데이트](windows-collector-test.md)
 2. [최종 테스트 2 — 로컬 앱 설치·세 연결 설정·다운로드·등록·원글·댓글 업로드](windows-install-test.md)
 
-계정당 최신 적격 미디어 원글 최대 2개와 기존 대기는 유지한다. 수집 플러그인은 Excel 원본 저장까지 담당하며 다운로드·SQLite·Pillow는 앱이 소유한다. 공통 공개 README에는 실제 수집 계정을 넣지 않는다. 내부 시험용 네 프로필은 담당자의 최종 시험 가이드에만 둔다.
+수집 시작 시 journal helper의 `prepare`가 브라우저 호출·입력 JSON 작성 전에 `_work/<실행ID>`를 생성하고 쓰기 확인을 마친다. 계정당 최신 적격 미디어 원글 최대 2개와 기존 대기는 유지한다. 수집 플러그인은 Excel 원본 저장까지 담당하며 다운로드·SQLite·Pillow는 앱이 소유한다. 공통 공개 README에는 실제 수집 계정을 넣지 않는다. 내부 시험용 네 프로필은 담당자의 최종 시험 가이드에만 둔다.
 
 앱은 0.1.1부터 Windows 자동 업데이트를 제공한다. 이전 `6a35557` 소스의 0.1.0에는 업데이트 코드가 없어 새 설치 파일을 한 번 실행해야 한다. 플러그인 GitHub 갱신과 앱 자동 업데이트를 혼동하지 않는다. [Windows 앱 검증 기록](windows-validation.md)을 따른다.
