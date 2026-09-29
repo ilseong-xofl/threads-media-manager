@@ -201,3 +201,12 @@
 ## 2026-09-29 0.1.3 빌드·게시 승인
 
 사용자가 누적 변경의 버전 인상·빌드·게시를 명시적으로 요청했다. 위 배포 전 기록 이후의 승인으로 게시 ID 링크와 AI 캡션 이모지 지침을 0.1.3에 포함한다. 공식 권고에 따른 Threads 상태 재조회 60초는 유지한다. GitHub CI에서 한 번 만든 설치 파일을 검증한 뒤 그대로 게시하며 Mac에 설치 파일을 내려받지 않는다. CI·공개 게시의 실제 결과는 후속 기록으로 확정한다.
+
+
+## 2026-09-29 0.1.3 공개 완료
+
+- [0.1.3 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.3)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.3/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. 게시 ID 클릭으로 원글·댓글 열기와 AI 캡션의 문맥에 맞는 이모지 1~2개 사용 지침을 포함한다. Threads 상태 재조회는 공식 권고에 따라 60초를 유지한다.
+- 앱 소스·태그는 `4d885b056abdf6de2400988325f6e42266d524ed`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36550326690)에서 TypeScript 양쪽 40개 파일/1,191개, Python Mac 552개·Windows 548개 통과와 OS별 4개 제외, 린트·타입·포맷 검사를 통과했다. Windows job 13분 5초, Mac 2분 34초였다.
+- Windows 패키지 실제 실행·renderer·preload·조회 IPC와 내장 Python/Pillow/영상/Codex CLI 검사를 통과했다. `verification.json`의 네 UI 항목이 모두 참이다. 실제 사용자 PC의 새 링크 클릭·새 캡션 품질·버전 간 자동 업데이트/자료 보존 시험과 구분한다.
+- [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36551811248)은 같은 성공 CI 파일을 재빌드 없이 사용했고 29초에 완료했다. 공개 파일 5개·SHA256SUMS/GitHub digest 일치, Setup/nupkg HEAD 200과 크기 일치, Electron feed의 0.1.2→0.1.3 안내 200 및 현재 0.1.3 조회 204를 확인했다.
+- 설치 파일 SHA-256: `8a5e4ee9bc519467111b2b8f915bc350d346e7f4cfbe3d3992abd73a2f1881d3`. Mac에는 설치 파일이나 nupkg를 내려받지 않았다. 검증 기록은 `[skip ci]` 문서 커밋으로 보존하며 추가 빌드 없이 마무리한다.

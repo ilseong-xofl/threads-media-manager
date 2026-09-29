@@ -12,6 +12,15 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
+
+## 2026-09-29 0.1.3 공개 완료
+
+- [0.1.3 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.3)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.3/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. 게시 ID 클릭으로 원글·댓글 열기와 AI 캡션의 문맥에 맞는 이모지 1~2개 사용 지침을 포함한다. Threads 상태 재조회는 공식 권고에 따라 60초를 유지한다.
+- 앱 소스·태그는 `4d885b056abdf6de2400988325f6e42266d524ed`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36550326690)에서 TypeScript 양쪽 40개 파일/1,191개, Python Mac 552개·Windows 548개 통과와 OS별 4개 제외, 린트·타입·포맷 검사를 통과했다. Windows job 13분 5초, Mac 2분 34초였다.
+- Windows 패키지 실제 실행·renderer·preload·조회 IPC와 내장 Python/Pillow/영상/Codex CLI 검사를 통과했다. `verification.json`의 네 UI 항목이 모두 참이다. 실제 사용자 PC의 새 링크 클릭·새 캡션 품질·버전 간 자동 업데이트/자료 보존 시험과 구분한다.
+- [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36551811248)은 같은 성공 CI 파일을 재빌드 없이 사용했고 29초에 완료했다. 공개 파일 5개·SHA256SUMS/GitHub digest 일치, Setup/nupkg HEAD 200과 크기 일치, Electron feed의 0.1.2→0.1.3 안내 200 및 현재 0.1.3 조회 204를 확인했다.
+- 설치 파일 SHA-256: `8a5e4ee9bc519467111b2b8f915bc350d346e7f4cfbe3d3992abd73a2f1881d3`. Mac에는 설치 파일이나 nupkg를 내려받지 않았다. 검증 기록은 `[skip ci]` 문서 커밋으로 보존하며 추가 빌드 없이 마무리한다.
+
 ## 2026-09-29 설치 앱의 빈 화면 수정: 0.1.2
 
 0.1.1 실제 Windows 설치에서 창 제목과 메뉴만 보이고 콘텐츠가 없는 오류가 보고됐다. 개발 서버의 HTTP 주소만 허용하던 앱 요청 필터가 설치 앱의 `file:` HTML·JavaScript까지 차단했다. Windows에서 Forge가 만든 원문 주소와 Chromium의 정규화된 주소가 달라 IPC 인증도 실패할 수 있었다.
