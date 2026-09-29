@@ -109,7 +109,7 @@
 - [설치 후보 artifact](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606/artifacts/11016097568)는 2026-10-13까지 보관한다. Windows job 15분 3초, Mac job 1분 48초였다. [검증 기록](windows-validation.md)과 [새 PC 로컬 앱 테스트 순서](windows-install-test.md)를 따른다.
 - 사용자는 최신 Mac 앱에서 AI 캡션 생성이 정상 동작함을 추가 확인했다. Windows Setup.exe 실제 실행·로그인·캡션·자료 이전은 사용자 PC 검증으로 남아 있다. 자동 업데이트는 미구현이며 공개 Release는 생성하지 않았다.
 
-## 다음 배포 단계
+## 이전 체크포인트의 다음 배포 단계 (아래 0.1.1 기록으로 대체)
 
 기능 개발 완료와 Windows 배포 준비 완료는 구분한다.
 

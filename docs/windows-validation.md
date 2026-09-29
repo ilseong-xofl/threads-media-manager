@@ -14,6 +14,9 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 ## 2026-09-29 자동 업데이트 포함: 0.1.1
 
+- 검증 소스 `fb7a948ea4f452479c0dfca3b3fa5baaaa9232c2`의 [Mac·Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36539270953)가 모두 성공했다. TypeScript **39개 파일 / 1,127개**가 양쪽에서 통과했고, Python은 Mac **546개**, Windows **542개 통과·OS별 4개 제외**다. 린트·타입·포맷 검사도 통과했다.
+- Windows job **15분 17초**, Mac job **1분 32초**였다. Windows 설치 파일·내장 실행기·Codex 0.158.0·Squirrel feed 무결성·인증/사용자 파일명 미포함 검사를 통과했다. Setup.exe 실제 실행과 버전 간 업데이트는 이 검사에 포함하지 않는다.
+- Release 게시는 성공한 같은 커밋의 CI artifact를 그대로 사용한다. 전체 테스트와 빌드는 반복하지 않으며, GitHub runner에서 파일 해시·버전·feed 연결을 확인한 뒤 게시한다. 사용자는 Windows에서 설치 파일을 직접 받는다.
 - LVM과 같은 update-electron-app 3.3.0 + ElectronPublicUpdateService + 공개 GitHub Releases를 사용한다. Windows 설치 앱만 시작 10초 후 및 1시간 간격으로 확인한다.
 - 백그라운드 다운로드 후 나중에/지금 재시작을 선택한다. 다운로드·등록 저장·게시·댓글·캡션·DB 관리·열린 작성/설정 화면이 있으면 보류하고 재시작 직전 다시 확인한다.
 - `verify:windows`가 RELEASES SHA-1/size, full.nupkg 앱 ID/버전/x64, ASAR 내부 버전·GitHub 업데이트 대상과 알려진 인증/사용자 파일명을 검사한다. 배포에 필요한 5개 파일을 함께 게시한다.

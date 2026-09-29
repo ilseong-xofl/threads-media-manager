@@ -3,91 +3,193 @@ name: Release Windows
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish (for example v0.1.1)
+        required: true
+        type: string
+      ci_run_id:
+        description: Successful CI run ID; leave empty to find the same commit automatically
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
-  group: windows-release-${{ github.ref }}
+  group: windows-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   release:
-    runs-on: windows-2022
-    timeout-minutes: 35
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: Verify stable version and release target
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw "Public Windows releases require a stable major.minor.patch version."
-          }
-          if ($env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Release tag must be v$version, received $env:GITHUB_REF_NAME."
-          }
-          $visibility = gh api "repos/$env:GITHUB_REPOSITORY" --jq '.visibility'
-          if ($LASTEXITCODE -ne 0 -or $visibility -ne 'public') {
-            throw "ElectronPublicUpdateService requires a public GitHub repository."
-          }
-          $releaseJson = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName,isDraft,isPrerelease
-          if ($LASTEXITCODE -ne 0) { throw "Failed to verify existing releases." }
-          foreach ($release in @($releaseJson | ConvertFrom-Json)) {
-            if ($release.tagName -eq $env:GITHUB_REF_NAME) {
-              throw "Release version already exists. Do not replace installed update assets."
-            }
-            if (-not $release.isDraft -and -not $release.isPrerelease -and $release.tagName -match '^v([0-9]+\.[0-9]+\.[0-9]+)$') {
-              if ([version]$Matches[1] -ge [version]$version) {
-                throw "Version $version must be higher than the existing public releases."
-              }
-            }
-          }
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
         with:
-          node-version-file: .node-version
-          cache: pnpm
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13.15'
-      - run: pnpm install --frozen-lockfile
-      - name: Prepare bundled Windows runtime
-        shell: pwsh
-        run: |
-          python scripts/prepare-windows-runtime.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "TMM_PYTHON=$((Resolve-Path build/runtime/python/python.exe).Path)" >> $env:GITHUB_ENV
-          "$((Resolve-Path build/runtime/bin).Path)" >> $env:GITHUB_PATH
-      - run: pnpm check
-      - name: Build unsigned Windows x64 installer
-        run: pnpm make --arch=x64
-      - name: Verify bundled runtime, Squirrel feed and checksums
-        run: pnpm verify:windows
-      - uses: actions/upload-artifact@v7
-        with:
-          name: threads-media-manager-windows-release-${{ github.ref_name }}
-          path: out/make/squirrel.windows/x64/
-          if-no-files-found: error
-          retention-days: 14
-      - name: Publish complete GitHub Release
-        shell: pwsh
+      - name: Verify tag, public release target and successful CI provenance
+        id: source
+        shell: python
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          REQUESTED_CI_RUN: ${{ inputs.ci_run_id }}
         run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $outputDir = "out/make/squirrel.windows/x64"
-          $names = @(
-            "ThreadsMediaManager-win32-x64-Setup.exe",
-            "RELEASES",
-            "threads_media_manager-$version-full.nupkg",
-            "SHA256SUMS.txt",
-            "verification.json"
-          )
-          $artifacts = @($names | ForEach-Object { (Resolve-Path (Join-Path $outputDir $_)).Path })
-          gh release create $env:GITHUB_REF_NAME @artifacts --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes --draft
-          if ($LASTEXITCODE -ne 0) { throw "Failed to upload the complete release." }
-          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false --latest
-          if ($LASTEXITCODE -ne 0) { throw "Assets remain in a draft; public update was not published." }
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          def command(*args):
+              return subprocess.check_output(args, text=True, encoding="utf-8").strip()
+
+          def api(endpoint):
+              return json.loads(command("gh", "api", endpoint))
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["REQUESTED_TAG"]
+          version = json.loads(Path("package.json").read_text())["version"]
+          require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version),
+                  "Public Windows releases require a stable major.minor.patch version.")
+          require(tag == f"v{version}", "Requested tag does not match the tagged package version.")
+          sha = command("git", "rev-parse", "HEAD")
+          require(command("git", "rev-parse", f"refs/tags/{tag}^{{commit}}") == sha,
+                  "Checkout does not match the existing version tag.")
+          require(api(f"repos/{repository}")["visibility"] == "public",
+                  "ElectronPublicUpdateService requires a public GitHub repository.")
+          releases = json.loads(command(
+              "gh", "api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"))
+          for page in releases:
+              for release in page:
+                  require(release["tag_name"] != tag,
+                          "Release already exists. Do not overwrite installed update assets.")
+                  stable = re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", release["tag_name"])
+                  if stable and not release["draft"] and not release["prerelease"]:
+                      require(tuple(map(int, stable.groups())) < tuple(map(int, version.split("."))),
+                              "Version must be higher than every existing public release.")
+
+          def is_verified_ci(run):
+              return (
+                  run["status"] == "completed" and run["conclusion"] == "success"
+                  and run["name"] == "CI"
+                  and run["path"].split("@", 1)[0] == ".github/workflows/ci.yml"
+                  and run["event"] in {"push", "workflow_dispatch"}
+                  and run["head_sha"] == sha
+                  and run["repository"]["full_name"] == repository
+                  and run["head_repository"]["full_name"] == repository
+              )
+
+          requested_run = os.environ.get("REQUESTED_CI_RUN", "").strip()
+          if requested_run:
+              require(re.fullmatch(r"[1-9][0-9]*", requested_run), "Invalid CI run ID.")
+              selected = api(f"repos/{repository}/actions/runs/{requested_run}")
+              require(is_verified_ci(selected), "CI must be a successful trusted run for the exact tag commit.")
+          else:
+              runs = api(f"repos/{repository}/actions/runs?head_sha={sha}&status=success&per_page=100")
+              matches = [run for run in runs["workflow_runs"] if is_verified_ci(run)]
+              require(matches, "No successful CI for this exact commit. Run CI first; release never rebuilds.")
+              selected = max(matches, key=lambda run: (run["run_number"], run.get("run_attempt", 1)))
+          run_id = selected["id"]
+          artifact_name = f"threads-media-manager-windows-candidate-{sha}"
+          artifacts = api(f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100")
+          matches = [item for item in artifacts["artifacts"] if item["name"] == artifact_name]
+          require(len(matches) == 1 and not matches[0]["expired"],
+                  "Expected exactly one non-expired Windows candidate artifact from the verified CI run.")
+          require(matches[0].get("workflow_run", {}).get("head_sha", sha) == sha,
+                  "Artifact source commit differs from the version tag.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"tag={tag}\nversion={version}\nsha={sha}\nrun_id={run_id}\nartifact_name={artifact_name}\n")
+          print(json.dumps({"tag": tag, "commit": sha, "ciRun": run_id,
+                            "artifact": artifact_name, "artifactId": matches[0]["id"]}))
+      - name: Download the verified candidate on this GitHub runner
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ steps.source.outputs.run_id }}
+          CANDIDATE_NAME: ${{ steps.source.outputs.artifact_name }}
+        run: |
+          import os
+          import subprocess
+          subprocess.run([
+              "gh", "run", "download", os.environ["CI_RUN_ID"],
+              "--repo", os.environ["GITHUB_REPOSITORY"],
+              "--name", os.environ["CANDIDATE_NAME"], "--dir", "candidate",
+          ], check=True)
+      - name: Verify unchanged candidate checksums, package and update feed
+        shell: python
+        env:
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          import hashlib
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          version = os.environ["RELEASE_VERSION"]
+          output = Path("candidate")
+          package = f"threads_media_manager-{version}-full.nupkg"
+          payloads = {"ThreadsMediaManager-win32-x64-Setup.exe", "RELEASES", package}
+          expected = payloads | {"SHA256SUMS.txt", "verification.json"}
+          require({entry.name for entry in output.iterdir()} == expected,
+                  "Candidate must contain exactly the five expected release assets.")
+          for entry in output.iterdir():
+              require(entry.is_file() and not entry.is_symlink(), "Unexpected candidate file type.")
+          checked = set()
+          for line in (output / "SHA256SUMS.txt").read_text(encoding="utf-8-sig").splitlines():
+              match = re.fullmatch(r"([0-9a-fA-F]{64})  (.+)", line)
+              require(match is not None, "Malformed candidate checksum entry.")
+              digest, name = match.groups()
+              require(name in payloads and name not in checked, "Unexpected or duplicate checksum entry.")
+              with (output / name).open("rb") as file:
+                  require(hashlib.file_digest(file, "sha256").hexdigest() == digest.lower(),
+                          f"Candidate checksum mismatch: {name}")
+              checked.add(name)
+          require(checked == payloads, "Missing candidate payload checksum.")
+          verification = json.loads((output / "verification.json").read_text(encoding="utf-8"))
+          require(verification["commit"] == os.environ["SOURCE_SHA"], "Candidate verification commit mismatch.")
+          require(verification["installerCreated"] is True, "CI did not verify an installer.")
+          require(verification["release"]["version"] == version and
+                  verification["release"]["repository"] == os.environ["GITHUB_REPOSITORY"],
+                  "Candidate release metadata mismatch.")
+          spec = importlib.util.spec_from_file_location("release_check", "scripts/verify-windows-release.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          print(json.dumps(module.verify_release(output, version, os.environ["GITHUB_REPOSITORY"])))
+      - name: Publish the existing candidate without rebuilding
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+          tag = os.environ["RELEASE_TAG"]
+          version = os.environ["RELEASE_VERSION"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          names = ["ThreadsMediaManager-win32-x64-Setup.exe", "RELEASES",
+                   f"threads_media_manager-{version}-full.nupkg", "SHA256SUMS.txt", "verification.json"]
+          assets = [str(Path("candidate", name).resolve()) for name in names]
+          subprocess.run(["gh", "release", "create", tag, *assets, "--repo", repository,
+                          "--verify-tag", "--generate-notes", "--draft"], check=True)
+          subprocess.run(["gh", "release", "edit", tag, "--repo", repository,
+                          "--draft=false", "--latest"], check=True)

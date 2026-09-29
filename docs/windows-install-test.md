@@ -2,7 +2,7 @@
 
 수집 플러그인 테스트를 마친 **동일한 깨끗한 Windows x64 PC**에서 이어서 진행합니다. 첫 사용 흐름이 기준이며, 기존 Mac 자료 이전이나 DB 복원으로 시작하지 않습니다.
 
-자동 업데이트가 포함된 **앱 0.1.1**의 `ThreadsMediaManager-win32-x64-Setup.exe`를 사용합니다. 이전 0.1.0에는 업데이트 코드가 없으므로, 이미 설치했다면 새 설치 파일을 한 번 실행해야 합니다. 전달 폴더에 설치 파일과 두 테스트 가이드가 있습니다. 수집 플러그인은 [전용 GitHub 주소](https://github.com/ilseong-xofl/threads-collector)로 설치합니다. 이 후보는 내부 검수용이며 Windows에서 실제 설치·로그인·업로드한 결과는 아직 없습니다. Python·Pillow·ffmpeg·ffprobe·Codex CLI는 앱에 포함되어 있어 사용자가 터미널을 열거나 따로 설치하지 않습니다.
+자동 업데이트가 포함된 **앱 0.1.1**의 `ThreadsMediaManager-win32-x64-Setup.exe`를 사용합니다. 이전 0.1.0에는 업데이트 코드가 없으므로, 이미 설치했다면 새 설치 파일을 한 번 실행해야 합니다. Windows 브라우저에서 [0.1.1 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.1/ThreadsMediaManager-win32-x64-Setup.exe)를 눌러 직접 받습니다. [Release 페이지](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.1)에서도 같은 파일을 받을 수 있습니다. 수집 플러그인은 [전용 GitHub 주소](https://github.com/ilseong-xofl/threads-collector)로 설치합니다. 이 후보는 내부 검수용이며 Windows에서 실제 설치·로그인·업로드한 결과는 아직 없습니다. Python·Pillow·ffmpeg·ffprobe·Codex CLI는 앱에 포함되어 있어 사용자가 터미널을 열거나 따로 설치하지 않습니다.
 
 ## 시작 전에 준비할 것
 
@@ -16,7 +16,7 @@ Codex 앱 로그인, 수집용 Threads 브라우저 로그인, 이 앱의 ChatGP
 
 ## 1. 설치와 폴더 지정
 
-1. 설치 파일을 Windows로 옮겨 더블클릭합니다. 정상 설치 후 **Threads Media Manager**를 실행합니다.
+1. Windows에서 다운로드한 설치 파일을 더블클릭합니다. 정상 설치 후 **Threads Media Manager**를 실행합니다.
 2. 첫 폴더 선택에서 플러그인이 만든 **작업 폴더**를 선택합니다. 플러그인 패키지 폴더나 그 안의 plugins 폴더를 선택하지 않습니다.
 3. 필요하면 **설정 → 폴더 재연결 → 재연결**에서 같은 작업 폴더를 지정합니다. **새로고침**으로 원본을 읽습니다.
 4. 다운로드 전에는 파일을 모두 저장한 게시글 카드가 아직 없을 수 있습니다. 다운로드 예정 대상은 수집 결과와 연결되어야 합니다.
