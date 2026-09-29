@@ -18,7 +18,7 @@ Codex 플러그인으로 Threads 게시글 정보를 수집하고, Electron 앱�
 
 ## 현재 범위
 
-[수집 플러그인](plugins/threads-collector/README.md)은 초기 설정·설치 점검·수집·영구 원본 저장을 제공한다. 다운로드 스킬은 제공하지 않는다.
+[수집 플러그인](plugins/threads-collector/README.md)은 초기 설정·설치 점검·수집·영구 원본 저장을 제공한다. 다운로드 스킬은 제공하지 않는다. 설치·업데이트는 [전용 GitHub 저장소](https://github.com/ilseong-xofl/threads-collector)를 사용한다. 깨끗한 Windows의 최종 시험은 [수집 가이드](docs/windows-collector-test.md)와 [로컬 앱 가이드](docs/windows-install-test.md) 순서로 진행한다.
 
 - **다운로드:** 한 번 클릭으로 현재 미완료 게시글을 회차별 순차 처리한다. 파일·회차·계정 대기와 첫 오류 중단을 유지한다. [다운로드 계약](docs/phase-1e-download.md).
 - **목록과 상세:** 완료 게시글 그리드, 이미지·영상 캐러셀, 계정·검색·등록일 필터, 12개/24개 페이지와 이어 보기. 상세에서 선택한 영상만 자동재생한다.

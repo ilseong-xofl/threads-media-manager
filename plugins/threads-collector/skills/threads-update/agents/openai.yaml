@@ -1,0 +1,4 @@
+interface:
+  display_name: "Threads 플러그인 업데이트"
+  short_description: "등록된 GitHub 배포본만 갱신하고 설치 버전과 새 대화 적용을 확인"
+  default_prompt: "$threads-update로 수집 플러그인을 업데이트해줘. 기존 계정과 수집 자료는 유지하고 수집은 시작하지 마."

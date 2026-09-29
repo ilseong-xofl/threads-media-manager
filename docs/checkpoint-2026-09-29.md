@@ -106,7 +106,7 @@
 
 - `6a35557`의 [Windows·Mac 수동 CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606)가 성공했다. TypeScript 양쪽 **1,084개**, Python Mac **528개**, Windows **524개 통과·OS별 4개 제외**, 린트·타입·포맷 통과.
 - Windows x64 **0.1.0** 설치 파일과 앱 전용 Codex CLI **0.158.0** 포함 후보를 생성했다. 패키지 내부 Python·Pillow·SQLite·pHash·영상·다국어 경로, Codex 포함 파일 **48개**와 버전·미로그인 상태 검사를 통과했다.
-- [설치 후보 artifact](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606/artifacts/11016097568)는 2026-10-13까지 보관한다. Windows job 15분 3초, Mac job 1분 48초였다. [검증 기록](windows-validation.md)과 [설치·자료 이전 테스트 순서](windows-install-test.md)를 따른다.
+- [설치 후보 artifact](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606/artifacts/11016097568)는 2026-10-13까지 보관한다. Windows job 15분 3초, Mac job 1분 48초였다. [검증 기록](windows-validation.md)과 [새 PC 로컬 앱 테스트 순서](windows-install-test.md)를 따른다.
 - 사용자는 최신 Mac 앱에서 AI 캡션 생성이 정상 동작함을 추가 확인했다. Windows Setup.exe 실제 실행·로그인·캡션·자료 이전은 사용자 PC 검증으로 남아 있다. 자동 업데이트는 미구현이며 공개 Release는 생성하지 않았다.
 
 ## 다음 배포 단계
@@ -122,3 +122,26 @@
 2026-09-29 사용자 결정으로 DB 백업·복원은 컴퓨터 이전용으로 한정한다. 작업 폴더 전체와 백업을 함께 옮겨 기존 파일을 다시 받지 않고 사용한다. 복원 때문에 다운로드 보류를 새로 만들지 않으며 원래 요청·대기·중단은 유지한다. 구버전의 복원 보류만 검증된 폴더 재연결·복원에서 해제한다. 게시 완료·결과 불명 이력은 작업 폴더의 이전 파일을 통해 보존하고 Threads 토큰·파일 서버 연결코드는 새 PC에서 다시 입력한다. 유실 자료 재구성·별도 이력 검토 및 보류 해제 화면은 잔여 업무에서 제외했다. [컴퓨터 이전 절차](database-maintenance.md)를 따른다.
 
 다음 대화에서는 이 문서를 기준으로 작업 범위를 정하고, 개인 자료와 실제 Threads 게시물은 명시적 요청 없이 변경하지 않는다.
+
+
+## 2026-09-29 최신 배포 준비: 깨끗한 Windows 최종 시험
+
+- 사용자 결정: 개발 도구·기존 자료 없는 Windows에서 **Codex 설치·로그인 → 수집 플러그인 설치·초기 설정·계정 등록·수집**, 이어서 **로컬 앱 설치·세 연결 설정 → 다운로드·등록·원글 API·댓글 API**를 최종 시험한다. 기존 Mac DB 이전을 첫 사용 절차로 삼지 않는다.
+- `scripts/package-collector.py`와 배포 전용 `threads-collector-testing` 목록을 추가했다. 기존 personal 목록을 보존하고 코드·빈 양식·설치 안내·파일 해시만 포함한 ZIP을 생성한다. 버전 `0.1.0+codex.20260929063625`, 계정당 기본 최대 2건과 대기는 유지한다.
+- 계정 등록은 Codex 채팅과 Spreadsheets로 요청하도록 초기 설정 지침을 보완했다. 사용자가 Excel 프로그램·터미널·개발 런타임을 수동 설치하지 않는 흐름이다. Codex 제공 Python/도구가 없는 Windows 환경은 준비 실패로 기록하며 아직 실제 제공 여부를 보장하지 않는다.
+- manifest·스킬 3개 검증과 초기 설정·원본 저장·journal 56개 테스트, ZIP 재생성·내부 해시 검증을 통과했다. 개발 PC에 배포본 목록을 별도 등록해 이름·버전·소스 경로의 Codex 인식을 확인했다. 중복 플러그인 설치·실제 수집·API 게시는 하지 않았다.
+- [수집 가이드](windows-collector-test.md)와 [로컬 앱 가이드](windows-install-test.md)를 분리했다. Windows 실제 최종 시험 → 문제 수정/재시험 → 사용자 1명 라이브 시험 → 일반 배포 순서다. 현 설치 후보 `6a35557`은 유지하며 자동 업데이트 구현·버전 간 갱신 시험은 여전히 남아 있다.
+
+
+## 2026-09-29 최신 배포 결정: 전용 GitHub 설치와 업데이트
+
+이 항목이 위 ZIP 배포 준비보다 최신 기준이다.
+
+- 사용자 승인으로 전용 공개 저장소 **[ilseong-xofl/threads-collector](https://github.com/ilseong-xofl/threads-collector)**를 생성했다. 배포 기준은 `main`, marketplace `threads-collector`, plugin `threads-collector@threads-collector`다. 현재 배포 커밋 [7d3c06a](https://github.com/ilseong-xofl/threads-collector/commit/7d3c06a96c236a7395069c71e95698d4b931174f), 플러그인 버전 `0.1.0+codex.20260929065345`다.
+- 설치는 GitHub README를 읽고 설치해 달라는 Codex 채팅 요청으로 진행한다. 새 `threads-update`는 같은 원본/main/사용자 홈을 확인하고 대상 목록과 플러그인만 갱신한다. 새 대화 로드 확인이 별도로 필요하며 개인 계정 즉시 자동 갱신을 보장하지 않는다. 사용자에게 터미널·Git·Python·Node 설치를 요구하지 않는다.
+- 작성 원본은 이 프로젝트 `plugins/threads-collector/`이며 `scripts/export-collector-repo.py`가 허용된 파일만 별도 저장소에 내보낸다. 37개 배포 파일 중 DISTRIBUTION.json을 제외한 36개 해시를 검사한다. 추가 파일을 넣었을 때 검사가 실패하는 것도 확인했다. 실제 계정·수집 원본·미디어·DB·토큰·앱 런타임은 배포하지 않았다.
+- manifest·수정 스킬 형식·배포 템플릿 포맷과 Mac 로컬 56개 합성 테스트를 통과했다. [전용 저장소 Mac·Windows CI](https://github.com/ilseong-xofl/threads-collector/actions/runs/36534109427)에서 배포 무결성과 수집 설정·원본·journal 테스트를 통과했다. 최초 Windows 검사에서 Git 줄바꿈 변환에 따른 해시 불일치를 발견해 `.gitattributes`로 수정한 뒤 재검사했다.
+- Mac의 기존 공식 CLI 0.158.0으로 실제 GitHub 등록·구버전 `0.1.0+codex.20260929063625` 설치 → `marketplace upgrade`와 `plugin add` → 신버전 `0.1.0+codex.20260929065345` 설치 캐시를 확인했다. 합성 수집 폴더에서 설정·계정·결과 Excel·임시 자료·앱 자료 대용 파일 등 검사 대상 8개 해시가 같고, 새 실행기에서 원글 1개와 기준 ID가 유지됨을 확인했다. 실제 사용자 DB·미디어를 대상으로 한 시험은 아니다.
+- 테스트 전후 다른 marketplace·플러그인 설정의 해시가 같았다. 새 GitHub 목록은 남기고 이번에 설치한 시험용 플러그인만 제거해 기존 personal 설치와의 중복을 정리했다. 현재 대화는 기존 로드 상태이며 신버전 새 대화 적용을 확인했다고 보고하지 않는다.
+- Windows 전달 폴더의 `시작하기.html`, [수집 가이드](windows-collector-test.md), [로컬 앱 가이드](windows-install-test.md)를 GitHub 방식으로 갱신했다. 과거 ZIP은 `이전-ZIP-시험본` 하위로 보존했으며 이번 설치에는 사용하지 않는다. 앱 설치 파일은 기존 `6a35557` 후보 그대로다.
+- **미검증:** 아무 도구도 없는 Windows의 Codex 제공 실행기·Git 기능·Python·내부 브라우저 준비, 실제 GitHub 설치·서로 다른 버전 업데이트·새 대화 스킬 로드·실제 수집, 로컬 앱 UI·로그인·다운로드·원글/댓글 게시. CI는 준비된 Python을 사용하는 합성 검사여서 이를 대체하지 않는다. 실제 사용자 1명 라이브 시험과 일반 배포도 아직 진행하지 않았다. 앱 자동 업데이트는 별도 미구현이다.

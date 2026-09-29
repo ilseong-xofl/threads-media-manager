@@ -1,0 +1,25 @@
+name: Collector checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collector:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.15'
+      - name: Verify distribution contents
+        run: python -X utf8 -B scripts/verify-distribution.py
+      - name: Collector setup and storage tests
+        run: python -X utf8 -B -m unittest discover -s tests
