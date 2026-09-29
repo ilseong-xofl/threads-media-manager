@@ -1,8 +1,8 @@
 """Remove newly downloaded posts whose first saved media matches an older post.
 
-The comparison uses the SHA-256 already recorded during download. Only a
-matching pair is re-read from disk; the existing deletion journal performs the
-actual whole-post removal and Excel/SQLite updates.
+SHA-256 is checked across all saved posts, then the first image's pHash is
+checked against the 50 most recently collected retained first images. The
+existing deletion journal performs whole-post removal and Excel/SQLite updates.
 """
 from collections import defaultdict
 from contextlib import closing
@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import delete_media as deletion
+import perceptual_hash
 from threads_runner import attempts, deletion_state
 from threads_runner.state import safe_path
 
@@ -74,6 +75,12 @@ def _protected(root, db, key):
     post_key = json.dumps(key, ensure_ascii=False, separators=(",", ":"))
     folder = safe_path(root, "ai-drafts/" + hashlib.sha256(post_key.encode()).hexdigest()[:32])
     return folder.exists() and any(folder.iterdir())
+
+
+def _recent_images(saved, keys):
+    ordered = sorted((key for key in keys if "image" in saved[key]["first"]),
+                     key=lambda key: (saved[key]["collectedAt"], key), reverse=True)
+    return [saved[key]["first"]["image"] for key in ordered[:perceptual_hash.RECENT_IMAGES]]
 
 
 def _auto_plan(root, key, lock):
@@ -142,6 +149,8 @@ def remove_new_duplicates(root, completed_keys, *, check=lambda: False, progress
             raise deletion.DeleteError("deletion_changed", "새로 저장한 게시글의 원본 또는 파일 상태가 변경되었습니다.")
         keepers = defaultdict(list)
         new = set(keys)
+        retained_keys = set(saved) - new
+        image_hashes = None
         for key, post in saved.items():
             if key not in new:
                 for kind, item in post["first"].items():
@@ -152,8 +161,25 @@ def remove_new_duplicates(root, completed_keys, *, check=lambda: False, progress
             post = saved[key]
             match = next(((item, existing) for kind, item in post["first"].items()
                           for existing in keepers[kind, item["sha256"]]), None)
+            visual_match = False
+            if match is None and "image" in post["first"]:
+                recent = _recent_images(saved, retained_keys)
+                if recent:
+                    if image_hashes is None:
+                        image_hashes = perceptual_hash.ImageHashes(root)
+                    item = post["first"]["image"]
+                    value = image_hashes.get(item)
+                    if value is not None:
+                        for existing in recent:
+                            deletion.stopped(check)
+                            if value == image_hashes.get(existing):
+                                match = item, existing
+                                visual_match = True
+                                break
             if match:
                 item, existing = match
+                if visual_match:
+                    image_hashes.verify_match(item, existing)
                 # Stored digests make the scan cheap. Re-read only the matching
                 # first files so stale or changed files cannot cause deletion.
                 old_file = deletion.file_record(root, existing["final_rel"], existing["size"], existing["sha256"])
@@ -164,7 +190,10 @@ def remove_new_duplicates(root, completed_keys, *, check=lambda: False, progress
                 deletion.commit_current(root, current, lock, check)
                 removed += 1
             else:
+                retained_keys.add(key)
                 for kind, item in post["first"].items():
                     keepers[kind, item["sha256"]].append(item)
             progress(index, removed)
+        if image_hashes is not None:
+            image_hashes.save(lock)
         return removed

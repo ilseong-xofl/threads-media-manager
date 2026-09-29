@@ -145,7 +145,9 @@ describe('download progress and confirmation', () => {
         }),
       );
       expect(output).toContain('게시글을 확인하거나 편집·작성할 수 없습니다');
-      expect(output).toContain('첫 이미지·영상의 SHA-256');
+      expect(output).toContain('첫 이미지·영상 파일이');
+      expect(output).toContain('최근 50개 게시글의 첫 이미지');
+      expect(output).toContain('새 게시글 전체를 삭제합니다');
       expect(output).toContain(resuming ? '이어서 다운로드' : '다운로드 시작');
     }
   });

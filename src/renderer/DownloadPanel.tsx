@@ -61,8 +61,9 @@ export function DownloadConfirmation({
         {resuming ? '다운로드를 이어서 진행할까요?' : '다운로드를 시작할까요?'}
       </h2>
       <p>
-        다운로드 중에는 게시글을 확인하거나 편집·작성할 수 없습니다. 저장 후 첫 이미지·영상의
-        SHA-256이 같은 새 게시글은 전체 삭제합니다. 진행하시겠습니까?
+        다운로드 중에는 게시글을 확인하거나 편집·작성할 수 없습니다. 저장 후 첫 이미지·영상 파일이
+        같거나, 첫 이미지가 계정 구분 없이 최근 50개 게시글의 첫 이미지와 시각적으로 중복으로
+        판정되면 새 게시글 전체를 삭제합니다. 진행하시겠습니까?
       </p>
       <div className="download-confirmation-actions">
         <button type="button" onClick={onCancel}>
