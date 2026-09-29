@@ -145,3 +145,12 @@
 - 테스트 전후 다른 marketplace·플러그인 설정의 해시가 같았다. 새 GitHub 목록은 남기고 이번에 설치한 시험용 플러그인만 제거해 기존 personal 설치와의 중복을 정리했다. 현재 대화는 기존 로드 상태이며 신버전 새 대화 적용을 확인했다고 보고하지 않는다.
 - Windows 전달 폴더의 `시작하기.html`, [수집 가이드](windows-collector-test.md), [로컬 앱 가이드](windows-install-test.md)를 GitHub 방식으로 갱신했다. 과거 ZIP은 `이전-ZIP-시험본` 하위로 보존했으며 이번 설치에는 사용하지 않는다. 앱 설치 파일은 기존 `6a35557` 후보 그대로다.
 - **미검증:** 아무 도구도 없는 Windows의 Codex 제공 실행기·Git 기능·Python·내부 브라우저 준비, 실제 GitHub 설치·서로 다른 버전 업데이트·새 대화 스킬 로드·실제 수집, 로컬 앱 UI·로그인·다운로드·원글/댓글 게시. CI는 준비된 Python을 사용하는 합성 검사여서 이를 대체하지 않는다. 실제 사용자 1명 라이브 시험과 일반 배포도 아직 진행하지 않았다. 앱 자동 업데이트는 별도 미구현이다.
+
+
+## 2026-09-29 Windows 자동 업데이트 구현: 0.1.1
+
+- 사용자 요청에 따라 local-video-manager의 `update-electron-app@3.3.0`·공개 GitHub Releases·ElectronPublicUpdateService·Squirrel 구조를 적용했다. Windows 설치 앱만 시작 10초 후 및 1시간마다 확인하고 백그라운드 다운로드 후 나중에/지금 재시작을 묻는다. Mac 개발 실행은 비활성이다.
+- 전체 main 작업과 renderer의 열린 작성/상세/설정창을 확인해 안내와 재시작을 보류한다. 사용자가 재시작을 고른 뒤 다시 확인하고 확정 이후 신규 IPC/주기 Threads 작업을 차단한다. 사용자 자료·Squirrel 앱 ID·실행 파일 이름을 유지하며 Windows taskbar ID를 Squirrel 바로가기와 맞췄다.
+- 태그 기반 Windows Release workflow와 RELEASES·full.nupkg·ASAR·x64·버전·업데이트 원본 검증을 추가했다. 서명 없는 Windows 배포를 사용한다. 자세한 절차는 [Release 계약](windows-release.md)을 따른다.
+- Mac 전체 검사에서 TypeScript **39개 파일 / 1,127개**, Python **545개**, 린트·타입·포맷 통과. 업데이트 core/coordinator 29개와 renderer 보류 14개 테스트를 포함한다. Windows 실제 설치·두 공개 버전 간 전송/재시작/자료 보존 검증과 구분한다.
+- 기존 0.1.0에는 updater가 없으므로 새 0.1.1 Setup.exe를 한 번 설치해야 한다. 0.1.1이 자동 업데이트의 최초 설치 기준점이다. Windows 후보/Release 검증 결과는 후속 기록에서 확정한다.

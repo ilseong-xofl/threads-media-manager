@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   DownloadConfirmation,
   DownloadOverlay,
@@ -37,6 +37,7 @@ import { SettingsModal } from './SettingsModal';
 import './settings.css';
 import { useThreadsApi } from './use-threads-api';
 import { latestPublication } from './ThreadsPublicationPanel';
+import { createUpdateBlockReporter, updateBlockedByUi } from './update-blocker';
 
 const captionCacheKey = (root: string, postKey: string) => JSON.stringify([root, postKey]);
 
@@ -101,6 +102,31 @@ export function App() {
   const downloadPending = useRef(false);
   const revision = useRef(-1);
   const downloading = activeDownload(download) || startingDownload;
+  const updateReporter = useRef<ReturnType<typeof createUpdateBlockReporter> | null>(null);
+  const updateBlocked = updateBlockedByUi({
+    busy,
+    downloading,
+    exporting,
+    localMutation,
+    selected,
+    registration,
+    settingsOpen,
+    contentPostKey,
+    confirmDownload,
+  });
+  useLayoutEffect(() => {
+    const reporter = createUpdateBlockReporter((blocked) =>
+      window.threadsMedia.reportUpdateBlocked(blocked),
+    );
+    updateReporter.current = reporter;
+    return () => {
+      reporter.dispose();
+      updateReporter.current = null;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    updateReporter.current!.report(updateBlocked);
+  }, [updateBlocked]);
   const snapshot = view.snapshot;
   const deletionRecovery =
     view.error?.code === 'deletion_recovery_required' ||

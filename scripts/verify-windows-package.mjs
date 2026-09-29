@@ -110,6 +110,22 @@ try {
 const output = resolve('out/make/squirrel.windows/x64');
 for (const name of ['ThreadsMediaManager-win32-x64-Setup.exe', 'RELEASES'])
   await access(join(output, name));
+const release = JSON.parse(
+  execFileSync(
+    join(runtime, 'python/python.exe'),
+    [
+      '-I',
+      '-X',
+      'utf8',
+      '-B',
+      resolve('scripts/verify-windows-release.py'),
+      '--repository',
+      process.env.GITHUB_REPOSITORY ?? '',
+    ],
+    { env, encoding: 'utf8', timeout: 90_000, windowsHide: true },
+  ),
+);
+console.log(JSON.stringify({ release }));
 const files = (await readdir(output)).filter(
   (name) => name !== 'SHA256SUMS.txt' && name !== 'verification.json',
 );
@@ -129,6 +145,7 @@ await writeFile(
       commit: process.env.GITHUB_SHA ?? null,
       runtime: JSON.parse(result),
       codex: codexVerification,
+      release,
       installerCreated: true,
       installerExecuted: false,
       automaticUpdateTested: false,

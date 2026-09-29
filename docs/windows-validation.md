@@ -1,6 +1,6 @@
 # Windows 자동 검증과 설치 후보
 
-GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 버전은 `0.1.0`이며 자동 업데이트·공개 Release 배포와 분리한다.
+GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.1`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
 
 ## 자동으로 확인하는 범위
 
@@ -12,7 +12,15 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
-## 2026-09-29 최신 설치 후보: 앱 전용 Codex 포함
+## 2026-09-29 자동 업데이트 포함: 0.1.1
+
+- LVM과 같은 update-electron-app 3.3.0 + ElectronPublicUpdateService + 공개 GitHub Releases를 사용한다. Windows 설치 앱만 시작 10초 후 및 1시간 간격으로 확인한다.
+- 백그라운드 다운로드 후 나중에/지금 재시작을 선택한다. 다운로드·등록 저장·게시·댓글·캡션·DB 관리·열린 작성/설정 화면이 있으면 보류하고 재시작 직전 다시 확인한다.
+- `verify:windows`가 RELEASES SHA-1/size, full.nupkg 앱 ID/버전/x64, ASAR 내부 버전·GitHub 업데이트 대상과 알려진 인증/사용자 파일명을 검사한다. 배포에 필요한 5개 파일을 함께 게시한다.
+- Mac 개발 앱은 업데이트 네트워크 요청을 하지 않는다. Windows는 서명 없이 배포하며 설치 경고가 나올 수 있다. 코드 서명을 기능 구현의 필수 조건으로 두지 않는다.
+- 최초 자동 업데이트 지원 설치본은 0.1.1이다. 기존 0.1.0은 한 번 새 Setup.exe로 설치해야 한다. 0.1.1보다 높은 버전과의 실제 교체·재실행·자료 보존은 Windows 사용자 시험으로 확인한다. 최신 실행 결과는 체크포인트와 GitHub Actions에서 확인한다.
+
+## 2026-09-29 이전 설치 후보: 앱 전용 Codex 포함
 
 - 검증 소스: `6a355572dcea4a3d6ff12d54d27f9a1ccfa2ebc9`, 앱 버전 **0.1.0 / Windows x64**.
 - [수동 CI 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606): Windows·Mac 모두 성공. 양쪽 TypeScript **36개 파일 / 1,084개**, 린트·타입·포맷 통과.
@@ -65,7 +73,7 @@ pnpm verify:windows
 - 원본 Excel 읽기, 다운로드·중복 정리·편집·등록·ZIP과 파일 잠금/강제 종료 복구.
 - 폴더 전체와 DB 백업을 다른 PC에 옮기고 재연결·복원 후 파일 재다운로드 없이 사용. 토큰·파일 서버 코드는 새 PC에서 재입력.
 - Windows OS 암호화 저장, 설정의 ChatGPT 브라우저 로그인/실제 캡션 생성, 앱 재실행·업데이트 후 인증 유지, 기존 Codex와 인증 분리, 사용자 승인에 따른 실제 API 동작.
-- 자동 업데이트 구현, 서로 다른 버전 간 갱신과 사용자 데이터 보존, 코드 서명 및 정식 Release.
+- 자동 업데이트의 서로 다른 버전 간 실제 갱신·사용자 데이터 보존, 서명 없는 설치 경고 확인. 코드·릴리스 구조 구현과 실제 사용자 PC 검증을 구분한다.
 
 자동 테스트·설치 파일 생성 성공을 실제 설치·UI·업데이트 통과로 보고하지 않는다.
 

@@ -2,6 +2,7 @@ import type { ThreadsApiMethods } from './threads-api';
 export const MEDIA_SCHEME = 'threads-media';
 export const IPC = {
   capabilities: 'tmm:app:capabilities',
+  reportUpdateBlocked: 'tmm:app:update-blocked',
   chatGptState: 'tmm:chatgpt:state',
   loginChatGpt: 'tmm:chatgpt:login',
   cancelChatGptLogin: 'tmm:chatgpt:cancel-login',
@@ -184,6 +185,7 @@ export type ChatGptResult =
   | { status: 'error'; state: ChatGptState; problem: Problem };
 
 export interface ThreadsMediaApi extends ThreadsApiMethods {
+  reportUpdateBlocked(blocked: boolean): Promise<void>;
   chatGptState(): Promise<ChatGptState>;
   loginChatGpt(): Promise<ChatGptResult>;
   cancelChatGptLogin(): Promise<ChatGptResult>;

@@ -1,7 +1,7 @@
 {
   "name": "threads-media-manager",
   "productName": "Threads Media Manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Threads collection browser",
   "private": true,
   "main": ".webpack/main",
@@ -37,7 +37,8 @@
   "dependencies": {
     "electron-squirrel-startup": "1.0.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "update-electron-app": "3.3.0"
   },
   "devDependencies": {
     "@electron-forge/cli": "7.11.2",

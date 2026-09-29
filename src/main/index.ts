@@ -13,6 +13,7 @@ import {
 } from 'electron';
 import squirrelStartup from 'electron-squirrel-startup';
 import { configureRuntime } from './runtime';
+import { configureAutoUpdates } from './updates';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { IPC, MEDIA_SCHEME } from '../shared/contracts';
@@ -56,7 +57,11 @@ import { readLibraryPublications, saveLibraryPublications } from './library-publ
 const runtimeRoot = configureRuntime(app.isPackaged, app.getAppPath(), process.resourcesPath);
 
 app.setName('Threads Media Manager');
-app.setAppUserModelId('com.threadsmediamanager.desktop');
+app.setAppUserModelId(
+  process.platform === 'win32'
+    ? 'com.squirrel.threads_media_manager.ThreadsMediaManager'
+    : 'com.threadsmediamanager.desktop',
+);
 const aiContentEnabled = !app.isPackaged;
 const testUserData = !app.isPackaged ? process.env.TMM_USER_DATA : undefined;
 app.setPath(
@@ -79,6 +84,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let window: BrowserWindow | null = null;
+let rendererUpdateBlocked = true;
+let updateQuitting = false;
+let stopAutoUpdates: () => void = () => undefined;
 const registry = new MediaRegistry(aiContentEnabled);
 const controller = new CollectionController(
   (root) => readRuntime(runtimeRoot, root, aiContentEnabled),
@@ -399,6 +407,29 @@ function explainActiveDownload(): void {
 }
 
 let closing = false;
+function updateBusy(): boolean {
+  return (
+    updateQuitting ||
+    closing ||
+    rendererUpdateBlocked ||
+    !window ||
+    window.isDestroyed() ||
+    window.webContents.isDestroyed() ||
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active ||
+    content.active ||
+    chatGpt.active ||
+    maintenance.active ||
+    threads.active
+  );
+}
 function deletionNeedsRecovery(): boolean {
   return (
     controller.view.error?.code === 'deletion_recovery_required' ||
@@ -413,6 +444,7 @@ function currentRoot(): string {
 }
 
 function createWindow(): void {
+  rendererUpdateBlocked = true;
   window = new BrowserWindow({
     width: 1320,
     height: 900,
@@ -428,6 +460,12 @@ function createWindow(): void {
       nodeIntegration: false,
       webviewTag: false,
     },
+  });
+  window.webContents.on('did-start-loading', () => {
+    rendererUpdateBlocked = true;
+  });
+  window.webContents.on('render-process-gone', () => {
+    rendererUpdateBlocked = true;
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -480,6 +518,7 @@ function createWindow(): void {
     });
   });
   window.on('closed', () => {
+    rendererUpdateBlocked = true;
     window = null;
   });
   void window.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
@@ -546,6 +585,15 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             )
           )
             throw new Error('Unauthorized request');
+          if (updateQuitting) throw new Error('업데이트 적용을 위해 앱을 재시작하고 있습니다.');
+          if (channel === IPC.reportUpdateBlocked) {
+            if (args.length !== 1 || typeof args[0] !== 'boolean') {
+              rendererUpdateBlocked = true;
+              throw new Error('Invalid update readiness');
+            }
+            rendererUpdateBlocked = args[0];
+            return;
+          }
           if (channel === IPC.capabilities) {
             if (args.length) throw new Error('Unexpected arguments');
             return { aiContent: aiContentEnabled };
@@ -928,12 +976,23 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         });
       }
       createWindow();
+      stopAutoUpdates = configureAutoUpdates({
+        getWindow: () => window,
+        isBusy: updateBusy,
+        repository: TMM_GITHUB_REPOSITORY,
+        onBeforeRestart: () => {
+          updateQuitting = true;
+        },
+        onRestartError: () => {
+          updateQuitting = false;
+        },
+      });
       const threadsTimer = setInterval(() => {
-        void threads.tick().catch(() => {});
+        if (!updateQuitting) void threads.tick().catch(() => {});
       }, 60_000);
       threadsTimer.unref();
       powerMonitor.on('resume', () => {
-        void threads.tick().catch(() => {});
+        if (!updateQuitting) void threads.tick().catch(() => {});
       });
       void threads.tick(true).catch(() => {});
       app.on('activate', () => {
@@ -992,6 +1051,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       app.quit();
     });
   });
+  app.on('will-quit', () => stopAutoUpdates());
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });

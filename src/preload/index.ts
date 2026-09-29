@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
 const api: ThreadsMediaApi = {
+  reportUpdateBlocked: (blocked) => ipcRenderer.invoke(IPC.reportUpdateBlocked, blocked),
   chatGptState: () => ipcRenderer.invoke(IPC.chatGptState),
   loginChatGpt: () => ipcRenderer.invoke(IPC.loginChatGpt),
   cancelChatGptLogin: () => ipcRenderer.invoke(IPC.cancelChatGptLogin),

@@ -1,0 +1,93 @@
+name: Release Windows
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify stable version and release target
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Public Windows releases require a stable major.minor.patch version."
+          }
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Release tag must be v$version, received $env:GITHUB_REF_NAME."
+          }
+          $visibility = gh api "repos/$env:GITHUB_REPOSITORY" --jq '.visibility'
+          if ($LASTEXITCODE -ne 0 -or $visibility -ne 'public') {
+            throw "ElectronPublicUpdateService requires a public GitHub repository."
+          }
+          $releaseJson = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName,isDraft,isPrerelease
+          if ($LASTEXITCODE -ne 0) { throw "Failed to verify existing releases." }
+          foreach ($release in @($releaseJson | ConvertFrom-Json)) {
+            if ($release.tagName -eq $env:GITHUB_REF_NAME) {
+              throw "Release version already exists. Do not replace installed update assets."
+            }
+            if (-not $release.isDraft -and -not $release.isPrerelease -and $release.tagName -match '^v([0-9]+\.[0-9]+\.[0-9]+)$') {
+              if ([version]$Matches[1] -ge [version]$version) {
+                throw "Version $version must be higher than the existing public releases."
+              }
+            }
+          }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.15'
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare bundled Windows runtime
+        shell: pwsh
+        run: |
+          python scripts/prepare-windows-runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "TMM_PYTHON=$((Resolve-Path build/runtime/python/python.exe).Path)" >> $env:GITHUB_ENV
+          "$((Resolve-Path build/runtime/bin).Path)" >> $env:GITHUB_PATH
+      - run: pnpm check
+      - name: Build unsigned Windows x64 installer
+        run: pnpm make --arch=x64
+      - name: Verify bundled runtime, Squirrel feed and checksums
+        run: pnpm verify:windows
+      - uses: actions/upload-artifact@v7
+        with:
+          name: threads-media-manager-windows-release-${{ github.ref_name }}
+          path: out/make/squirrel.windows/x64/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish complete GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $outputDir = "out/make/squirrel.windows/x64"
+          $names = @(
+            "ThreadsMediaManager-win32-x64-Setup.exe",
+            "RELEASES",
+            "threads_media_manager-$version-full.nupkg",
+            "SHA256SUMS.txt",
+            "verification.json"
+          )
+          $artifacts = @($names | ForEach-Object { (Resolve-Path (Join-Path $outputDir $_)).Path })
+          gh release create $env:GITHUB_REF_NAME @artifacts --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes --draft
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload the complete release." }
+          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "Assets remain in a draft; public update was not published." }

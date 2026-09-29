@@ -18,6 +18,7 @@
 - 화면은 local-video-manager의 카드 그리드·색상·모달을 참고한다. 상세 모달은 상단 미디어·하단 정보를 배치하며, 여러 첨부는 목록과 상세에서 순서를 유지하는 캐러셀로 보여준다. 로컬 파일만 표시하며 그리드 영상은 자동재생하지 않는다. 상세에서 현재 선택된 영상은 자동재생한다. 기존 앱의 로그인·서비스·DB 연결은 가져오지 않는다.
 - 기존 단독 수집 스킬·기존 프로젝트·사용자 파일을 임의 변경·삭제하지 않는다.
 - Windows CI·설치 후보는 [Windows 검증 문서](docs/windows-validation.md)를 따른다. Python·Pillow·ffmpeg·ffprobe와 로컬 실행 코드를 ASAR 밖에 포함한다. GitHub 자동 테스트·패키지 검증과 실제 설치·UI·업데이트 검증을 구분한다. CI는 artifact만 만들고 공개 Release를 생성하지 않는다.
+- 0.1.1부터 Windows 설치 앱은 local-video-manager와 같은 update-electron-app/ElectronPublicUpdateService·공개 GitHub Releases·Squirrel 방식을 사용한다. 실행 10초 후와 1시간마다 확인하고 백그라운드 다운로드 뒤 나중에/지금 재시작을 묻는다. 진행 중 작업·열린 작성/설정창이 있으면 안내와 재시작을 보류한다. GitHub 대상은 빌드에서 주입하며 Mac 개발 실행은 확인/다운로드하지 않는다. 서명 없는 Windows 배포를 사용한다. [Release 계약](docs/windows-release.md)을 따른다.
 - 개발·단계별 테스트는 Mac, 기능은 Mac/Windows 지원. Mac 배포는 없으며 Windows 실제 기능·설치·자동 업데이트 검증은 최종 단계다.
 - 패키지 형식·설치·새 대화 로드·실제 기능·Windows 검증을 구분해 보고한다. GitHub 생성·push·Release와 멤버 배포는 대상과 범위를 확정한 뒤 진행한다.
 

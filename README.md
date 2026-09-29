@@ -4,7 +4,7 @@ Codex 플러그인으로 Threads 게시글 정보를 수집하고, Electron 앱�
 
 **2026-09-29 기능 개발 완료:** Threads 계정·파일 서버 연결, 게시글·텍스트 댓글 API 업로드, 최신 5개 게시글 통계, 수집·등록 독립 삭제와 영상 음소거를 구현했다. Mac에서 실제 영상·이미지 혼합 게시글 1건과 직접 답글 1건의 등록, 통계 수신을 확인했다. 전체 검증 결과와 남은 Windows 설치·자동 업데이트 작업은 [최신 체크포인트](docs/checkpoint-2026-09-29.md)에 정리한다.
 
-저장소 대상은 공개 `ilseong-xofl/threads-media-manager`다. local-video-manager와 같이 소스와 향후 Releases를 같은 공개 저장소에서 관리하고, Windows 설치 앱의 자동 업데이트를 제공할 계획이다. Windows 설치 후보는 GitHub Actions에서 런타임을 포함해 생성·검사한다. 자동 업데이트는 아직 미구현이다. [Windows 자동 검증과 잔여 실기 항목](docs/windows-validation.md)을 따른다.
+저장소 대상은 공개 `ilseong-xofl/threads-media-manager`다. local-video-manager와 같이 소스와 향후 Releases를 같은 공개 저장소에서 관리하고, 0.1.1부터 Windows 설치 앱에서 실행 후 업데이트 확인·백그라운드 다운로드·나중에/지금 재시작 선택을 제공한다. Windows 설치 후보는 GitHub Actions에서 런타임을 포함해 생성·검사한다. [자동 업데이트와 Release 계약](docs/windows-release.md)을 따른다. [Windows 자동 검증과 잔여 실기 항목](docs/windows-validation.md)을 따른다.
 
 ## 역할과 데이터
 
@@ -32,7 +32,7 @@ Codex 플러그인으로 Threads 게시글 정보를 수집하고, Electron 앱�
 - **통계:** 앱에서 현재 계정으로 게시한 최신 5개 원글의 조회·좋아요·댓글 수를 확인한다. 앱 시작 시 오늘 미조회이면 백그라운드에서, 계속 켜져 있으면 오전 10시에 조회한다. 설정에서 수동 조회할 수도 있으며 게시 직후에는 조회하지 않는다.
 - **알림:** 성공·실패·입력 오류는 중앙 상단 토스트로 표시한다. 게시글·댓글 업로드와 수동 통계 조회 중에는 잠금 레이어로 중복 조작을 막는다.
 
-비정상 종료 후 다운로드 복구·재개, 라이브러리 재연결과 DB 백업·복원도 제공한다. [다운로드 검증 기록](docs/download-recovery-verification.md)을 참고한다. 영상 비율 크롭·댓글 이미지·자동 응답은 현재 기능에 포함하지 않는다. Windows 설치 파일·의존성 번들은 자동 검증 대상으로 구성했다. 자동 업데이트와 실제 설치·UI 검증은 남아 있다.
+비정상 종료 후 다운로드 복구·재개, 라이브러리 재연결과 DB 백업·복원도 제공한다. [다운로드 검증 기록](docs/download-recovery-verification.md)을 참고한다. 영상 비율 크롭·댓글 이미지·자동 응답은 현재 기능에 포함하지 않는다. Windows 설치 파일·의존성 번들은 자동 검증 대상으로 구성했다. 자동 업데이트는 구현했으며 실제 Windows 설치·버전 간 갱신·UI 검증은 별도다.
 
 ## ChatGPT 연결과 AI 캡션
 
