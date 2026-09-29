@@ -78,12 +78,20 @@
 - Mac에서 Python 전체 **519개**, TypeScript 전체 **33개 파일 / 1,039개** 테스트와 타입·린트·포맷 검사를 통과했다.
 - 실제 사용자 폴더·DB의 이동이나 복원은 실행하지 않았다. Windows 실기·OS 암호화·설치·업데이트 검증은 여전히 남아 있다.
 
+## 2026-09-29 추가 검증: Windows CI와 설치 후보
+
+- 검증 소스는 `b1f9f87`이며 [Windows/Mac CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36523558901)가 모두 성공했다.
+- Windows TypeScript **1,042개 통과**, Python **521개 통과·POSIX 종료 신호 2개 제외**. Mac TypeScript **1,042개**, Python **523개** 통과. 린트·타입·포맷 검사도 통과했다.
+- Squirrel.Windows 설치 파일과 Python·Pillow·ffmpeg·ffprobe 번들을 생성하고, 패키지 안의 실행기로 SQLite·pHash·영상 처리·다국어 경로를 확인했다. [설치 후보](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36523558901/artifacts/11013967009)는 14일 보관한다.
+- Windows에서 발견한 파일 정보 비교, UTF-8 출력, 업로드 임시 파일 정리, DB 백업 flush와 손상 DB 연결 누수를 수정했다. 사용자 자료 대신 합성 자료를 사용했다.
+- 실제 Setup.exe 설치·GUI·OS 암호화·업데이트는 별도 검증이다. 자동 업데이트는 아직 미구현이다. 실행 시간과 local-video-manager 비교는 [Windows 검증 문서](windows-validation.md)를 따른다.
+
 ## 다음 배포 단계
 
 기능 개발 완료와 Windows 배포 준비 완료는 구분한다.
 
 1. Windows에서 Python·Pillow·ffmpeg·ffprobe·Codex CLI 의존성 및 앱 경로·잠금·종료·OS 암호화·기존 자료 보존 검증.
-2. Windows 런타임 번들, Forge installer/maker, 자동 업데이트 구현과 새 설치·업데이트 검증. Squirrel maker와 런타임 번들을 추가해 GitHub CI 검증을 시작한다. updater는 아직 미구현이다. [Windows 검증](windows-validation.md)을 따른다.
+2. Windows 런타임 번들과 Squirrel installer 생성·내장 실행기 자동 검사는 완료했다. 새 설치·제거/재설치, 자동 업데이트 구현과 버전 간 갱신 검증이 남아 있다. [Windows 검증](windows-validation.md)을 따른다.
 3. 검증 뒤 별도 버전 결정과 설치 파일·GitHub Release 배포. 이번 작업은 소스 체크포인트이며 버전 `0.1.0`을 유지한다.
 
 현재 배포 가정은 같은 Meta 앱의 Threads 테스터 계정이다. 일반 외부 사용자 지원 시 토큰 검사·앱 검수 구성은 [API 계약](phase-3-threads-api.md)을 다시 확인한다. 자연 만료·철회·OS별 보안 저장·원격 정리의 장기 운영 전체를 한 번의 실제 게시 시험으로 검증했다고 해석하지 않는다.
