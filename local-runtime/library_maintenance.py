@@ -296,7 +296,8 @@ def online_backup(db, destination, library, app_version, check):
                     (APP_NAME, app_version, SCHEMA_VERSION, library, datetime.now(timezone.utc).isoformat(), schema_digest(copy)))
             validate_db(copy, backup=True)
         check_cancel(check)
-        with temporary.open("rb") as stream: os.fsync(stream.fileno())
+        # Windows FlushFileBuffers requires a writable handle; never truncate the completed DB.
+        with temporary.open("r+b") as stream: os.fsync(stream.fileno())
         os.replace(temporary, destination)
         sync_directory(destination.parent)
     finally:
@@ -448,7 +449,8 @@ def disaster_restore(backup, root, db_path, library, app_version, check, assert_
         for suffix in ("-wal", "-shm", "-journal"):
             sidecar = Path(str(db_path) + suffix)
             if sidecar.exists(): sidecar.unlink()
-        with temporary.open("rb") as stream: os.fsync(stream.fileno())
+        # Windows FlushFileBuffers requires a writable handle; never truncate the completed DB.
+        with temporary.open("r+b") as stream: os.fsync(stream.fileno())
         os.replace(temporary, db_path)
         sync_directory(db_path.parent)
         return automatic

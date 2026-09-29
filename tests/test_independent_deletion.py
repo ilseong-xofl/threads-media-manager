@@ -42,7 +42,7 @@ class IndependentDeletionTests(unittest.TestCase):
         return self.fixture.snapshot()["snapshot"]["posts"][0]
 
     def files(self):
-        return {str(path.relative_to(self.root)): path.read_bytes() for base in ("media", "ai-drafts")
+        return {path.relative_to(self.root).as_posix(): path.read_bytes() for base in ("media", "ai-drafts")
                 for path in (self.root / base).rglob("*") if path.is_file()}
 
     def crash(self, request, *, after=False, legacy=False):
@@ -119,7 +119,7 @@ d.apply_tombstone=crash
         with closing(sqlite3.connect(self.root / "state/state.db")) as db, db:
             db.row_factory = sqlite3.Row
             row = dict(db.execute("SELECT * FROM jobs WHERE media_id=?", (self.fixture.ids[0],)).fetchone())
-            row.update(job_id="f"*32, media_id=third_id, final_rel=str(path.relative_to(self.root)))
+            row.update(job_id="f"*32, media_id=third_id, final_rel=path.relative_to(self.root).as_posix())
             db.execute("INSERT INTO media VALUES(?,?,?,?,?)", (third_id, "Example", "AbC_01", 3, "image"))
             db.execute(f"INSERT INTO jobs({','.join(row)}) VALUES({','.join('?' for _ in row)})", tuple(row.values()))
         drafts.execute(self.request)
@@ -213,7 +213,7 @@ d.apply_tombstone=crash
 
     def test_ai_generations_and_metadata_remain_until_final_purge_without_touching_unknown_files(self):
         ai_path, identifier = generation(self.fixture, caption="AI caption")
-        (ai_path / "caption.txt").write_text("AI caption\n")
+        (ai_path / "caption.txt").write_bytes(b"AI caption\n")
         (ai_path.parent / "latest.json").write_text(json.dumps({"id": ai_path.name}))
         unknown = ai_path.parent / "private-notes.txt"
         unknown.write_bytes(b"unowned")

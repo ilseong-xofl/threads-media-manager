@@ -48,5 +48,7 @@ pnpm verify:windows
 - Windows에 없는 `O_NOFOLLOW`만으로 파일 서버 업로드를 보호하지 않도록, 파일을 열기 전후의 `lstat`와 열린 파일 정보를 비교한다.
 - Python의 Windows `stat`/`fstat` ctime 의미 차이는 파일 생성 시각을 공통 비교값으로 사용하고, 열린 파일의 읽기 전후 change time은 별도로 검증한다. 파일 ID·크기·수정 시각·SHA-256 검사도 유지한다. [CPython 이슈](https://github.com/python/cpython/issues/157671)를 참고한다.
 - 모든 앱 Python 명령의 JSON 출력은 UTF-8로 고정한다. 한글 파일명·오류 메시지를 Windows 기본 코드페이지에 맡기지 않는다.
-- 테스트용 SQLite 연결을 명시적으로 닫고 경로 구분자와 영상 실행 파일의 `.exe` 차이를 반영했다.
+- DB 백업·복원의 완성된 임시 파일은 내용을 자르지 않는 쓰기 가능 핸들로 디스크에 확정 저장한다. Windows의 읽기 전용 핸들 `fsync` 오류를 방지한다.
+- 업로드용 복사본을 만든 뒤 SHA-256이 불일치하면 해당 임시 복사본을 정리한다. 기존 목적지 파일은 변경하지 않는다.
+- 테스트용 SQLite 연결을 명시적으로 닫고 경로 구분자·줄바꿈·영상 실행 파일의 `.exe` 차이를 반영했다.
 - POSIX SIGTERM 전달 검증은 Windows에서 실행하지 않는다. Windows의 직접 취소·인코더 정리는 별도 공통 테스트로 검사하지만, 설치 앱에서 종료·강제 종료 시 전체 프로세스 정리는 여전히 실기 검증 대상이다. POSIX 전용 파일 형식 검증도 Windows에서는 제외한다.

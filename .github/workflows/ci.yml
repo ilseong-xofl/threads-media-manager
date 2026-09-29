@@ -57,18 +57,31 @@ jobs:
         id: typescript
         continue-on-error: true
         run: pnpm test
+      - name: Build Windows installer candidate
+        id: package
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: pnpm make --arch=x64
+      - name: Verify packaged runtime and installer outputs
+        id: packaged_runtime
+        if: runner.os == 'Windows' && steps.package.outcome == 'success'
+        continue-on-error: true
+        run: pnpm verify:windows
       - name: Python tests
         id: python
         continue-on-error: true
         run: pnpm test:python
-      - name: Require both test suites to pass
-        run: node -e "if ('${{ steps.typescript.outcome }}' !== 'success' || '${{ steps.python.outcome }}' !== 'success') process.exit(1)"
-      - name: Build Windows installer candidate
-        if: runner.os == 'Windows'
-        run: pnpm make --arch=x64
-      - name: Verify packaged runtime and installer outputs
-        if: runner.os == 'Windows'
-        run: pnpm verify:windows
+      - name: Require tests and Windows package verification to pass
+        env:
+          TYPESCRIPT_RESULT: ${{ steps.typescript.outcome }}
+          PYTHON_RESULT: ${{ steps.python.outcome }}
+          PACKAGE_RESULT: ${{ steps.package.outcome }}
+          RUNTIME_RESULT: ${{ steps.packaged_runtime.outcome }}
+        run: >-
+          node -e "const e = process.env;
+          const results = [e.TYPESCRIPT_RESULT, e.PYTHON_RESULT];
+          if (process.platform === 'win32') results.push(e.PACKAGE_RESULT, e.RUNTIME_RESULT);
+          if (results.some(result => result !== 'success')) process.exit(1)"
       - uses: actions/upload-artifact@v7
         if: runner.os == 'Windows'
         with:

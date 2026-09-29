@@ -1,5 +1,5 @@
 import { constants, type Stats } from 'node:fs';
-import { lstat, open, realpath, type FileHandle } from 'node:fs/promises';
+import { lstat, open, realpath, unlink, type FileHandle } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -106,6 +106,7 @@ export class MediaRegistry {
     if (file.size > (file.kind === 'image' ? 32 * 1024 * 1024 : 1024 ** 3))
       throw new Error('Upload file too large');
     const handle = await openLocal(root, file, this.includeAI);
+    let created = false;
     try {
       if (signature(await handle.stat()) !== file.stamp) throw new Error('File changed');
       const digest = createHash('sha256');
@@ -118,11 +119,11 @@ export class MediaRegistry {
           callback(null, chunk);
         },
       });
-      await pipeline(
-        handle.createReadStream({ autoClose: false }),
-        verify,
-        createWriteStream(destination, { flags: 'wx', mode: 0o600 }),
-      );
+      const output = createWriteStream(destination, { flags: 'wx', mode: 0o600 });
+      output.once('open', () => {
+        created = true;
+      });
+      await pipeline(handle.createReadStream({ autoClose: false }), verify, output);
       if (
         size !== file.size ||
         digest.digest('hex') !== file.sha256 ||
@@ -136,6 +137,11 @@ export class MediaRegistry {
         size: file.size,
         sha256: file.sha256,
       };
+    } catch (error) {
+      // Hash validation may fail after copying when filesystem timestamps are unchanged.
+      // Remove only the output this call created; an existing destination is never owned.
+      if (created) await unlink(destination);
+      throw error;
     } finally {
       await handle.close();
     }
