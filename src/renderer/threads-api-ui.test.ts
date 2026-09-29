@@ -683,3 +683,62 @@ it('describes text reply progress without claiming to upload or process attachme
   expect(detail).toMatch(/class="modal-header" inert=""/);
   expect(detail).toMatch(/class="registration-form" inert=""/);
 });
+
+it('makes completed post and reply IDs buttons for opening the actual publication', () => {
+  const html = renderToStaticMarkup(
+    createElement(ThreadsPublicationPanel, {
+      postKey: 'source:post',
+      threads: ui(state({ publications: [publication(), publishedReply()] })),
+    }),
+  );
+  expect(html.match(/class="threads-publication-link"/g)).toHaveLength(2);
+  expect(html).toMatch(/aria-label="게시글 456 기본 브라우저에서 열기"[^>]*>456<\/button>/);
+  expect(html).toMatch(/aria-label="댓글 789 기본 브라우저에서 열기"[^>]*>789<\/button>/);
+  expect(html).not.toContain('href=');
+});
+
+it.each(['preparing', 'processing', 'publishing', 'failed', 'uncertain'] as const)(
+  'leaves a %s result ID as plain text',
+  (status) => {
+    const html = renderToStaticMarkup(
+      createElement(ThreadsPublicationPanel, {
+        postKey: 'source:post',
+        threads: ui(state({ publications: [publication({ status })] })),
+      }),
+    );
+    expect(html).toContain('게시 ID: 456');
+    expect(html).not.toContain('threads-publication-link');
+  },
+);
+
+it.each([null, ''])('omits a publication link when the remote ID is %s', (remoteId) => {
+  const html = renderToStaticMarkup(
+    createElement(ThreadsPublicationPanel, {
+      postKey: 'source:post',
+      threads: ui(state({ publications: [publication({ remoteId })] })),
+    }),
+  );
+  expect(html).not.toContain('게시 ID:');
+  expect(html).not.toContain('threads-publication-link');
+});
+
+it('disables publication links during other work or when the account requires reconnecting', () => {
+  for (const condition of ['disabled', 'loading', 'working', 'expired', 'reconnect']) {
+    const value = state({ publications: [publication(), publishedReply()] });
+    if (condition === 'expired') value.account!.expiresAt = '2020-01-01T00:00:00Z';
+    if (condition === 'reconnect') value.account!.requiresReconnect = true;
+    const threads = {
+      ...ui(value),
+      loading: condition === 'loading',
+      working: condition === 'working',
+    };
+    const html = renderToStaticMarkup(
+      createElement(ThreadsPublicationPanel, {
+        postKey: 'source:post',
+        threads,
+        disabled: condition === 'disabled',
+      }),
+    );
+    expect(html.match(/class="threads-publication-link" disabled=""/g)).toHaveLength(2);
+  }
+});

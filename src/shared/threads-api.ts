@@ -1,4 +1,4 @@
-import type { PostDraftActionInput, Problem } from './contracts';
+import type { PostDraftActionInput, PostLinkResult, Problem } from './contracts';
 
 export interface ThreadsAccountView {
   id: string;
@@ -81,6 +81,7 @@ export interface PublishThreadsCommentInput extends PostDraftActionInput {
 }
 export interface ThreadsApiMethods {
   threadsState(): Promise<ThreadsState>;
+  openThreadsPublication(input: { id: string }): Promise<PostLinkResult>;
   connectThreads(input: ConnectThreadsInput): Promise<ThreadsResult>;
   disconnectThreads(): Promise<ThreadsResult>;
   connectFileServer(input: ConnectFileServerInput): Promise<ThreadsResult>;

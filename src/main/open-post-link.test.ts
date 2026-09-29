@@ -159,6 +159,18 @@ describe('opening registered post links', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(JSON.stringify(result)).not.toContain(originalUrl);
   });
+  it('bridges published post identity without accepting an external address', async () => {
+    const registration = vi
+      .mocked(contextBridge.exposeInMainWorld)
+      .mock.calls.find(([name]) => name === 'threadsMedia');
+    const api = registration?.[1] as ThreadsMediaApi;
+    vi.mocked(ipcRenderer.invoke).mockClear();
+    vi.mocked(ipcRenderer.invoke).mockResolvedValueOnce({ status: 'opened' });
+    const input = { id: 'synthetic-publication' };
+    expect(await api.openThreadsPublication(input)).toEqual({ status: 'opened' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledExactlyOnceWith(IPC.openThreadsPublication, input);
+    vi.mocked(ipcRenderer.invoke).mockClear();
+  });
   it('registers the preload method on its own IPC channel with only the identity payload', async () => {
     const registration = vi
       .mocked(contextBridge.exposeInMainWorld)

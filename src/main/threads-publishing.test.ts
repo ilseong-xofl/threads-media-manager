@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CollectionView, Post } from '../shared/contracts';
 import type { ThreadsPublishProgress } from '../shared/threads-api';
-import { ThreadsApiError, type ThreadsContainerStatus } from './threads-client';
+import { ThreadsApiError, type ThreadsContainerStatus, type ThreadsMedia } from './threads-client';
 import { SecretStoreError } from './threads-secret-store';
 import { FileServerError } from './file-server-storage';
 import {
@@ -121,7 +121,7 @@ async function fixture(records: PublicationRecord[] = []) {
       status: 'FINISHED' as ThreadsContainerStatus,
     })),
     insights: vi.fn(async () => ({ views: 100, likes: 5, replies: 2 })),
-    retrieveMedia: vi.fn(async (token: string, id: string) => ({
+    retrieveMedia: vi.fn(async (token: string, id: string): Promise<ThreadsMedia> => ({
       id,
       text: 'Approved main text',
       permalink: null,
@@ -1051,4 +1051,150 @@ it('publishes a retained registered post after source removal and preserves its 
     expect.arrayContaining([expect.objectContaining({ remoteId: '9000', status: 'published' })]),
   );
   expect(f.client.publishContainer).toHaveBeenCalledOnce();
+});
+
+describe('opening published Threads posts', () => {
+  async function publishedLink(extra: Partial<PublicationRecord> = {}) {
+    const record = savedRecord(1, extra);
+    const f = await fixture([record]);
+    const media = await f.client.retrieveMedia(TOKEN, record.remoteId ?? '1001');
+    f.client.retrieveMedia.mockClear();
+    f.client.retrieveMedia.mockResolvedValue({
+      ...media,
+      permalink: 'https://www.threads.com/@owner/post/Example_A-1',
+    });
+    return {
+      ...f,
+      record,
+      open: vi.fn<(url: string) => Promise<void>>().mockResolvedValue(undefined),
+    };
+  }
+  it.each(['post', 'reply'] as const)(
+    'opens the official %s permalink for an existing publication without publishing or saving',
+    async (kind) => {
+      const f = await publishedLink({
+        kind,
+        ...(kind === 'reply' ? { parentRemoteId: '777' } : {}),
+      });
+      const before = f.getSaved();
+      expect(await f.controller.openPublication({ id: f.record.id }, f.open)).toEqual({
+        status: 'opened',
+      });
+      expect(f.client.retrieveMedia).toHaveBeenCalledExactlyOnceWith(TOKEN, f.record.remoteId);
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(
+        'https://www.threads.com/@owner/post/Example_A-1',
+      );
+      expect(f.getSaved()).toEqual(before);
+      expect(f.history.write).not.toHaveBeenCalled();
+      expect(f.client.createContainer).not.toHaveBeenCalled();
+      expect(f.client.publishContainer).not.toHaveBeenCalled();
+      expect(f.storage.upload).not.toHaveBeenCalled();
+    },
+  );
+  it('supports a legacy official threads.net permalink', async () => {
+    const f = await publishedLink();
+    const media = await f.client.retrieveMedia(TOKEN, f.record.remoteId!);
+    f.client.retrieveMedia.mockResolvedValue({
+      ...media,
+      permalink: 'https://www.threads.net/@owner/post/ExistingPost/',
+    });
+    expect((await f.controller.openPublication({ id: f.record.id }, f.open)).status).toBe('opened');
+    expect(f.open).toHaveBeenCalledWith('https://www.threads.net/@owner/post/ExistingPost/');
+  });
+  it.each([null, {}, { id: 'invalid' }, { id: 'not-an-id', url: 'https://example.test' }])(
+    'rejects malformed link requests',
+    async (input) => {
+      const f = await publishedLink();
+      expect((await f.controller.openPublication(input, f.open)).status).toBe('error');
+      expect(f.client.retrieveMedia).not.toHaveBeenCalled();
+      expect(f.open).not.toHaveBeenCalled();
+    },
+  );
+  it('rejects renderer-supplied URLs even with a valid record identity', async () => {
+    const f = await publishedLink();
+    expect(
+      (
+        await f.controller.openPublication(
+          { id: f.record.id, url: 'https://attacker.test' },
+          f.open,
+        )
+      ).status,
+    ).toBe('error');
+    expect(f.open).not.toHaveBeenCalled();
+  });
+  it.each([
+    { libraryId: 'f'.repeat(32) },
+    { accountId: '999' },
+    { status: 'failed' as const, remoteId: null, publishedAt: null },
+    { status: 'uncertain' as const, remoteId: null, publishedAt: null },
+  ])('rejects records outside the current published account and library', async (extra) => {
+    const f = await publishedLink(extra);
+    expect((await f.controller.openPublication({ id: f.record.id }, f.open)).status).toBe('error');
+    expect(f.client.retrieveMedia).not.toHaveBeenCalled();
+    expect(f.open).not.toHaveBeenCalled();
+  });
+  it.each([
+    null,
+    'https://attacker.test/@owner/post/Example',
+    'https://www.threads.com.attacker.test/@owner/post/Example',
+    'https://www.threads.com@attacker.test/@owner/post/Example',
+    'http://www.threads.com/@owner/post/Example',
+    'file:///private/file',
+    'https://www.threads.com/@owner/post/Example?redirect=https://attacker.test',
+    'https://www.threads.com/@owner/post/%2e%2e',
+  ])('rejects absent or unsafe API permalinks', async (permalink) => {
+    const f = await publishedLink();
+    const media = await f.client.retrieveMedia(TOKEN, f.record.remoteId!);
+    f.client.retrieveMedia.mockResolvedValue({ ...media, permalink });
+    expect(await f.controller.openPublication({ id: f.record.id }, f.open)).toMatchObject({
+      status: 'error',
+      problem: { code: 'threads_link_invalid' },
+    });
+    expect(f.open).not.toHaveBeenCalled();
+  });
+  it.each([{ id: '9999' }, { ownerId: '999' }, { ownerId: null, username: 'someone_else' }])(
+    'rejects a mismatched API identity or owner',
+    async (extra) => {
+      const f = await publishedLink();
+      const media = await f.client.retrieveMedia(TOKEN, f.record.remoteId!);
+      f.client.retrieveMedia.mockResolvedValue({ ...media, ...extra });
+      expect((await f.controller.openPublication({ id: f.record.id }, f.open)).status).toBe(
+        'error',
+      );
+      expect(f.open).not.toHaveBeenCalled();
+    },
+  );
+  it('surfaces a failed lookup without changing the successful publication', async () => {
+    const f = await publishedLink();
+    const before = f.getSaved();
+    f.client.retrieveMedia.mockRejectedValue(new ThreadsApiError('not_found'));
+    expect((await f.controller.openPublication({ id: f.record.id }, f.open)).status).toBe('error');
+    expect(f.getSaved()).toEqual(before);
+    expect(f.open).not.toHaveBeenCalled();
+  });
+  it('surfaces a browser failure without leaking internal errors', async () => {
+    const f = await publishedLink();
+    f.open.mockRejectedValue(new Error('private browser configuration'));
+    const result = await f.controller.openPublication({ id: f.record.id }, f.open);
+    expect(result).toMatchObject({ status: 'error', problem: { code: 'link_open_failed' } });
+    expect(JSON.stringify(result)).not.toContain('private');
+    expect(f.getSaved()?.records[0].status).toBe('published');
+  });
+  it('holds the existing operation lock during lookup so settings and duplicate clicks cannot race it', async () => {
+    const f = await publishedLink();
+    const media = await f.client.retrieveMedia(TOKEN, f.record.remoteId!);
+    const lookup = deferred<ThreadsMedia>();
+    f.client.retrieveMedia.mockImplementation(() => lookup.promise);
+    const opening = f.controller.openPublication({ id: f.record.id }, f.open);
+    await vi.waitFor(() => expect(f.controller.active).toBe(true));
+    expect(await f.controller.openPublication({ id: f.record.id }, f.open)).toMatchObject({
+      status: 'error',
+      problem: { code: 'threads_busy' },
+    });
+    expect((await f.controller.disconnect()).status).toBe('error');
+    lookup.resolve(media);
+    expect((await opening).status).toBe('opened');
+    expect(f.open).toHaveBeenCalledTimes(1);
+    expect(f.controller.active).toBe(false);
+  });
 });

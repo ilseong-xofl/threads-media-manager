@@ -136,6 +136,24 @@
 .threads-id {
   overflow-wrap: anywhere;
 }
+button.threads-publication-link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #5f65a8;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+button.threads-publication-link:hover:not(:disabled) {
+  background: transparent;
+  color: #4f51c5;
+}
 .threads-metrics dl {
   display: flex;
   gap: 8px;

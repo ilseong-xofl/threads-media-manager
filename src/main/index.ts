@@ -616,9 +616,14 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               IPC.publishThreadsPost,
               IPC.publishThreadsComment,
               IPC.reconcileThreadsPublication,
+              IPC.openThreadsPublication,
             ].some((value) => value === channel);
             if (args.length !== (hasInput ? 1 : 0)) throw new Error('Unexpected arguments');
             if (channel === IPC.threadsState) return threads.state();
+            if (channel === IPC.openThreadsPublication)
+              return threads.openPublication(args[0], (url) =>
+                shell.openExternal(url, { activate: true }),
+              );
             if (channel === IPC.connectThreads) return threads.connect(args[0]);
             if (channel === IPC.disconnectThreads) return threads.disconnect();
             if (channel === IPC.connectFileServer) return threads.connectFileServer(args[0]);

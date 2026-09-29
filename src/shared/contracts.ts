@@ -44,6 +44,7 @@ export const IPC = {
   publishThreadsComment: 'tmm:threads:publish-comment',
   syncThreadsInsights: 'tmm:threads:sync',
   reconcileThreadsPublication: 'tmm:threads:reconcile',
+  openThreadsPublication: 'tmm:threads:open-publication',
 } as const;
 export interface Problem {
   code: string;

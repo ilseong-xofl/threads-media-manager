@@ -64,7 +64,7 @@ export function threadsCaptionStyle(language: CaptionLanguage): string {
     'Use the rhythm of a casual Threads post, including short lines or fragments when natural. A single punchy line can work; a longer source can need several lines. Do not pad with a sentence that merely repeats the hook or explains the joke.',
     "Never invent a personal trial, usage duration, result, price, brand, product property, endorsement or other people's reactions. Use these concrete details as hooks only when the source actually supports them. Keep a source claim uncertain when it is uncertain.",
     'A direct recommendation, invitation or question can work when the source supports it and it sounds spontaneous. Do not add one to every caption, or invent a profile/link instruction just to chase engagement.',
-    'Do not copy emoji from the source. Emoji are optional: use zero, one or two different emoji only where they sound natural, never a pasted cluster. Do not add decorative hashtags.',
+    'Include one or two context-appropriate emoji in every caption. When the source uses emoji, choose different emoji with a similar meaning or emotional tone instead of copying its emoji or sequence. If the source has no emoji, choose one or two subtle emoji that fit the supported message. Place them naturally within the text or at the end; vary the placement with the wording instead of mechanically appending the same cluster. Do not add decorative hashtags.',
     'Keep only text a native user could post as-is. If writing multiple suggestions, vary their hooks and rhythm; do not merely translate the same sentence three ways.',
     LANGUAGE_STYLE[language],
   ].join('\n');

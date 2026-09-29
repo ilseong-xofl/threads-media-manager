@@ -7,6 +7,7 @@ const api: ThreadsMediaApi = {
   cancelChatGptLogin: () => ipcRenderer.invoke(IPC.cancelChatGptLogin),
   logoutChatGpt: () => ipcRenderer.invoke(IPC.logoutChatGpt),
   threadsState: () => ipcRenderer.invoke(IPC.threadsState),
+  openThreadsPublication: (input) => ipcRenderer.invoke(IPC.openThreadsPublication, input),
   connectThreads: (input) => ipcRenderer.invoke(IPC.connectThreads, input),
   disconnectThreads: () => ipcRenderer.invoke(IPC.disconnectThreads),
   connectFileServer: (input) => ipcRenderer.invoke(IPC.connectFileServer, input),

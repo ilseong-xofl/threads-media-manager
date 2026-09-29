@@ -2,9 +2,9 @@
 
 수집 플러그인 테스트를 마친 **동일한 깨끗한 Windows x64 PC**에서 이어서 진행합니다. 첫 사용 흐름이 기준이며, 기존 Mac 자료 이전이나 DB 복원으로 시작하지 않습니다.
 
-자동 업데이트가 포함된 **앱 0.1.2**의 `ThreadsMediaManager-win32-x64-Setup.exe`를 사용합니다. 이전 0.1.0에는 업데이트 코드가 없으므로, 이미 설치했다면 새 설치 파일을 한 번 실행해야 합니다. Windows 브라우저에서 [0.1.2 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.2/ThreadsMediaManager-win32-x64-Setup.exe)를 눌러 직접 받습니다. [Release 페이지](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.2)에서도 같은 파일을 받을 수 있습니다. 수집 플러그인은 [전용 GitHub 주소](https://github.com/ilseong-xofl/threads-collector)로 설치합니다. 이 후보는 내부 검수용이며 Windows에서 실제 설치·로그인·업로드한 결과는 아직 없습니다. Python·Pillow·ffmpeg·ffprobe·Codex CLI는 앱에 포함되어 있어 사용자가 터미널을 열거나 따로 설치하지 않습니다.
+자동 업데이트가 포함된 **앱 0.1.3**의 `ThreadsMediaManager-win32-x64-Setup.exe`를 사용합니다. 이전 0.1.0에는 업데이트 코드가 없으므로, 이미 설치했다면 새 설치 파일을 한 번 실행해야 합니다. Windows 브라우저에서 [0.1.3 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.3/ThreadsMediaManager-win32-x64-Setup.exe)를 눌러 직접 받습니다. [Release 페이지](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.3)에서도 같은 파일을 받을 수 있습니다. 수집 플러그인은 [전용 GitHub 주소](https://github.com/ilseong-xofl/threads-collector)로 설치합니다. 사용자의 Windows 최종 시험을 진행 중입니다. 자동 검사는 전체 사용자 기능 시험을 대신하지 않습니다. Python·Pillow·ffmpeg·ffprobe·Codex CLI는 앱에 포함되어 있어 사용자가 터미널을 열거나 따로 설치하지 않습니다.
 
-0.1.1에서 창만 보이고 내용이 비어 있었다면 앱을 닫고 0.1.2 설치 파일을 실행합니다. 0.1.2는 설치된 화면 파일 로딩과 Windows 주소 비교를 수정한 버전입니다. 기존 작업 폴더나 계정 정보를 삭제하지 않습니다.
+0.1.1에서 창만 보이고 내용이 비어 있었다면 앱을 닫고 최신 설치 파일을 실행합니다. 0.1.2는 설치된 화면 파일 로딩과 Windows 주소 비교를 수정한 버전입니다. 기존 작업 폴더나 계정 정보를 삭제하지 않습니다.
 
 ## 시작 전에 준비할 것
 
@@ -115,3 +115,13 @@ Codex 앱 로그인, 수집용 Threads 브라우저 로그인, 이 앱의 ChatGP
 **Windows 자동 업데이트 코드와 GitHub 배포 구성을 포함했습니다.** 위 업무 흐름과 별도로 8번의 실제 버전 간 갱신·자료 보존을 검증합니다. 이번 배포는 서명 없는 Windows 설치 파일이며 설치 경고를 기록합니다. 동일 Meta 앱의 테스터 외 사용자 배포 조건도 별도로 확인합니다.
 
 배포 순서: 이번 깨끗한 Windows 최종 시험 → 발견 문제 수정·해당 항목 재시험 → 실제 사용자 1명 라이브 시험 → 결과와 남은 배포 항목 확인 → 일반 사용자 배포. 파일럿 사용자에게는 그 시점에 확인된 후보만 전달합니다.
+
+
+## 게시 완료 ID 링크 확인 (0.1.3)
+
+게시 후 상세의 API 업로드 영역에서 밑줄이 있는 게시 ID를 누릅니다. 기본 브라우저에서 실제 등록한 Threads 글이 열리는지 확인합니다. 댓글 게시 ID도 같은 방식으로 확인합니다. 이전 버전에서 이미 게시한 글도 사용할 수 있으며, 주소 조회를 위해 해당 Threads 계정 연결이 유효해야 합니다. 링크 클릭 실패가 기존 등록 완료 이력을 바꾸거나 글을 다시 게시해서는 안 됩니다.
+
+
+## 캡션 이모지 확인 (0.1.3)
+
+AI 캡션을 새로 생성하면 각 제안에 내용·감정에 맞는 이모지 1~2개가 자연스럽게 들어가는지 확인합니다. 원문과 같은 이모지 배열을 그대로 복제하지 않고 비슷한 다른 이모지를 사용하며, 문장 중간이나 끝에 배치할 수 있습니다. 기존에 저장한 캡션은 자동으로 변경되지 않습니다.

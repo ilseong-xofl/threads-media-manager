@@ -7,6 +7,7 @@ import {
 import type { ThreadsUi } from './use-threads-api';
 import { displayDate } from './view-model';
 import { useToastMessage } from './toast';
+import { ThreadsPublicationLink } from './ThreadsPublicationLink';
 import './threads-api.css';
 
 export function latestPublication(
@@ -84,7 +85,7 @@ function PublicationStatus({
         </strong>
         <span>@{item.username}</span>
       </div>
-      {item.remoteId && <p className="threads-id">게시 ID: {item.remoteId}</p>}
+      <ThreadsPublicationLink item={item} disabled={blocked} />
       {item.publishedAt && (
         <p className="threads-publication-time">
           <span>{displayDate(item.publishedAt)} 게시</span>

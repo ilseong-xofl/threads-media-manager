@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CollectionView, Post, Problem } from '../shared/contracts';
+import type { CollectionView, Post, PostLinkResult, Problem } from '../shared/contracts';
 import {
   THREADS_INSIGHTS_HOUR,
   type ThreadsPublication,
@@ -464,6 +464,51 @@ export class ThreadsPublishingController {
       this.publishProgress = null;
     });
     return this.pending;
+  }
+  async openPublication(
+    input: unknown,
+    openExternal: (url: string) => Promise<void>,
+  ): Promise<PostLinkResult> {
+    const result = await this.run('settings', async () => {
+      if (!object(input) || Object.keys(input).join(',') !== 'id' || !uuid(input.id))
+        throw new ViewError('threads_input', '열 게시글의 API 이력을 확인하세요.');
+      const item = this.record(input.id);
+      const libraryId = this.options.currentView().snapshot?.libraryId;
+      if (item.libraryId !== libraryId || item.status !== 'published' || !item.remoteId)
+        throw new ViewError(
+          'threads_link_missing',
+          '이 작업 폴더에서 게시 완료한 글만 열 수 있습니다.',
+        );
+      const { accessToken, account } = await this.options.accounts.credentials();
+      if (item.accountId !== account.id)
+        throw new ViewError('threads_link_account', '이 글을 게시한 Threads 계정을 연결하세요.');
+      // Numeric API IDs are not public post shortcodes. Resolve the official permalink only on click.
+      const media = await this.options.client.retrieveMedia(accessToken, item.remoteId);
+      if (
+        media.id !== item.remoteId ||
+        (media.ownerId !== null
+          ? media.ownerId !== account.id
+          : media.username?.toLowerCase() !== account.username.toLowerCase()) ||
+        !media.permalink ||
+        !/^https:\/\/(?:www\.)?threads\.(?:com|net)\/@[A-Za-z0-9._]+\/post\/[A-Za-z0-9_-]+\/?$/.test(
+          media.permalink,
+        ) ||
+        this.options.currentView().snapshot?.libraryId !== libraryId
+      )
+        throw new ViewError(
+          'threads_link_invalid',
+          'Threads에서 이 게시글의 주소를 확인하지 못했습니다.',
+        );
+      try {
+        await openExternal(media.permalink);
+      } catch {
+        throw new ViewError(
+          'link_open_failed',
+          '브라우저에서 링크를 열지 못했습니다. 기본 브라우저 설정을 확인하세요.',
+        );
+      }
+    });
+    return result.status === 'error' ? result : { status: 'opened' };
   }
   connect(input: unknown) {
     return this.run('settings', async () => {
