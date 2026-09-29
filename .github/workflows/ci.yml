@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.15'
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Windows app runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python scripts/prepare-windows-runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "TMM_PYTHON=$((Resolve-Path build/runtime/python/python.exe).Path)" >> $env:GITHUB_ENV
+          "$((Resolve-Path build/runtime/bin).Path)" >> $env:GITHUB_PATH
+      - name: Prepare Mac test dependencies
+        if: runner.os == 'macOS'
+        run: |
+          python -m pip install -r local-runtime/requirements.txt
+          echo "TMM_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || brew install ffmpeg
+      - name: Verify test dependencies
+        run: |
+          ffmpeg -version
+          ffprobe -version
+      - run: pnpm check
+      - name: Build Windows installer candidate
+        if: runner.os == 'Windows'
+        run: pnpm make --arch=x64
+      - name: Verify packaged runtime and installer outputs
+        if: runner.os == 'Windows'
+        run: pnpm verify:windows
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Windows'
+        with:
+          name: threads-media-manager-windows-candidate-${{ github.sha }}
+          path: out/make/squirrel.windows/x64/
+          if-no-files-found: error
+          retention-days: 14

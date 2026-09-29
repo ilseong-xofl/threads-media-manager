@@ -1,3 +1,6 @@
+import { MakerSquirrel } from '@electron-forge/maker-squirrel';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { WebpackPlugin } from '@electron-forge/plugin-webpack';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -10,9 +13,22 @@ const config: ForgeConfig = {
     asar: true,
     appBundleId: 'com.threadsmediamanager.desktop',
     executableName: 'ThreadsMediaManager',
+    extraResource: process.platform === 'win32' ? [join('build', 'runtime')] : [],
   },
-  // Windows installers, Python bundling, and updates belong to phase 1G.
-  makers: [],
+  hooks: {
+    prePackage: async (_config, platform, arch) => {
+      if (platform !== 'win32' || arch !== 'x64')
+        throw new Error('Only Windows x64 distribution is supported.');
+      if (!existsSync(join('build', 'runtime', 'runtime-manifest.json')))
+        throw new Error('Run python scripts/prepare-windows-runtime.py before packaging.');
+    },
+  },
+  makers: [
+    new MakerSquirrel({
+      name: 'threads_media_manager',
+      setupExe: 'ThreadsMediaManager-win32-x64-Setup.exe',
+    }),
+  ],
   plugins: [
     new WebpackPlugin({
       port: 3120,

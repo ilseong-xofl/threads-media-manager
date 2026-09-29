@@ -1,0 +1,37 @@
+{
+  "pythonVersion": "3.13.15",
+  "pillowVersion": "12.3.0",
+  "ffmpegRelease": "b6.1.1",
+  "downloads": [
+    {
+      "name": "python.zip",
+      "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+      "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf"
+    },
+    {
+      "name": "pillow.whl",
+      "url": "https://files.pythonhosted.org/packages/a6/9b/7a58e61d62be561da3a356fe2384d4059a6345fc130e23ef1c36a5b81d24/pillow-12.3.0-cp313-cp313-win_amd64.whl",
+      "sha256": "1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8"
+    },
+    {
+      "name": "ffmpeg.exe",
+      "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-win32-x64",
+      "sha256": "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00"
+    },
+    {
+      "name": "ffprobe.exe",
+      "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-win32-x64",
+      "sha256": "3a7e2dc003dc2cd1472827e4c7c4f056ae1ae0ae7c5bbc580c99b49827351ba4"
+    },
+    {
+      "name": "ffmpeg.LICENSE",
+      "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/win32-x64.LICENSE",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "name": "ffmpeg.README",
+      "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/win32-x64.README",
+      "sha256": "a636a7183c58006351acbaf35303c0ed85c6e1320fd4e80de453ba6157de6311"
+    }
+  ]
+}

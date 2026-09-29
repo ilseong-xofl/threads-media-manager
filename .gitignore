@@ -30,3 +30,5 @@ out/
 !plugins/threads-collector/skills/threads-collect/assets/daily-results.xlsx
 *.zip
 .venv/
+
+build/

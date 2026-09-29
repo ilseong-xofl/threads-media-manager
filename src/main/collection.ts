@@ -217,7 +217,7 @@ export async function readRuntime(
           reject(
             new ViewError(
               'runtime_unavailable',
-              'Python 3.11 이상을 실행할 수 없습니다. 개발 환경의 TMM_PYTHON 설정을 확인하세요.',
+              '로컬 실행기를 시작할 수 없습니다. 앱을 다시 설치하거나 개발 실행 환경을 확인하세요.',
             ),
           );
           return;

@@ -11,6 +11,8 @@ import {
   session,
   shell,
 } from 'electron';
+import squirrelStartup from 'electron-squirrel-startup';
+import { configureRuntime } from './runtime';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { IPC, MEDIA_SCHEME } from '../shared/contracts';
@@ -50,6 +52,8 @@ import {
 import { LibraryMaintenanceController, launchLibraryMaintenance } from './library-maintenance';
 import { readLibraryPublications, saveLibraryPublications } from './library-publications';
 
+const runtimeRoot = configureRuntime(app.isPackaged, app.getAppPath(), process.resourcesPath);
+
 app.setName('Threads Media Manager');
 app.setAppUserModelId('com.threadsmediamanager.desktop');
 const aiContentEnabled = !app.isPackaged;
@@ -76,13 +80,11 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | null = null;
 const registry = new MediaRegistry(aiContentEnabled);
 const controller = new CollectionController(
-  (root) => readRuntime(app.getAppPath(), root, aiContentEnabled),
+  (root) => readRuntime(runtimeRoot, root, aiContentEnabled),
   (root, files) => registry.adopt(root, files),
 );
 
-const downloads = new DownloadController(launchWorker(app.getAppPath()), () =>
-  controller.refresh(),
-);
+const downloads = new DownloadController(launchWorker(runtimeRoot), () => controller.refresh());
 const archives = new PostExportController(
   (root) => controller.refresh(root),
   async (fileName) => {
@@ -97,12 +99,12 @@ const archives = new PostExportController(
     });
     return choice.canceled ? null : choice.filePath;
   },
-  launchExport(app.getAppPath(), aiContentEnabled),
+  launchExport(runtimeRoot, aiContentEnabled),
 );
 let initialFolderHint: string | undefined;
 const edits: MediaEditController = new MediaEditController(
   (root) => controller.refresh(root),
-  launchMediaEdit(app.getAppPath()),
+  launchMediaEdit(runtimeRoot),
   () =>
     maintenance.active ||
     controller.loading ||
@@ -117,7 +119,7 @@ const edits: MediaEditController = new MediaEditController(
 );
 const deletions: MediaDeleteController = new MediaDeleteController(
   (root) => controller.refresh(root),
-  launchMediaDelete(app.getAppPath()),
+  launchMediaDelete(runtimeRoot),
   async (input, plan, signal) => {
     if (!window || signal.aborted) return false;
     const choice = await dialog.showMessageBox(
@@ -140,7 +142,7 @@ const deletions: MediaDeleteController = new MediaDeleteController(
 );
 const comments: PostCommentController = new PostCommentController(
   (root) => controller.refresh(root),
-  launchPostComment(app.getAppPath()),
+  launchPostComment(runtimeRoot),
   () =>
     maintenance.active ||
     controller.loading ||
@@ -155,7 +157,7 @@ const comments: PostCommentController = new PostCommentController(
 );
 const drafts: PostDraftController = new PostDraftController(
   (root) => controller.refresh(root),
-  launchPostDraft(app.getAppPath(), aiContentEnabled),
+  launchPostDraft(runtimeRoot, aiContentEnabled),
   () =>
     maintenance.active ||
     controller.loading ||
@@ -178,7 +180,7 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     );
     return choice.response === 1 && !signal.aborted;
   },
-  launchPostDraftDelete(app.getAppPath()),
+  launchPostDraftDelete(runtimeRoot),
   () =>
     maintenance.active ||
     controller.loading ||
@@ -192,12 +194,12 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     content.active,
 );
 const captions = new CaptionGenerator(
-  app.getAppPath(),
+  runtimeRoot,
   (root) => controller.refresh(root),
   aiContentEnabled,
 );
 const content = new ContentGenerator(
-  app.getAppPath(),
+  runtimeRoot,
   (root) => controller.refresh(root),
   (bytes) => {
     const image = nativeImage.createFromBuffer(bytes);
@@ -263,7 +265,7 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
       return choice.canceled || signal.aborted ? null : (choice.filePaths[0] ?? null);
     },
   },
-  launchLibraryMaintenance(app.getAppPath(), app.getVersion()),
+  launchLibraryMaintenance(runtimeRoot, app.getVersion()),
   () =>
     controller.loading ||
     downloads.active ||
@@ -474,7 +476,7 @@ function createWindow(): void {
   void window.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (squirrelStartup || !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {

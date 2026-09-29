@@ -83,7 +83,7 @@
 기능 개발 완료와 Windows 배포 준비 완료는 구분한다.
 
 1. Windows에서 Python·Pillow·ffmpeg·ffprobe·Codex CLI 의존성 및 앱 경로·잠금·종료·OS 암호화·기존 자료 보존 검증.
-2. Windows 런타임 번들, Forge installer/maker, 자동 업데이트 구현과 새 설치·업데이트 검증. 현재 `makers`는 비어 있고 updater는 미구현이다.
+2. Windows 런타임 번들, Forge installer/maker, 자동 업데이트 구현과 새 설치·업데이트 검증. Squirrel maker와 런타임 번들을 추가해 GitHub CI 검증을 시작한다. updater는 아직 미구현이다. [Windows 검증](windows-validation.md)을 따른다.
 3. 검증 뒤 별도 버전 결정과 설치 파일·GitHub Release 배포. 이번 작업은 소스 체크포인트이며 버전 `0.1.0`을 유지한다.
 
 현재 배포 가정은 같은 Meta 앱의 Threads 테스터 계정이다. 일반 외부 사용자 지원 시 토큰 검사·앱 검수 구성은 [API 계약](phase-3-threads-api.md)을 다시 확인한다. 자연 만료·철회·OS별 보안 저장·원격 정리의 장기 운영 전체를 한 번의 실제 게시 시험으로 검증했다고 해석하지 않는다.

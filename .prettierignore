@@ -10,3 +10,5 @@ AGENTS.md
 .agents/
 local-runtime/
 tests/
+
+build/

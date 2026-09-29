@@ -17,11 +17,15 @@
     "test:python": "node scripts/test-python.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:python && pnpm format:check"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:python && pnpm format:check",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "verify:windows": "node scripts/verify-windows-package.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron"
+      "electron",
+      "electron-winstaller"
     ],
     "overrides": {
       "tar": "7.5.22",
@@ -31,15 +35,18 @@
     }
   },
   "dependencies": {
+    "electron-squirrel-startup": "1.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
     "@electron-forge/plugin-fuses": "7.11.2",
     "@electron-forge/plugin-webpack": "7.11.2",
     "@electron/fuses": "1.8.0",
     "@eslint/js": "9.39.5",
+    "@types/electron-squirrel-startup": "1.0.2",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
@@ -56,5 +63,6 @@
     "vitest": "4.1.10",
     "webpack": "5.109.2",
     "webpack-cli": "7.2.2"
-  }
+  },
+  "author": "Threads Media Manager"
 }

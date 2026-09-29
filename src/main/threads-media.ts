@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { MediaRegistry } from './media';
 import { ViewError } from './collection';
+import { mediaCommand } from './runtime';
 
 export interface ThreadsUploadFile {
   path: string;
@@ -16,7 +17,7 @@ export interface ThreadsUploadFile {
 async function checkVideo(path: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     execFile(
-      'ffprobe',
+      mediaCommand('ffprobe'),
       [
         '-v',
         'error',
