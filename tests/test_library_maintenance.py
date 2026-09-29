@@ -208,6 +208,18 @@ class LibraryMaintenanceTests(unittest.TestCase):
         self.assertEqual(meta["stop"], {"code": "rate_limited", "retry_at": 2_000_000_000})
         self.assertEqual(meta["next_allowed"], 2_000_000_000)
 
+    def test_invalid_database_setup_closes_connection_before_propagating_error(self):
+        self.db_path.write_bytes(b"broken sqlite original")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            with patch.object(maintenance.sqlite3, "connect", return_value=connection):
+                with self.assertRaises(sqlite3.DatabaseError):
+                    maintenance.open_db(self.db_path)
+            with self.assertRaisesRegex(sqlite3.ProgrammingError, "closed"):
+                connection.execute("SELECT 1")
+        finally:
+            connection.close()
+
     def test_corrupt_current_db_saved_raw_before_disaster_restore(self):
         self.make_backup()
         raw = b"broken sqlite original"

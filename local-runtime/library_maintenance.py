@@ -274,10 +274,16 @@ def validate_files(db, root, *, check=lambda: False):
 
 def open_db(path, *, readonly=False):
     db = sqlite3.connect(path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"), uri=True, timeout=0)
-    db.execute("PRAGMA trusted_schema=OFF")
-    db.execute("PRAGMA foreign_keys=ON")
-    if not readonly: db.execute("PRAGMA synchronous=FULL")
-    return db
+    try:
+        db.execute("PRAGMA trusted_schema=OFF")
+        db.execute("PRAGMA foreign_keys=ON")
+        if not readonly: db.execute("PRAGMA synchronous=FULL")
+        return db
+    except BaseException:
+        # Setup may read a corrupt DB before the caller receives the connection.
+        # Close here so Windows can replace it from the validated backup.
+        db.close()
+        raise
 
 
 def online_backup(db, destination, library, app_version, check):
