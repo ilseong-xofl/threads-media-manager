@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Attachment, CollectionView, Post } from '../shared/contracts';
+import type { CodexExecution } from './codex-connection';
 import { CaptionGenerator, captionArguments, parseCaptionInput } from './caption-generator';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), execFile: vi.fn() }));
@@ -84,6 +85,7 @@ function setup(
     process.emit('close', 0);
   },
   initial: CollectionView = view(),
+  connection?: { execution(): Promise<CodexExecution> },
 ) {
   const requests: { args: string[]; stdin: string; cwd: string }[] = [];
   vi.mocked(spawn).mockImplementation(((
@@ -115,7 +117,11 @@ function setup(
     return process;
   }) as unknown as typeof spawn);
   const refresh = vi.fn().mockResolvedValue(initial);
-  return { generator: new CaptionGenerator('/synthetic-project', refresh), requests, refresh };
+  return {
+    generator: new CaptionGenerator('/synthetic-project', refresh, false, connection),
+    requests,
+    refresh,
+  };
 }
 afterEach(() => {
   vi.useRealTimers();
@@ -216,6 +222,23 @@ describe('caption generation boundaries', () => {
     expect(options).toMatchObject({ shell: false, windowsHide: true });
     expect(options?.env).not.toHaveProperty('OPENAI_API_KEY');
     expect(options?.env).not.toHaveProperty('CODEX_API_KEY');
+  });
+  it('uses the managed executable and app-specific authentication for caption generation', async () => {
+    const execution = {
+      command: '/app/runtime/codex/bin/codex.exe',
+      args: ['-c', 'cli_auth_credentials_store="keyring"'],
+      env: { CODEX_HOME: '/app/user-data/codex' },
+    };
+    const managed = { execution: vi.fn().mockResolvedValue(execution) };
+    const { generator } = setup(undefined, undefined, managed);
+    expect(await generator.generate(root, input)).toMatchObject({ status: 'generated' });
+    expect(managed.execution).toHaveBeenCalledOnce();
+    const [command, args, options] = vi.mocked(spawn).mock.calls[1];
+    expect(command).toBe(execution.command);
+    // Regression: placing these before exec returned 401 despite login status succeeding.
+    expect(args?.slice(0, 3)).toEqual(['exec', '-c', 'cli_auth_credentials_store="keyring"']);
+    expect(args).toContain('web_search="disabled"');
+    expect(options?.env).toEqual(execution.env);
   });
   it('requests all three suggestions in one CLI process and normalizes the returned strings', async () => {
     const { generator, requests } = setup(async (process, cwd) => {

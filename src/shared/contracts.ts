@@ -2,6 +2,10 @@ import type { ThreadsApiMethods } from './threads-api';
 export const MEDIA_SCHEME = 'threads-media';
 export const IPC = {
   capabilities: 'tmm:app:capabilities',
+  chatGptState: 'tmm:chatgpt:state',
+  loginChatGpt: 'tmm:chatgpt:login',
+  cancelChatGptLogin: 'tmm:chatgpt:cancel-login',
+  logoutChatGpt: 'tmm:chatgpt:logout',
   current: 'tmm:collection:current',
   choose: 'tmm:collection:choose',
   refresh: 'tmm:collection:refresh',
@@ -171,7 +175,19 @@ export interface CollectionView {
 export interface AppCapabilities {
   aiContent: boolean;
 }
+export interface ChatGptState {
+  status: 'signed_out' | 'signed_in' | 'signing_in' | 'unavailable';
+  problem?: Problem;
+}
+export type ChatGptResult =
+  | { status: 'ok' | 'cancelled'; state: ChatGptState }
+  | { status: 'error'; state: ChatGptState; problem: Problem };
+
 export interface ThreadsMediaApi extends ThreadsApiMethods {
+  chatGptState(): Promise<ChatGptState>;
+  loginChatGpt(): Promise<ChatGptResult>;
+  cancelChatGptLogin(): Promise<ChatGptResult>;
+  logoutChatGpt(): Promise<ChatGptResult>;
   capabilities(): Promise<AppCapabilities>;
   current(): Promise<CollectionView>;
   chooseFolder(): Promise<CollectionView>;

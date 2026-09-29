@@ -32,6 +32,39 @@
       "name": "ffmpeg.README",
       "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/win32-x64.README",
       "sha256": "a636a7183c58006351acbaf35303c0ed85c6e1320fd4e80de453ba6157de6311"
+    },
+    {
+      "name": "codex.tgz",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.158.0/codex-npm-win32-x64-0.158.0.tgz",
+      "sha256": "fffd7f7ce365029b3f1d3607b53e7a2b7334f43affd776a718d782d5df2b890e"
+    },
+    {
+      "name": "codex.LICENSE",
+      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/LICENSE",
+      "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+    },
+    {
+      "name": "codex.NOTICE",
+      "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/NOTICE",
+      "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+    },
+    {
+      "name": "ripgrep.LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/BurntSushi/ripgrep/15.2.0/LICENSE-MIT",
+      "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
     }
-  ]
+  ],
+  "codexVersion": "0.158.0",
+  "codexRequiredFiles": [
+    "bin/codex.exe",
+    "bin/codex-code-mode-host.exe",
+    "codex-resources/codex-command-runner.exe",
+    "codex-resources/codex-windows-sandbox-setup.exe",
+    "codex-path/rg.exe",
+    "codex-package.json",
+    "LICENSE",
+    "NOTICE",
+    "codex-path/ripgrep.LICENSE-MIT"
+  ],
+  "codexRipgrepVersion": "15.2.0"
 }

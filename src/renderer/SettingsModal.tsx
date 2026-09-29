@@ -5,6 +5,7 @@ import type {
   LibraryMaintenanceResult,
 } from '../shared/contracts';
 import { Icon } from './Icon';
+import { ChatGptSettings } from './ChatGptSettings';
 import { ThreadsAccountSettings } from './ThreadsAccountSettings';
 import { ThreadsWorkOverlay } from './ThreadsUploadOverlay';
 import type { ThreadsUi } from './use-threads-api';
@@ -145,6 +146,7 @@ export function SettingsModal({
         </button>
       </div>
       <div className="settings-body" inert={insightsWorking}>
+        <ChatGptSettings enabled={enabled && !working && !apiWorking} />
         {threads && (
           <ThreadsAccountSettings
             threads={threads}

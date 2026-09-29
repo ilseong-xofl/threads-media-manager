@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import { bundledPython, configureRuntime, mediaCommand } from './runtime';
+import runtimeManifest from '../../scripts/windows-runtime.json';
+import { bundledCodex, bundledPython, configureRuntime, mediaCommand } from './runtime';
 import { pythonCommand } from './python';
+import { managedCodexCommand } from './codex-connection';
 
 vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true) }));
 const oldPath = process.env.PATH;
@@ -22,6 +24,7 @@ it('uses bundled Python and media tools despite developer overrides or a differe
     prefix: ['-X', 'utf8'],
   });
   expect(mediaCommand('ffprobe')).toBe(join(root, 'bin/ffprobe.exe'));
+  expect(bundledCodex()).toBe(join(root, 'codex/bin/codex.exe'));
   expect(process.env.PATH?.startsWith(join(root, 'bin'))).toBe(true);
 });
 
@@ -30,11 +33,43 @@ it('fails on an incomplete installation instead of falling back to user-installe
   expect(() => configureRuntime(true, '/app.asar', '/resources', 'win32')).toThrow('누락');
 });
 
+it.each(runtimeManifest.codexRequiredFiles)(
+  'rejects a package missing Codex dependency %s',
+  (file) => {
+    vi.mocked(existsSync).mockImplementation((path) => !String(path).endsWith(join('codex', file)));
+    expect(() => configureRuntime(true, '/app.asar', '/resources', 'win32')).toThrow('누락');
+    expect(bundledCodex()).toBe(null);
+  },
+);
+
 it('keeps development Python selection and PATH intact', () => {
   vi.stubEnv('TMM_PYTHON', 'development-python');
-  expect(configureRuntime(false, '/project', '/resources')).toBe('/project');
+  expect(configureRuntime(false, '/project', '/resources', 'darwin', 'arm64')).toBe('/project');
   expect(bundledPython()).toBe(null);
+  expect(bundledCodex()).toBe(join('/project', 'build', 'codex', 'darwin-arm64', 'bin', 'codex'));
   expect(mediaCommand('ffprobe')).toBe('ffprobe');
   expect(pythonCommand('/project').command).toBe('development-python');
   expect(process.env.PATH).toBe(oldPath);
+});
+
+it.each(['arm64', 'x64'])('uses the app-owned Mac %s CLI independent of PATH', (arch) => {
+  vi.stubEnv('PATH', '/external/codex');
+  configureRuntime(false, '/프로젝트 앱', '/resources', 'darwin', arch);
+  expect(managedCodexCommand()).toBe(
+    join('/프로젝트 앱', 'build', 'codex', `darwin-${arch}`, 'bin', 'codex'),
+  );
+  expect(process.env.PATH).toBe('/external/codex');
+});
+
+it('does not fall back to a global CLI when the managed executable is missing', () => {
+  configureRuntime(false, '/project', '/resources', 'darwin', 'arm64');
+  vi.mocked(existsSync).mockImplementation((path) => String(path).startsWith('/opt/homebrew'));
+  expect(() => managedCodexCommand()).toThrow('누락');
+});
+
+it('uses the prepared Windows CLI during development too', () => {
+  configureRuntime(false, '/project', '/resources', 'win32', 'x64');
+  expect(managedCodexCommand()).toBe(
+    join('/project', 'build', 'runtime', 'codex', 'bin', 'codex.exe'),
+  );
 });

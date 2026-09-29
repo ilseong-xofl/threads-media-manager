@@ -1,3 +1,4 @@
+import type { CodexConnection } from './codex-connection';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -84,6 +85,7 @@ export function captionArguments(
   directory: string,
   images: string[],
   language: CaptionLanguage = 'en',
+  authArguments: readonly string[] = [],
 ): string[] {
   // Documented config switches narrow tools; permissions and execpolicy rules remain enabled.
   const disabled = [
@@ -102,6 +104,8 @@ export function captionArguments(
   ];
   return [
     'exec',
+    // Keep auth overrides on exec: root -c flags can be lost when exec has its own -c.
+    ...authArguments,
     '--ignore-user-config',
     '--sandbox',
     'read-only',
@@ -162,7 +166,7 @@ function cliError(detail: string, missing = false): ViewError {
   if (missing)
     return new ViewError(
       'codex_missing',
-      'Codex CLI를 찾을 수 없습니다. Codex CLI를 설치하고 로그인하세요.',
+      'AI 연결 프로그램을 찾을 수 없습니다. 앱을 다시 설치하세요.',
     );
   if (
     /not (?:logged|signed) in|login required|please (?:log|sign) in|authentication|unauthorized|401|token.*expired/i.test(
@@ -171,7 +175,7 @@ function cliError(detail: string, missing = false): ViewError {
   )
     return new ViewError(
       'codex_login',
-      'Codex CLI 로그인이 필요합니다. 터미널에서 codex login을 실행한 뒤 다시 시도하세요.',
+      '설정에서 ChatGPT에 다시 로그인하세요. 연결된 상태라면 로그아웃 후 다시 로그인하세요.',
     );
   if (
     /unexpected argument|unknown (?:option|feature)|unrecognized|unsupported.*(?:image|model)|(?:image|model).*(?:not support|unsupported|not found|does not exist)/i.test(
@@ -180,7 +184,7 @@ function cliError(detail: string, missing = false): ViewError {
   )
     return new ViewError(
       'codex_unsupported',
-      '현재 Codex CLI 또는 기본 모델이 이미지 캡션 생성을 지원하지 않습니다. CLI와 모델 설정을 확인하세요.',
+      '현재 AI 연결에서 이미지 캡션 생성을 지원하지 않습니다. 최신 앱으로 업데이트한 뒤 다시 시도하세요.',
     );
   if (/usage limit|rate limit|quota|429/i.test(detail))
     return new ViewError(
@@ -198,11 +202,11 @@ function cliError(detail: string, missing = false): ViewError {
   )
     return new ViewError(
       'codex_permission',
-      'Codex CLI의 로컬 실행 권한 또는 샌드박스를 확인하지 못했습니다. 터미널에서 Codex 실행 환경을 확인하세요.',
+      'AI 연결 프로그램의 실행 권한을 확인하지 못했습니다. 앱을 다시 시작하고 문제가 계속되면 관리자에게 문의하세요.',
     );
   return new ViewError(
     'caption_generation',
-    '캡션을 생성하지 못했습니다. Codex CLI 연결 상태를 확인한 뒤 다시 시도하세요.',
+    '캡션을 생성하지 못했습니다. 설정에서 ChatGPT 연결 상태를 확인한 뒤 다시 시도하세요.',
   );
 }
 
@@ -215,6 +219,7 @@ export function runProcess(
   input: string,
   timeout: number,
   cli: boolean,
+  processEnvironment?: NodeJS.ProcessEnv,
 ): ProcessJob {
   let cancel = () => {};
   const result = new Promise<string>((resolve, reject) => {
@@ -259,7 +264,7 @@ export function runProcess(
         windowsHide: true,
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: environment(),
+        env: processEnvironment ?? environment(),
       });
     } catch (error) {
       reject(
@@ -329,6 +334,7 @@ export class CaptionGenerator {
     private projectRoot: string,
     private refresh: (root: string) => Promise<CollectionView>,
     private includeAI = false,
+    private connection?: Pick<CodexConnection, 'execution'>,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -481,13 +487,16 @@ export class CaptionGenerator {
         { flag: 'wx', mode: 0o600 },
       );
       this.check();
+      const execution = await this.connection?.execution();
+      this.check();
       this.job = runProcess(
-        codexCommand(),
-        captionArguments(directory, prepared.images as string[], input.language),
+        execution?.command ?? codexCommand(),
+        captionArguments(directory, prepared.images as string[], input.language, execution?.args),
         directory,
         JSON.stringify({ sourceCaption: prepared.caption }),
         180_000,
         true,
+        execution?.env,
       );
       await this.job.result;
       this.job = null;

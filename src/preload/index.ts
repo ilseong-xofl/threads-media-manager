@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
 const api: ThreadsMediaApi = {
+  chatGptState: () => ipcRenderer.invoke(IPC.chatGptState),
+  loginChatGpt: () => ipcRenderer.invoke(IPC.loginChatGpt),
+  cancelChatGptLogin: () => ipcRenderer.invoke(IPC.cancelChatGptLogin),
+  logoutChatGpt: () => ipcRenderer.invoke(IPC.logoutChatGpt),
   threadsState: () => ipcRenderer.invoke(IPC.threadsState),
   connectThreads: (input) => ipcRenderer.invoke(IPC.connectThreads, input),
   disconnectThreads: () => ipcRenderer.invoke(IPC.disconnectThreads),

@@ -30,7 +30,7 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 ## 런타임 포함 방식
 
-[고정 버전과 해시](../scripts/windows-runtime.json)에 있는 공식 Python embeddable ZIP, Pillow wheel, 영상 바이너리를 빌드 중에만 내려받고 SHA-256을 검증한다. Python/Pillow 라이선스와 ffmpeg LICENSE·README를 보관한다. Windows 설치 앱은 내장 실행기를 절대 경로로 실행하고 `TMM_PYTHON`이나 사용자 Python 설치에 의존하지 않는다. Python·Pillow·ffmpeg·ffprobe는 사용자가 터미널에서 설치할 필요가 없다. 기존 AI 캡션용 Codex CLI 연결은 별도이며 이번 런타임 번들에 포함하지 않는다.
+[고정 버전과 해시](../scripts/windows-runtime.json)에 있는 공식 Python embeddable ZIP, Pillow wheel, 영상 바이너리를 빌드 중에만 내려받고 SHA-256을 검증한다. Python/Pillow 라이선스와 ffmpeg LICENSE·README를 보관한다. Windows 설치 앱은 내장 실행기를 절대 경로로 실행하고 `TMM_PYTHON`이나 사용자 Python 설치에 의존하지 않는다. Python·Pillow·ffmpeg·ffprobe는 사용자가 터미널에서 설치할 필요가 없다. 2026-09-29 추가 구현으로 AI 캡션용 Codex CLI 0.158.0과 필요한 보조 실행 파일·라이선스를 원래 배포 구조 그대로 포함하도록 구성했다. 공식 압축파일과 라이선스 SHA-256, 패키지 내부 전체 파일 해시를 검사한다. 설정의 ChatGPT 로그인 버튼으로 인증하며 사용자가 Codex·Node/npm을 설치하지 않는다. 이 추가 변경은 위의 이전 CI 성공 기록에 포함되지 않으며 새 Windows 설치 후보와 실제 로그인 검증이 필요하다. [연결 계약](chatgpt-connection.md)을 따른다.
 
 - [Python 배포 파일](https://www.python.org/downloads/release/python-31315/)
 - [Python 앱 내장 배포 방식](https://docs.python.org/3.13/using/windows.html#the-embeddable-package)
@@ -54,7 +54,7 @@ pnpm verify:windows
 - Node·Python·Pillow·ffmpeg 없는 Windows 사용자 환경에서 설치·최초 실행·재실행·제거/재설치.
 - 원본 Excel 읽기, 다운로드·중복 정리·편집·등록·ZIP과 파일 잠금/강제 종료 복구.
 - 폴더 전체와 DB 백업을 다른 PC에 옮기고 재연결·복원 후 파일 재다운로드 없이 사용. 토큰·파일 서버 코드는 새 PC에서 재입력.
-- Windows OS 암호화 저장, Codex CLI 로그인/캡션 생성, 사용자 승인에 따른 실제 API 동작.
+- Windows OS 암호화 저장, 설정의 ChatGPT 브라우저 로그인/실제 캡션 생성, 앱 재실행·업데이트 후 인증 유지, 기존 Codex와 인증 분리, 사용자 승인에 따른 실제 API 동작.
 - 자동 업데이트 구현, 서로 다른 버전 간 갱신과 사용자 데이터 보존, 코드 서명 및 정식 Release.
 
 자동 테스트·설치 파일 생성 성공을 실제 설치·UI·업데이트 통과로 보고하지 않는다.

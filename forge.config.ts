@@ -1,5 +1,7 @@
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { WebpackPlugin } from '@electron-forge/plugin-webpack';
@@ -7,6 +9,7 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
+import runtimeManifest from './scripts/windows-runtime.json';
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -16,11 +19,23 @@ const config: ForgeConfig = {
     extraResource: process.platform === 'win32' ? [join('build', 'runtime')] : [],
   },
   hooks: {
+    preStart: async () => {
+      if (process.platform === 'darwin')
+        await promisify(execFile)('python3', [
+          join(__dirname, 'scripts', 'prepare-macos-codex.py'),
+          process.arch,
+        ]);
+    },
     prePackage: async (_config, platform, arch) => {
       if (platform !== 'win32' || arch !== 'x64')
         throw new Error('Only Windows x64 distribution is supported.');
-      if (!existsSync(join('build', 'runtime', 'runtime-manifest.json')))
-        throw new Error('Run python scripts/prepare-windows-runtime.py before packaging.');
+      for (const file of [
+        'runtime-manifest.json',
+        ...runtimeManifest.codexRequiredFiles.map((file) => `codex/${file}`),
+      ]) {
+        if (!existsSync(join('build', 'runtime', file)))
+          throw new Error('Run python scripts/prepare-windows-runtime.py before packaging.');
+      }
     },
   },
   makers: [

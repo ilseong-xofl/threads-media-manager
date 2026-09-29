@@ -43,6 +43,7 @@ import { PostCommentController, launchPostComment } from './post-comment';
 import { openPostLink } from './open-post-link';
 import { PostDraftController, launchPostDraft } from './post-draft';
 import { CaptionGenerator } from './caption-generator';
+import { CodexConnection } from './codex-connection';
 import { ContentGenerator, parseContentInput } from './content-generator';
 import {
   PostDraftDeleteController,
@@ -193,10 +194,16 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     captions.active ||
     content.active,
 );
+const chatGpt: CodexConnection = new CodexConnection(
+  join(app.getPath('userData'), 'codex'),
+  undefined,
+  () => captions.active || content.active,
+);
 const captions = new CaptionGenerator(
   runtimeRoot,
   (root) => controller.refresh(root),
   aiContentEnabled,
+  chatGpt,
 );
 const content = new ContentGenerator(
   runtimeRoot,
@@ -448,7 +455,8 @@ function createWindow(): void {
           drafts.active ||
           draftDeletions.active ||
           captions.active ||
-          content.active
+          content.active ||
+          chatGpt.active
         )) ||
       closing
     )
@@ -464,6 +472,7 @@ function createWindow(): void {
       draftDeletions.shutdown(),
       captions.cancelAndWait(),
       content.cancelAndWait(),
+      chatGpt.cancelAndWait(),
     ]).finally(() => {
       closing = true;
       window?.close();
@@ -540,6 +549,13 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           if (channel === IPC.capabilities) {
             if (args.length) throw new Error('Unexpected arguments');
             return { aiContent: aiContentEnabled };
+          }
+          if (channel.startsWith('tmm:chatgpt:')) {
+            if (args.length) throw new Error('Unexpected arguments');
+            if (channel === IPC.chatGptState) return chatGpt.state();
+            if (channel === IPC.loginChatGpt) return chatGpt.login();
+            if (channel === IPC.cancelChatGptLogin) return chatGpt.cancelLogin();
+            if (channel === IPC.logoutChatGpt) return chatGpt.logout();
           }
           if (channel.startsWith('tmm:threads:')) {
             const hasInput = [
@@ -808,7 +824,8 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                 drafts.active ||
                 draftDeletions.active ||
                 captions.active ||
-                content.active
+                content.active ||
+                chatGpt.active
               )
                 return {
                   status: 'error',
@@ -952,7 +969,8 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           drafts.active ||
           draftDeletions.active ||
           captions.active ||
-          content.active
+          content.active ||
+          chatGpt.active
         )) ||
       closing
     )
@@ -968,6 +986,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       draftDeletions.shutdown(),
       captions.shutdown(),
       content.shutdown(),
+      chatGpt.shutdown(),
     ]).finally(() => {
       closing = true;
       app.quit();

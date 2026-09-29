@@ -1,0 +1,15 @@
+{
+  "version": "0.158.0",
+  "platforms": {
+    "arm64": {
+      "target": "aarch64-apple-darwin",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.158.0/codex-npm-darwin-arm64-0.158.0.tgz",
+      "sha256": "7849f8aa87c3956823cef082d83b538980a0ced6e468cca4f39c1cf606ea8dae"
+    },
+    "x64": {
+      "target": "x86_64-apple-darwin",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.158.0/codex-npm-darwin-x64-0.158.0.tgz",
+      "sha256": "72967f856612168cafcc4259ec0c890ea98483982441b51ec09c1811d386b390"
+    }
+  }
+}
