@@ -12,7 +12,17 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
-## 2026-09-29 검증 결과
+## 2026-09-29 최신 설치 후보: 앱 전용 Codex 포함
+
+- 검증 소스: `6a355572dcea4a3d6ff12d54d27f9a1ccfa2ebc9`, 앱 버전 **0.1.0 / Windows x64**.
+- [수동 CI 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606): Windows·Mac 모두 성공. 양쪽 TypeScript **36개 파일 / 1,084개**, 린트·타입·포맷 통과.
+- Python: Windows **524개 통과·4개 제외**(전체 528개), Mac **528개 통과**. Windows에서 제외한 것은 기존 POSIX 신호 테스트 2개와 Mac 실행 권한 테스트 2개다.
+- 설치 파일 생성과 패키지 내부 Python·Pillow·SQLite·pHash·영상 처리·다국어 경로 검사를 통과했다. 새 Codex CLI **0.158.0**의 포함 파일 **48개**를 검증하고, 사용자 Node/Python/Codex 경로·인증을 제외한 환경에서 버전 실행과 새 전용 홈의 미로그인 상태를 확인했다. 모델 요청은 하지 않았다.
+- [최신 설치 후보](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606/artifacts/11016097568): Setup.exe, RELEASES, full.nupkg, SHA256SUMS.txt, verification.json. **2026-10-13**까지 보관한다. 이전 후보 대신 이 커밋의 파일을 사용한다.
+- Windows job **15분 3초**: 설치 파일 생성 **3분 2초**, 패키지 검사 **2초**, Python 전체 검사 약 **10분**. Mac job **1분 48초**.
+- 다음은 사용자의 Windows PC에서 진행하는 설치·실제 로그인·캡션 생성·자료 이전·재실행 확인이다. [터미널 없이 진행하는 설치 테스트](windows-install-test.md)를 따른다. 이 후보는 서명 없는 내부 검수용이며 자동 업데이트는 아직 미구현이다. 공개 Release를 만들지 않았다.
+
+## 2026-09-29 이전 검증 결과
 
 - 검증한 소스 커밋: `b1f9f87ad571a1b4c071bd1cdb8096b2cba00c1a`.
 - [GitHub CI 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36523558901)에서 Windows와 Mac 모두 성공했다.
@@ -30,7 +40,7 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 ## 런타임 포함 방식
 
-[고정 버전과 해시](../scripts/windows-runtime.json)에 있는 공식 Python embeddable ZIP, Pillow wheel, 영상 바이너리를 빌드 중에만 내려받고 SHA-256을 검증한다. Python/Pillow 라이선스와 ffmpeg LICENSE·README를 보관한다. Windows 설치 앱은 내장 실행기를 절대 경로로 실행하고 `TMM_PYTHON`이나 사용자 Python 설치에 의존하지 않는다. Python·Pillow·ffmpeg·ffprobe는 사용자가 터미널에서 설치할 필요가 없다. 2026-09-29 추가 구현으로 AI 캡션용 Codex CLI 0.158.0과 필요한 보조 실행 파일·라이선스를 원래 배포 구조 그대로 포함하도록 구성했다. 공식 압축파일과 라이선스 SHA-256, 패키지 내부 전체 파일 해시를 검사한다. 설정의 ChatGPT 로그인 버튼으로 인증하며 사용자가 Codex·Node/npm을 설치하지 않는다. 이 추가 변경은 위의 이전 CI 성공 기록에 포함되지 않으며 새 Windows 설치 후보와 실제 로그인 검증이 필요하다. [연결 계약](chatgpt-connection.md)을 따른다.
+[고정 버전과 해시](../scripts/windows-runtime.json)에 있는 공식 Python embeddable ZIP, Pillow wheel, 영상 바이너리를 빌드 중에만 내려받고 SHA-256을 검증한다. Python/Pillow 라이선스와 ffmpeg LICENSE·README를 보관한다. Windows 설치 앱은 내장 실행기를 절대 경로로 실행하고 `TMM_PYTHON`이나 사용자 Python 설치에 의존하지 않는다. Python·Pillow·ffmpeg·ffprobe는 사용자가 터미널에서 설치할 필요가 없다. 2026-09-29 추가 구현으로 AI 캡션용 Codex CLI 0.158.0과 필요한 보조 실행 파일·라이선스를 원래 배포 구조 그대로 포함하도록 구성했다. 공식 압축파일과 라이선스 SHA-256, 패키지 내부 전체 파일 해시를 검사한다. 설정의 ChatGPT 로그인 버튼으로 인증하며 사용자가 Codex·Node/npm을 설치하지 않는다. 이 추가 변경은 위의 최신 `6a35557` CI에서 포함·기본 실행을 확인했다. 실제 Windows 브라우저 로그인과 캡션 생성은 사용자 PC에서 확인한다. [연결 계약](chatgpt-connection.md)을 따른다.
 
 - [Python 배포 파일](https://www.python.org/downloads/release/python-31315/)
 - [Python 앱 내장 배포 방식](https://docs.python.org/3.13/using/windows.html#the-embeddable-package)

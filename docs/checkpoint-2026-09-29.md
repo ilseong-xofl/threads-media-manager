@@ -100,7 +100,14 @@
 - Mac arm64의 실제 앱 전용 CLI와 기존 로그인으로 `CaptionGenerator`의 전체 생성 경로를 실행해 합성 이미지에서 한국어 제안 **3개**를 확인했다. 합성 원본·Excel·DB 작업 이력을 보존했다. Windows·Intel Mac 실제 실행 성공으로 확대 해석하지 않는다.
 - 추가 수정 후 Mac 전체 검사: TypeScript **1,084개**, Python **528개**, 린트·타입·포맷 통과. 앱을 재실행해 기존 ChatGPT 연결과 수집 23개·등록 3개가 유지됨을 확인했다.
 
-이번 체크포인트는 사용자 요청에 따라 소스·테스트·문서만 GitHub에 올린다. 빌드 실행 파일·인증정보·사용자 자료는 제외한다. 커밋의 `[skip ci]`로 자동 CI·설치 후보 생성을 건너뛰며, 최신 변경의 Windows 검증과 Release 배포는 다음 작업으로 남긴다.
+`6a35557` 소스 업로드 시점에는 사용자 요청으로 `[skip ci]`를 사용해 자동 검사를 건너뛰었다. 이후 사용자의 Windows 설치 테스트 진행 요청에 따라 아래 수동 CI를 실행했다. 소스 저장소에는 빌드 파일·인증정보·사용자 자료를 넣지 않는다.
+
+## 2026-09-29 최신 Windows 설치 후보
+
+- `6a35557`의 [Windows·Mac 수동 CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606)가 성공했다. TypeScript 양쪽 **1,084개**, Python Mac **528개**, Windows **524개 통과·OS별 4개 제외**, 린트·타입·포맷 통과.
+- Windows x64 **0.1.0** 설치 파일과 앱 전용 Codex CLI **0.158.0** 포함 후보를 생성했다. 패키지 내부 Python·Pillow·SQLite·pHash·영상·다국어 경로, Codex 포함 파일 **48개**와 버전·미로그인 상태 검사를 통과했다.
+- [설치 후보 artifact](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36528830606/artifacts/11016097568)는 2026-10-13까지 보관한다. Windows job 15분 3초, Mac job 1분 48초였다. [검증 기록](windows-validation.md)과 [설치·자료 이전 테스트 순서](windows-install-test.md)를 따른다.
+- 사용자는 최신 Mac 앱에서 AI 캡션 생성이 정상 동작함을 추가 확인했다. Windows Setup.exe 실제 실행·로그인·캡션·자료 이전은 사용자 PC 검증으로 남아 있다. 자동 업데이트는 미구현이며 공개 Release는 생성하지 않았다.
 
 ## 다음 배포 단계
 
