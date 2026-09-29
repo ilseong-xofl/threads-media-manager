@@ -172,3 +172,13 @@
 - 초기 설정·수집 스킬, JSONL/저장 계약과 Windows 수집 가이드를 갱신했다. 계정당 최대 2건·대기 정책·실제 수집/저장 오류의 중단 원칙은 유지한다. 없는 폴더 생성은 정상 준비 절차이며 사용자에게 별도 재수집 요청을 요구하지 않는다.
 - 배포 버전 **`0.1.0+codex.20260929082903`**, [플러그인 커밋 2db6c6e](https://github.com/ilseong-xofl/threads-collector/commit/2db6c6e51ef4951ff58d8464bd73f9cf731b5057). 배포 파일 36개 해시·manifest·변경 스킬 형식을 검증했다. 한글/공백 경로·첫 입력/기록·기존 자료 보존·쓰기 실패·잘못된 경로를 포함한 수집 전용 테스트 62개와 [Mac/Windows CI](https://github.com/ilseong-xofl/threads-collector/actions/runs/36543189518)가 통과했다.
 - 사용자는 Windows에서 `수집 플러그인 업데이트해줘`를 요청하고 새 대화에서 수정 버전을 확인한 뒤 수집한다. 로컬 앱 0.1.1 설치 파일은 변경하거나 재빌드하지 않았다. 실제 사용자 Threads 수집·브라우저 로그인·계정 파일 변경은 이번 수정 검증에서 실행하지 않았다.
+
+
+## 2026-09-29 Windows 빈 화면 수정 및 0.1.2 공개
+
+- 실제 Windows 0.1.1 설치에서 콘텐츠가 비어 있는 문제를 확인했다. 설치 앱의 `file:` HTML·JavaScript를 요청 필터가 차단했고, Windows의 원문 파일 주소와 Chromium 주소 차이로 IPC도 거절할 수 있었다. `pathToFileURL`로 화면 주소를 통일하고 패키지 renderer 디렉터리만 제한적으로 허용했다. 외부 파일·네트워크·다른 프레임은 계속 차단한다.
+- 앱 소스·태그 `905c757e7cf3411f5640bf6d251f7fedde95ab62`, [0.1.2 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.2), [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.2/ThreadsMediaManager-win32-x64-Setup.exe). 빈 화면의 기존 앱을 닫고 새 설치 파일을 실행한다. 기존 작업 폴더·앱 데이터를 삭제하지 않는다.
+- [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36544173623) 성공. TypeScript 양쪽 39개 파일/1,149개, Python Mac 552개·Windows 548개 통과와 OS별 4개 제외, 린트·타입·포맷 통과. Windows 15분 55초, Mac 1분 51초였다.
+- 이번에는 실제 Windows 패키지 실행·화면 제목/설정 버튼·preload·조회 IPC를 자동 검사했고 모두 통과했다. [화면 artifact](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36544173623/artifacts/11021703468)를 직접 확인했다. 사용자 데이터가 없는 GitHub Windows runner에서만 실행하며, 첫 폴더 선택 완료·Setup 설치/제거·로그인·게시·업데이트 후 데이터 보존의 전체 실기 검증과 구분한다.
+- [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36545955064)은 성공한 동일 커밋 CI 파일을 그대로 사용했다. 재검사·재빌드 없이 공개 5개 파일과 SHA-256·Squirrel feed를 검증했다. 공개 Setup/nupkg HEAD 200·크기 일치, SHA256SUMS와 GitHub digest 일치, Electron feed의 0.1.1→0.1.2 안내 200과 현재 버전 조회 204를 확인했다. 설치 파일 SHA-256은 `1f1fb80bb199a12a124d9363aa47eb11f77835d2c1d31ae6d2da6afae4281c93`다.
+- Mac에는 설치 파일·nupkg를 받지 않았고 작은 화면 PNG와 검증 manifest만 확인했다. 후속 검증 기록은 문서 전용 `[skip ci]` 커밋으로 남겨 CI/빌드를 반복하지 않는다.

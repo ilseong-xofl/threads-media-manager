@@ -20,6 +20,11 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 `verify:windows`에 실제 패키지 실행 검사를 추가했다. GitHub Windows runner에서 생성한 실행 파일을 띄우고 화면의 앱 제목/설정 버튼, preload API, 실제 조회 IPC를 확인해야 성공한다. 이 검사는 사용자 데이터가 없는 CI에서만 실행하며 설치 프로그램의 전체 설치·제거 시험을 대신하지 않는다. 결과는 `verification.json`의 `ui`에 기록하고 Release 게시에서도 통과 여부를 확인한다. 검사·빌드는 한 번 수행하고 성공한 파일을 그대로 게시한다.
 
+- [0.1.2 공개 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.2)는 `905c757e7cf3411f5640bf6d251f7fedde95ab62`의 [성공 CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36544173623) 파일을 [게시 작업](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36545955064)에서 재빌드 없이 사용했다.
+- TypeScript 양쪽 **39개 파일 / 1,149개**, Python Mac **552개**, Windows **548개 통과·OS별 4개 제외**. 린트·타입·포맷과 내장 런타임·Codex·패키지 검사를 통과했다. Windows job **15분 55초**, Mac **1분 51초**였다.
+- 실제 Windows 패키지 실행에서 `packagedAppLaunched`, `rendererReady`, `preloadReady`, `ipcReady`가 모두 참이며, [화면 artifact](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36544173623/artifacts/11021703468)에서 제목·버튼·목록 UI를 확인했다. 최초 폴더 선택 완료·로그인·사용자 기능 전체를 검증한 것은 아니다.
+- 공개 파일 5개, Setup/nupkg HTTP HEAD 200과 크기, SHA256SUMS와 GitHub digest 일치, 업데이트 feed의 0.1.1→0.1.2 안내 및 0.1.2 최신 상태 204를 확인했다. Mac에는 설치 파일을 내려받지 않았다.
+
 ## 2026-09-29 자동 업데이트 포함: 0.1.1
 
 - [공개 0.1.1 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.1)는 아래 성공 CI의 파일을 그대로 사용한다. [게시 작업](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36542078768)은 49초에 완료했다. 5개 파일·다운로드 링크·SHA-256 일치와 공개 업데이트 feed 응답을 확인했다.
@@ -67,7 +72,7 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 - [ffmpeg/ffprobe 바이너리·라이선스 출처](https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1)
 - [Squirrel.Windows maker](https://www.electronforge.io/config/makers/squirrel.windows)
 
-Windows 개발 환경에서 재현:
+Windows 개발 환경에서 런타임 준비·패키지를 재현한다. 실제 앱을 띄우는 마지막 `verify:windows`는 사용자 자료가 없는 GitHub Windows runner 전용이며 개발 PC에서는 실행을 거부한다:
 
 ```powershell
 pnpm install --frozen-lockfile
