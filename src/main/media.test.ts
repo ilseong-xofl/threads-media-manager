@@ -68,6 +68,8 @@ describe('local media response', () => {
     await expect(registry.adopt(root, [{ ...file, sha256: '0'.repeat(64) }])).rejects.toThrow();
     expect(await (await registry.respond(new Request(url))).text()).toBe('0123456789');
     await writeFile(join(root, file.relativePath), '9876543210');
+    const changedAt = new Date(Date.now() + 2000);
+    await utimes(join(root, file.relativePath), changedAt, changedAt);
     expect((await registry.respond(new Request(url))).status).toBe(409);
   });
   it('rejects symlink swaps and paths outside the collection', async () => {

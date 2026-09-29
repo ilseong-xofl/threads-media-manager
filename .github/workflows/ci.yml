@@ -51,7 +51,18 @@ jobs:
         run: |
           ffmpeg -version
           ffprobe -version
-      - run: pnpm check
+      - name: Lint, types and formatting
+        run: pnpm lint && pnpm typecheck && pnpm format:check
+      - name: TypeScript tests
+        id: typescript
+        continue-on-error: true
+        run: pnpm test
+      - name: Python tests
+        id: python
+        continue-on-error: true
+        run: pnpm test:python
+      - name: Require both test suites to pass
+        run: node -e "if ('${{ steps.typescript.outcome }}' !== 'success' || '${{ steps.python.outcome }}' !== 'success') process.exit(1)"
       - name: Build Windows installer candidate
         if: runner.os == 'Windows'
         run: pnpm make --arch=x64
