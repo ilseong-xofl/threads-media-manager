@@ -154,3 +154,12 @@
 - 태그 기반 Windows Release workflow와 RELEASES·full.nupkg·ASAR·x64·버전·업데이트 원본 검증을 추가했다. 서명 없는 Windows 배포를 사용한다. 자세한 절차는 [Release 계약](windows-release.md)을 따른다.
 - Mac 전체 검사에서 TypeScript **39개 파일 / 1,127개**, Python **545개**, 린트·타입·포맷 통과. 업데이트 core/coordinator 29개와 renderer 보류 14개 테스트를 포함한다. Windows 실제 설치·두 공개 버전 간 전송/재시작/자료 보존 검증과 구분한다.
 - 기존 0.1.0에는 updater가 없으므로 새 0.1.1 Setup.exe를 한 번 설치해야 한다. 0.1.1이 자동 업데이트의 최초 설치 기준점이다. Windows 후보/Release 검증 결과는 후속 기록에서 확정한다.
+
+
+## 2026-09-29 공개 설치본 0.1.1과 검증 결과물 재사용
+
+- [0.1.1 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.1)를 게시했다. Windows에서 [Setup.exe](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.1/ThreadsMediaManager-win32-x64-Setup.exe)를 직접 받는다. Mac의 설치 파일 다운로드는 사용자 요청으로 중단했다.
+- 앱 소스와 태그는 `fb7a948ea4f452479c0dfca3b3fa5baaaa9232c2`다. [동일 커밋 CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36539270953)에서 TypeScript 1,127개가 Mac/Windows 양쪽 통과, Python은 Mac 546개·Windows 542개 통과와 OS별 4개 제외다. Windows job 15분 17초, Mac 1분 32초였다.
+- 이 CI가 만든 artifact `11020356620`의 파일을 그대로 게시했다. 중복 검사·빌드를 시작했던 실행 `36541384373`은 취소했고, [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/36542078768)은 49초에 성공했다. 배포 작업은 태그와 성공 CI의 커밋을 대조한 뒤 GitHub runner에서 동일 파일을 받아 SHA-256·Squirrel feed 무결성만 확인한다. 전체 테스트와 빌드를 반복하지 않는다. 게시 절차 변경은 `1454e9e`에 기록했으며 앱 코드·배포 태그는 바꾸지 않았다.
+- 공개 정식 Release의 5개 파일, 다운로드 링크 HTTP 200, GitHub asset digest와 SHA256SUMS 일치, 공개 Electron `/0.1.1/RELEASES` HTTP 200의 패키지 주소·SHA-1·크기, 현재 버전 조회 HTTP 204를 확인했다. 설치 파일 SHA-256은 `722a123ddb96dc6f081a183e7d73e277902cf7e0fa461c137882a288811582af`다.
+- 실제 Windows Setup.exe 실행·사용자 로그인·게시·버전 간 업데이트는 아직 미검증이다. 0.1.0에는 updater가 없어 0.1.1을 직접 설치해야 하며, 이후 더 높은 공개 버전으로 실제 업데이트를 시험한다. [수집 가이드](windows-collector-test.md)와 [앱 가이드](windows-install-test.md) 순서로 진행한다.
