@@ -52,6 +52,7 @@ const trim = (): MediaEditInput => ({
   kind: 'trim',
   start: 1.25,
   end: 8.75,
+  mute: false,
 });
 function post(): Post {
   return {
@@ -126,6 +127,15 @@ function setup(initial = view()) {
 }
 
 describe('media edit input boundary', () => {
+  it('defaults legacy trim requests to audible and preserves an explicit mute choice', () => {
+    expect(parseMediaEditInput({ ...trim(), mute: undefined })).toMatchObject({ mute: false });
+    expect(parseMediaEditInput({ ...trim(), mute: true })).toMatchObject({ mute: true });
+    expect(parseMediaEditInput({ ...trim(), mute: false })).toMatchObject({ mute: false });
+  });
+  it.each(['true', 'false', 1, 0, null, {}])('rejects an invalid mute option: %j', (mute) => {
+    expect(() => parseMediaEditInput({ ...trim(), mute })).toThrow(ViewError);
+  });
+
   it('preserves fractional trim times and strips caller paths, duration and codec choices', () => {
     expect(
       parseMediaEditInput({
@@ -660,3 +670,13 @@ it('allows canvas CORS only for verified registered local GET responses, includi
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
   }
 });
+
+it.each([false, true])(
+  'passes mute=%s to the video worker without changing the selected range',
+  async (mute) => {
+    const { controller, launch } = setup(videoView());
+    const request = { ...trim(), mute };
+    expect((await controller.save('/collection', request)).status).toBe('saved');
+    expect(launch).toHaveBeenCalledExactlyOnceWith({ root: '/collection', ...request });
+  },
+);

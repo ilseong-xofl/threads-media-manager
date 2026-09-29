@@ -10,6 +10,7 @@ import type {
 } from '../shared/contracts';
 import { Icon } from './Icon';
 import { PostCommentSection } from './PostCommentSection';
+import { useToast, useToastMessage } from './toast';
 import { postDraftExportIssue } from '../shared/post-export';
 import {
   captionImageIds,
@@ -26,6 +27,18 @@ import {
   toggleRegistrationMedia,
 } from './registration-model';
 import './registration.css';
+import type { ThreadsUi } from './use-threads-api';
+import { ThreadsUploadOverlay } from './ThreadsUploadOverlay';
+import {
+  isPublishedReply,
+  ThreadsPublishedBadge,
+  ThreadsReplyPublishedBadge,
+} from './ThreadsPublishedBadge';
+import {
+  latestPublication,
+  publicationBlocksUpload,
+  ThreadsPublicationPanel,
+} from './ThreadsPublicationPanel';
 
 export interface PostRegistrationModalProps {
   post: Post;
@@ -43,6 +56,7 @@ export interface PostRegistrationModalProps {
   onDelete(): void;
   onExport(): void;
   exporting?: boolean;
+  threads?: ThreadsUi;
 }
 
 function MediaPreview({ item, thumbnail = false }: { item?: Attachment; thumbnail?: boolean }) {
@@ -110,6 +124,7 @@ function RegistrationDialog({
   onDelete,
   onExport,
   exporting = false,
+  threads,
 }: PostRegistrationModalProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -140,10 +155,18 @@ function RegistrationDialog({
   const [candidates, setCandidates] = useState<string[] | null>(() =>
     initialCandidates ? [...initialCandidates] : null,
   );
-  const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
+  function reportError(message: string) {
+    notify({ message, error: true });
+  }
   const [discard, setDiscard] = useState(false);
   const [commentEditing, setCommentEditing] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
+  const [uploadKind, setUploadKind] = useState<'post' | 'reply' | null>(null);
+  const uploadPending = useRef(false);
+  const progress = threads?.state?.publishProgress;
+  const uploadProgress = progress?.postKey === post.key ? progress : null;
+  const uploading = uploadKind !== null || uploadProgress !== null;
   const source = registrationMedia(post);
   const shownIds = editing ? mediaIds : (draft?.mediaIds ?? mediaIds);
   const selected = selectedRegistrationMedia(post, shownIds);
@@ -153,8 +176,26 @@ function RegistrationDialog({
   const unavailable = selected.filter(
     ({ attachment }) => !attachment || !selectableMedia(attachment),
   ).length;
+  useToastMessage(
+    unavailable > 0
+      ? `사용할 수 없는 미디어가 ${unavailable}개 있습니다. ${
+          editing
+            ? '해당 항목을 선택 목록에서 제거한 뒤 저장하세요.'
+            : '수정에서 해당 항목을 제거하거나 파일 상태를 확인하세요.'
+        }`
+      : null,
+    true,
+  );
   const dirty = (editing && registrationChanged(baseline, caption, mediaIds)) || commentEditing;
-  const busy = saving || generating || commentSaving;
+  const busy = saving || generating || commentSaving || uploading || !!threads?.working;
+  const publishedPost = latestPublication(threads?.state ?? null, post.key, 'post');
+  const publishedReply = latestPublication(threads?.state ?? null, post.key, 'reply');
+  const connectedAccount = threads?.state?.account;
+  const apiReady =
+    !threads?.loading &&
+    !!connectedAccount &&
+    !connectedAccount.requiresReconnect &&
+    Date.parse(connectedAccount.expiresAt) > Date.now();
   const exportIssue = postDraftExportIssue(post);
   const selectionDisabled = disabled || busy;
 
@@ -189,6 +230,11 @@ function RegistrationDialog({
     if (discard) continueEditing.current?.focus();
   }, [discard]);
   useEffect(() => {
+    if (!uploading) return;
+    dialog.current?.querySelectorAll('video').forEach((video) => video.pause());
+    return () => close.current?.focus({ preventScroll: true });
+  }, [uploading]);
+  useEffect(() => {
     const item = selectedStrip.current?.querySelector<HTMLElement>('[aria-current="true"]');
     if (item && selectedStrip.current) {
       const strip = selectedStrip.current;
@@ -204,7 +250,15 @@ function RegistrationDialog({
   }, [activeId]);
 
   function requestClose() {
-    if (savingRef.current || generationRef.current || commentSavingRef.current) return;
+    if (
+      savingRef.current ||
+      generationRef.current ||
+      commentSavingRef.current ||
+      uploadPending.current ||
+      uploading ||
+      threads?.working
+    )
+      return;
     if (dirty) setDiscard(true);
     else onClose();
   }
@@ -216,7 +270,6 @@ function RegistrationDialog({
   }
   function updateSelection(next: string[], focusId?: string) {
     setMediaIds(next);
-    setError(null);
     setActiveId(
       focusId ??
         (activeId && next.includes(activeId)
@@ -238,12 +291,10 @@ function RegistrationDialog({
     setCaption(next.caption);
     setMediaIds(next.mediaIds);
     setRevision(draft?.revision ?? null);
-    setError(null);
     setEditing(true);
   }
   async function save() {
     if (disabled || savingRef.current || generationRef.current) return;
-    setError(null);
     try {
       const input = registrationInput(post, caption, mediaIds, revision);
       savingRef.current = true;
@@ -252,7 +303,7 @@ function RegistrationDialog({
       if (mounted.current) onClose();
     } catch (cause) {
       if (mounted.current)
-        setError(cause instanceof Error ? cause.message : '게시글을 저장하지 못했습니다.');
+        reportError(cause instanceof Error ? cause.message : '게시글을 저장하지 못했습니다.');
     } finally {
       savingRef.current = false;
       if (mounted.current) setSaving(false);
@@ -273,7 +324,6 @@ function RegistrationDialog({
   }
   async function generate() {
     if (disabled || savingRef.current || generationRef.current || !selectedImageIds.length) return;
-    setError(null);
     setCandidates(null);
     try {
       const input = captionGenerationInput(post, mediaIds, language, revision);
@@ -290,7 +340,7 @@ function RegistrationDialog({
         }
       } catch (cause) {
         if (mounted.current && token === generationToken.current)
-          setError(cause instanceof Error ? cause.message : 'AI 캡션을 만들지 못했습니다.');
+          reportError(cause instanceof Error ? cause.message : 'AI 캡션을 만들지 못했습니다.');
       } finally {
         generationRef.current = false;
         if (mounted.current) {
@@ -298,7 +348,31 @@ function RegistrationDialog({
         }
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '선택한 미디어를 확인하세요.');
+      reportError(cause instanceof Error ? cause.message : '선택한 미디어를 확인하세요.');
+    }
+  }
+  async function publish(kind: 'post' | 'reply') {
+    if (!threads || !draft || uploadPending.current || busy) return;
+    if (kind === 'reply' && !post.comment) return;
+    uploadPending.current = true;
+    setUploadKind(kind);
+    try {
+      const ok = await threads.run(() =>
+        kind === 'post'
+          ? window.threadsMedia.publishThreadsPost({
+              postKey: post.key,
+              expectedRevision: draft.revision,
+            })
+          : window.threadsMedia.publishThreadsComment({
+              postKey: post.key,
+              expectedRevision: draft.revision,
+              expectedCommentUpdatedAt: post.comment!.updatedAt,
+            }),
+      );
+      if (ok) notify({ message: kind === 'post' ? '게시글 등록 완료' : '댓글 등록 완료' });
+    } finally {
+      uploadPending.current = false;
+      if (mounted.current) setUploadKind(null);
     }
   }
   function dismissDiscard() {
@@ -333,7 +407,7 @@ function RegistrationDialog({
           requestClose();
       }}
     >
-      <header className="modal-header" inert={discard}>
+      <header className="modal-header" inert={discard || uploading}>
         <div>
           <h2 id="registration-title">{editing ? '등록 화면' : '상세 화면'}</h2>
           <p className="registration-account">@{post.account}</p>
@@ -349,7 +423,7 @@ function RegistrationDialog({
           <Icon name="close" />
         </button>
       </header>
-      <div className="registration-form" inert={discard}>
+      <div className="registration-form" inert={discard || uploading}>
         <div className="modal-body registration-body">
           {editing && (
             <section className="registration-section" aria-labelledby="registration-source-title">
@@ -429,16 +503,15 @@ function RegistrationDialog({
               <h3 id="registration-selected-title">
                 {editing ? '선택한 미디어' : '등록한 미디어'} <span>{shownIds.length}</span>
               </h3>
-              {editing && <span>드래그하거나 화살표로 순서 변경</span>}
+              {editing ? (
+                <span>드래그하거나 화살표로 순서 변경</span>
+              ) : (
+                <span className="threads-publication-badges">
+                  <ThreadsPublishedBadge publication={publishedPost} />
+                  <ThreadsReplyPublishedBadge reply={publishedReply} publication={publishedPost} />
+                </span>
+              )}
             </div>
-            {unavailable > 0 && (
-              <p className="registration-warning" role="alert">
-                사용할 수 없는 미디어가 {unavailable}개 있습니다.{' '}
-                {editing
-                  ? '해당 항목을 선택 목록에서 제거한 뒤 저장하세요.'
-                  : '수정에서 해당 항목을 제거하거나 파일 상태를 확인하세요.'}
-              </p>
-            )}
             {current ? (
               <div className="registration-selection-box">
                 <div
@@ -714,12 +787,22 @@ function RegistrationDialog({
               saving={commentSaving}
               problem={commentProblem}
               onSave={saveComment}
+              onPublish={threads && draft && post.comment ? () => void publish('reply') : undefined}
+              publishDisabled={
+                !apiReady ||
+                publishedPost?.status !== 'published' ||
+                !publishedPost.remoteId ||
+                publicationBlocksUpload(publishedReply)
+              }
+              published={isPublishedReply(publishedReply, publishedPost)}
             />
           )}
-          {error && (
-            <p className="registration-error" role="alert">
-              {error}
-            </p>
+          {!editing && draft && threads && (
+            <ThreadsPublicationPanel
+              postKey={post.key}
+              threads={threads}
+              disabled={disabled || commentEditing}
+            />
           )}
         </div>
         <footer className={`registration-footer${!editing ? ' registration-view-footer' : ''}`}>
@@ -784,14 +867,38 @@ function RegistrationDialog({
                 <Icon name={exporting ? 'refresh' : 'download'} />
                 {exporting ? '다운로드 중…' : '다운로드'}
               </button>
-              <button type="button" disabled title="API 업로드는 준비 중입니다.">
+              <button
+                type="button"
+                disabled={
+                  disabled ||
+                  busy ||
+                  commentEditing ||
+                  !!exportIssue ||
+                  !apiReady ||
+                  !threads?.state?.storageConfigured ||
+                  publicationBlocksUpload(publishedPost)
+                }
+                title={
+                  publishedPost?.status === 'published'
+                    ? '이미 게시한 글입니다.'
+                    : '등록한 게시글을 Threads에 업로드합니다.'
+                }
+                onClick={() => void publish('post')}
+              >
                 <Icon name="upload" />
-                API 업로드
+                {publishedPost?.status === 'published' ? '등록 완료' : 'API 업로드'}
               </button>
             </div>
           )}
         </footer>
       </div>
+      {uploading && (
+        <ThreadsUploadOverlay
+          progress={
+            uploadProgress ?? { postKey: post.key, kind: uploadKind ?? 'post', stage: 'checking' }
+          }
+        />
+      )}
       {discard && (
         <section
           className="registration-discard"

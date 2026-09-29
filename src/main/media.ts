@@ -1,8 +1,10 @@
 import { constants, type Stats } from 'node:fs';
 import { lstat, open, realpath, type FileHandle } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 
 export interface LocalFile {
   id: string;
@@ -98,6 +100,46 @@ export function byteRange(header: string, size: number): { start: number; end: n
 export class MediaRegistry {
   constructor(private includeAI = false) {}
   private files = new Map<string, Registration>();
+  async copyForUpload(root: string, id: string, destination: string): Promise<LocalFile> {
+    const file = this.files.get(id);
+    if (!file || file.root !== root) throw new Error('Unregistered upload');
+    if (file.size > (file.kind === 'image' ? 32 * 1024 * 1024 : 1024 ** 3))
+      throw new Error('Upload file too large');
+    const handle = await openLocal(root, file, this.includeAI);
+    try {
+      if (signature(await handle.stat()) !== file.stamp) throw new Error('File changed');
+      const digest = createHash('sha256');
+      let size = 0;
+      const verify = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          size += chunk.length;
+          if (size > file.size) return callback(new Error('File changed'));
+          digest.update(chunk);
+          callback(null, chunk);
+        },
+      });
+      await pipeline(
+        handle.createReadStream({ autoClose: false }),
+        verify,
+        createWriteStream(destination, { flags: 'wx', mode: 0o600 }),
+      );
+      if (
+        size !== file.size ||
+        digest.digest('hex') !== file.sha256 ||
+        signature(await handle.stat()) !== file.stamp
+      )
+        throw new Error('File changed');
+      return {
+        id: file.id,
+        relativePath: file.relativePath,
+        kind: file.kind,
+        size: file.size,
+        sha256: file.sha256,
+      };
+    } finally {
+      await handle.close();
+    }
+  }
   async adopt(root: string, files: LocalFile[]): Promise<void> {
     const next = new Map<string, Registration>();
     for (const file of files) {

@@ -131,6 +131,28 @@ class VideoEditIntegrationTests(unittest.TestCase):
                 self.assertEqual(archive.read(name), self.path(media_id, extension).read_bytes())
         self.assertEqual(self.before, self.fixture.preserved())
 
+    def test_full_length_muted_edit_survives_reload_and_zip_with_original_audio_preserved(self):
+        result = fixtures.editor.execute({"root": str(self.root), "postKey": self.fixture.key,
+            "mediaId": self.fixture.ids[1], "kind": "trim", "start": 0, "end": 4, "mute": True})
+        muted_id = result["mediaId"]
+        snapshot = self.fixture.snapshot()
+        post = snapshot["snapshot"]["posts"][0]
+        self.assertEqual([(item["mediaId"], item["kind"], item["status"]) for item in post["edits"]], [(muted_id, "video", "saved")])
+        def streams(path):
+            result = subprocess.run([self.ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+                                    check=True, capture_output=True, text=True, timeout=10)
+            return json.loads(result.stdout)
+        metadata = streams(self.path(muted_id, "mp4"))
+        self.assertEqual([item["codec_type"] for item in metadata["streams"]], ["video"])
+        self.assertAlmostEqual(float(metadata["format"]["duration"]), 4, delta=0.1)
+        self.assertEqual(sum(item["codec_type"] == "audio" for item in streams(self.fixture.originals[1])["streams"]), 1)
+        destination = self.fixture.base / "muted.zip"
+        fixtures.export_post.export_post({"root": str(self.root), "postKey": self.fixture.key, "destination": str(destination)})
+        with zipfile.ZipFile(destination) as archive:
+            self.assertEqual(archive.read("02.mp4"), self.video)
+            self.assertEqual(archive.read("03.mp4"), self.path(muted_id, "mp4").read_bytes())
+        self.assertEqual(self.before, self.fixture.preserved())
+
     def test_deleted_trim_preserves_video_and_image_descendants_and_history(self):
         parent = self.trim()
         child = self.trim(parent, 0.25, 2.25)

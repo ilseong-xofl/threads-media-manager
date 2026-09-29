@@ -19,6 +19,7 @@ const editInput: MediaDeleteInput = { kind: 'edit', postKey, mediaId: editId };
 const postInput: MediaDeleteInput = { kind: 'post', postKey };
 const plan = (kind: 'edit' | 'post' = 'edit'): MediaDeletePlan => ({
   fingerprint: 'd'.repeat(64),
+  disposition: kind === 'edit' ? 'edit' : 'purge',
   fileCount: kind === 'edit' ? 1 : 3,
   editCount: kind === 'edit' ? 1 : 2,
   account: 'demo',
@@ -148,6 +149,8 @@ describe('deletion input and worker boundaries', () => {
   });
   it.each([
     { fingerprint: '../file' },
+    { disposition: 'unknown' },
+    { disposition: 'source_only' },
     { fileCount: -1 },
     { fileCount: 1.1 },
     { editCount: 1_000_001 },
@@ -482,5 +485,66 @@ describe('deletion process ownership', () => {
     await shutdown;
     expect(await recovering).toEqual({ status: 'cancelled' });
     expect(refresh).toHaveBeenCalledExactlyOnceWith(root);
+  });
+});
+
+describe('source deletion with a registered copy', () => {
+  function registered() {
+    const before = view();
+    before.snapshot!.posts[0].draft = {
+      caption: 'saved draft',
+      mediaIds: [originalId],
+      revision: 1,
+      createdAt: '2026-09-22T01:00:00Z',
+      updatedAt: '2026-09-22T01:00:00Z',
+    };
+    return before;
+  }
+  const sourcePlan: MediaDeletePlan = {
+    ...plan('post'),
+    disposition: 'source_only',
+    fileCount: 0,
+    editCount: 0,
+  };
+  it('describes source-only hiding with all selected and unselected files preserved', () => {
+    const options = mediaDeleteConfirmation(postInput, sourcePlan, new AbortController().signal);
+    expect(options.detail).toContain('수집 탭에서만 삭제');
+    expect(options.detail).toContain('선택하지 않은 항목을 포함한 모든');
+    expect(options.detail).not.toContain('복구할 수 없습니다');
+  });
+  it.each([true, false])(
+    'keeps the registered copy and all media in fallback after source deletion (failure=%s)',
+    async (fail) => {
+      const before = registered();
+      const { controller, refresh, launch, cancel } = setup(before);
+      refresh.mockReset().mockResolvedValueOnce(before);
+      if (fail) refresh.mockRejectedValueOnce(new Error('read failed'));
+      else refresh.mockResolvedValueOnce(before);
+      launch.mockReturnValueOnce({ result: Promise.resolve(sourcePlan), cancel });
+      const result = await controller.delete(root, postInput);
+      expect(result).toMatchObject({
+        status: 'deleted',
+        view: { snapshot: { posts: [{ ...before.snapshot!.posts[0], sourceDeleted: true }] } },
+      });
+    },
+  );
+  it('rejects a changed retention scope before confirmation', async () => {
+    const { controller, confirm, launch } = setup(registered());
+    expect(await controller.delete(root, postInput)).toMatchObject({
+      status: 'error',
+      problem: { code: 'deletion_changed' },
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledOnce();
+  });
+  it('cannot delete a hidden source again to purge its draft', async () => {
+    const before = registered();
+    before.snapshot!.posts[0].sourceDeleted = true;
+    const { controller, launch } = setup(before);
+    expect(await controller.delete(root, postInput)).toMatchObject({
+      status: 'error',
+      problem: { code: 'delete_source' },
+    });
+    expect(launch).not.toHaveBeenCalled();
   });
 });

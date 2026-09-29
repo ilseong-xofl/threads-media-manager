@@ -6,6 +6,8 @@ import {
   ipcMain,
   nativeImage,
   protocol,
+  powerMonitor,
+  safeStorage,
   session,
   shell,
 } from 'electron';
@@ -20,6 +22,16 @@ import {
   rememberRoot,
 } from './collection';
 import { MediaRegistry } from './media';
+import { ThreadsAccountManager } from './threads-account';
+import { ThreadsClient } from './threads-client';
+import { FileServerStorage } from './file-server-storage';
+import { EncryptedLocalStore } from './threads-secret-store';
+import {
+  ThreadsPublishingController,
+  validThreadsHistory,
+  type ThreadsHistory,
+} from './threads-publishing';
+import { prepareThreadsMedia } from './threads-media';
 import { DownloadController, launchWorker } from './download';
 import { isLocalRequest, isTrustedFrame } from './security';
 import { PostExportController, launchExport } from './post-export';
@@ -30,7 +42,11 @@ import { openPostLink } from './open-post-link';
 import { PostDraftController, launchPostDraft } from './post-draft';
 import { CaptionGenerator } from './caption-generator';
 import { ContentGenerator, parseContentInput } from './content-generator';
-import { PostDraftDeleteController, launchPostDraftDelete } from './post-draft-delete';
+import {
+  PostDraftDeleteController,
+  launchPostDraftDelete,
+  postDraftDeleteConfirmation,
+} from './post-draft-delete';
 import { LibraryMaintenanceController, launchLibraryMaintenance } from './library-maintenance';
 
 app.setName('Threads Media Manager');
@@ -153,20 +169,12 @@ const drafts: PostDraftController = new PostDraftController(
 );
 const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
   (root) => controller.refresh(root),
-  async (_input, signal) => {
+  async (_input, signal, sourceDeleted) => {
     if (!window || signal.aborted) return false;
-    const choice = await dialog.showMessageBox(window, {
-      type: 'warning',
-      title: '등록한 게시글 삭제',
-      message: '작성한 게시글을 삭제할까요?',
-      detail:
-        '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 원본 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.',
-      buttons: ['취소', '삭제'],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      signal,
-    });
+    const choice = await dialog.showMessageBox(
+      window,
+      postDraftDeleteConfirmation(sourceDeleted, signal),
+    );
     return choice.response === 1 && !signal.aborted;
   },
   launchPostDraftDelete(app.getAppPath()),
@@ -268,6 +276,92 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
     content.active,
 );
 let downloadCloseNoticeOpen = false;
+const encryption = {
+  isAvailable: async () => {
+    if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
+      return false;
+    return safeStorage.isAsyncEncryptionAvailable();
+  },
+  encryptString: (value: string) => safeStorage.encryptStringAsync(value),
+  decryptString: async (value: Buffer) => (await safeStorage.decryptStringAsync(value)).result,
+};
+const threadsClient = new ThreadsClient();
+const threadsAccounts = new ThreadsAccountManager({
+  userData: app.getPath('userData'),
+  encryption,
+  client: {
+    me: (token) => threadsClient.me(token),
+    debugToken: (token) => threadsClient.debugToken(token),
+    refresh: (token) => threadsClient.refreshAccessToken(token),
+  },
+});
+const threadsStorage = new FileServerStorage({
+  userData: app.getPath('userData'),
+  encryption,
+});
+const threads = new ThreadsPublishingController({
+  userData: app.getPath('userData'),
+  accounts: threadsAccounts,
+  storage: threadsStorage,
+  client: threadsClient,
+  history: new EncryptedLocalStore<ThreadsHistory>({
+    userData: app.getPath('userData'),
+    fileName: 'threads-publishing.json',
+    encryption,
+    validate: validThreadsHistory,
+  }),
+  currentView: () => controller.view,
+  refresh: () => controller.refresh(),
+  localBusy: () =>
+    maintenance.active ||
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active ||
+    content.active,
+  prepareMedia: (root, ids, directory) =>
+    prepareThreadsMedia(registry, root, ids, directory, (bytes) => {
+      const image = nativeImage.createFromBuffer(bytes);
+      const { width, height } = image.getSize();
+      if (image.isEmpty() || width * height > 40_000_000) throw new Error('Invalid upload image');
+      return image.toPNG();
+    }),
+  confirm: async (summary) => {
+    if (!window) return false;
+    const choice = await dialog.showMessageBox(window, {
+      type: 'question',
+      title: summary.kind === 'post' ? 'Threads 게시글 업로드' : 'Threads 댓글 업로드',
+      message: `@${summary.username} 계정에 ${summary.kind === 'post' ? '게시글을' : '댓글을'} 올릴까요?`,
+      detail: `${summary.kind === 'post' ? `첨부 ${summary.mediaCount}개\n\n` : ''}${summary.text || '(본문 없음)'}`,
+      buttons: ['취소', '게시'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    return choice.response === 1;
+  },
+});
+let threadsCloseNoticeOpen = false;
+function explainActiveThreads() {
+  if (!window || threadsCloseNoticeOpen) return;
+  threadsCloseNoticeOpen = true;
+  void dialog
+    .showMessageBox(window, {
+      type: 'info',
+      title: 'Threads 작업 중',
+      message: '진행 중인 Threads 작업이 끝난 뒤 앱을 종료할 수 있습니다.',
+      buttons: ['확인'],
+      noLink: true,
+    })
+    .finally(() => {
+      threadsCloseNoticeOpen = false;
+    });
+}
 function explainActiveDownload(): void {
   if (!window || downloadCloseNoticeOpen) return;
   downloadCloseNoticeOpen = true;
@@ -320,6 +414,11 @@ function createWindow(): void {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
   window.once('ready-to-show', () => window?.show());
   window.on('close', (event) => {
+    if (threads.active) {
+      event.preventDefault();
+      explainActiveThreads();
+      return;
+    }
     if (downloads.active) {
       event.preventDefault();
       explainActiveDownload();
@@ -428,6 +527,38 @@ if (!app.requestSingleInstanceLock()) {
           if (channel === IPC.capabilities) {
             if (args.length) throw new Error('Unexpected arguments');
             return { aiContent: aiContentEnabled };
+          }
+          if (channel.startsWith('tmm:threads:')) {
+            const hasInput = [
+              IPC.connectThreads,
+              IPC.connectFileServer,
+              IPC.publishThreadsPost,
+              IPC.publishThreadsComment,
+              IPC.reconcileThreadsPublication,
+            ].some((value) => value === channel);
+            if (args.length !== (hasInput ? 1 : 0)) throw new Error('Unexpected arguments');
+            if (channel === IPC.threadsState) return threads.state();
+            if (channel === IPC.connectThreads) return threads.connect(args[0]);
+            if (channel === IPC.disconnectThreads) return threads.disconnect();
+            if (channel === IPC.connectFileServer) return threads.connectFileServer(args[0]);
+            if (channel === IPC.disconnectFileServer) return threads.disconnectFileServer();
+            if (channel === IPC.publishThreadsPost) return threads.publish(args[0], 'post');
+            if (channel === IPC.publishThreadsComment) return threads.publish(args[0], 'reply');
+            if (channel === IPC.syncThreadsInsights) return threads.sync();
+            if (channel === IPC.reconcileThreadsPublication) return threads.reconcile(args[0]);
+          }
+          if (
+            threads.publishing &&
+            ![IPC.current, IPC.downloadStatus, IPC.libraryRoot, IPC.openPostLink].some(
+              (value) => value === channel,
+            )
+          ) {
+            if (channel.startsWith('tmm:download:')) return downloads.view;
+            if (channel === IPC.choose || channel === IPC.refresh) return controller.view;
+            return {
+              status: 'error',
+              problem: { code: 'threads_busy', message: 'Threads 업로드가 끝난 뒤 실행하세요.' },
+            };
           }
           if (
             !aiContentEnabled &&
@@ -767,6 +898,14 @@ if (!app.requestSingleInstanceLock()) {
         });
       }
       createWindow();
+      const threadsTimer = setInterval(() => {
+        void threads.tick().catch(() => {});
+      }, 60_000);
+      threadsTimer.unref();
+      powerMonitor.on('resume', () => {
+        void threads.tick().catch(() => {});
+      });
+      void threads.tick(true).catch(() => {});
       app.on('activate', () => {
         if (!window) createWindow();
       });
@@ -779,6 +918,11 @@ if (!app.requestSingleInstanceLock()) {
       app.quit();
     });
   app.on('before-quit', (event) => {
+    if (threads.active) {
+      event.preventDefault();
+      explainActiveThreads();
+      return;
+    }
     if (downloads.active) {
       event.preventDefault();
       explainActiveDownload();

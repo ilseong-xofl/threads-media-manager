@@ -1,6 +1,7 @@
 import { useRef, useState, type PointerEvent } from 'react';
 import { fitCrop, integerCrop, moveCrop, resizeCrop, type CropRect, type Size } from './crop-model';
 import { Icon } from './Icon';
+import { useToastMessage } from './toast';
 
 const ratios = [
   ['original', '원본'],
@@ -32,6 +33,10 @@ export function ImageCropEditor({
   const [crop, setCrop] = useState<CropRect | null>(null);
   const [ratioChoice, setRatioChoice] = useState('original');
   const [failed, setFailed] = useState(false);
+  useToastMessage(
+    failed ? '이미지를 열 수 없습니다. 편집을 닫고 파일 상태를 확인하세요.' : null,
+    true,
+  );
   const ratio =
     ratioChoice === 'free'
       ? null
@@ -205,11 +210,7 @@ export function ImageCropEditor({
           )}
         </div>
       </div>
-      {failed ? (
-        <p className="editor-error" role="alert">
-          이미지를 열 수 없습니다. 편집을 닫고 파일 상태를 확인하세요.
-        </p>
-      ) : (
+      {!failed && (
         <p className="crop-help">
           모서리를 드래그해 크기를 조절하고, 영역 안을 드래그해 이동하세요.
         </p>

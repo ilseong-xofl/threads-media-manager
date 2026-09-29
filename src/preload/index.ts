@@ -1,6 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
 const api: ThreadsMediaApi = {
+  threadsState: () => ipcRenderer.invoke(IPC.threadsState),
+  connectThreads: (input) => ipcRenderer.invoke(IPC.connectThreads, input),
+  disconnectThreads: () => ipcRenderer.invoke(IPC.disconnectThreads),
+  connectFileServer: (input) => ipcRenderer.invoke(IPC.connectFileServer, input),
+  disconnectFileServer: () => ipcRenderer.invoke(IPC.disconnectFileServer),
+  publishThreadsPost: (input) => ipcRenderer.invoke(IPC.publishThreadsPost, input),
+  publishThreadsComment: (input) => ipcRenderer.invoke(IPC.publishThreadsComment, input),
+  syncThreadsInsights: () => ipcRenderer.invoke(IPC.syncThreadsInsights),
+  reconcileThreadsPublication: (input) =>
+    ipcRenderer.invoke(IPC.reconcileThreadsPublication, input),
   capabilities: () => ipcRenderer.invoke(IPC.capabilities),
   current: () => ipcRenderer.invoke(IPC.current),
   chooseFolder: () => ipcRenderer.invoke(IPC.choose),

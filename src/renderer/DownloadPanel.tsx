@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { DownloadView } from '../shared/contracts';
 import { Icon } from './Icon';
+import { useToast } from './toast';
 
 const date = (time: number) =>
   new Intl.DateTimeFormat('ko-KR', {
@@ -75,189 +76,148 @@ export function DownloadConfirmation({
   );
 }
 
-export function DownloadOverlay({
-  view,
-  starting,
-  enabled,
-  resume,
-  recover,
-}: {
-  view: DownloadView;
-  starting: boolean;
-  enabled: boolean;
-  resume(): void;
-  recover(): void;
-}) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const [completeVisible, setCompleteVisible] = useState(true);
-  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
-  const active = activeDownload(view) || starting;
+export function downloadOutcome(view: DownloadView, starting = false) {
+  if (starting || activeDownload(view)) return null;
   const attention =
-    !!view.problem || view.recoverable || view.resumable || view.phase === 'blocked';
-  const complete = view.phase === 'complete' && !active && !attention;
-  const dismissible = !active && (attention || view.phase === 'error' || complete);
-  // Polling returns new objects. Remember the outcome, not the object identity,
-  // so only a new download outcome can show a dismissed notice again.
-  const noticeKey = JSON.stringify([
-    view.revision,
-    view.phase,
-    view.problem?.code,
-    view.problem?.message,
-    view.recoverable,
-    view.resumable,
-  ]);
+    !!view.problem ||
+    view.recoverable ||
+    view.resumable ||
+    ['blocked', 'error'].includes(view.phase);
+  if (!attention && view.phase !== 'complete' && !view.cleanedPosts && !view.releasedPosts)
+    return null;
+  const messages: string[] = [];
+  if (attention) {
+    messages.push(
+      view.problem?.message ??
+        (view.resumable || view.recoverable
+          ? '다운로드 확인이 필요합니다.'
+          : '다운로드가 중단되었습니다.'),
+    );
+  } else {
+    messages.push(view.cleanedPosts || view.releasedPosts ? '처리 완료' : '다운로드 완료');
+  }
+  if (view.downloadedPosts !== undefined) {
+    messages.push(
+      `게시글 ${view.downloadedPosts}개 다운로드 · 중복 ${view.duplicatePostsRemoved ?? 0}개 제거`,
+    );
+  }
+  if (view.batch && (attention || view.downloadedPosts === undefined)) {
+    messages.push(
+      `게시글 ${view.batch.completedPosts}/${view.batch.totalPosts} · 파일 ${view.batch.completedFiles}/${view.batch.totalFiles}`,
+    );
+  }
+  if (view.cleanedPosts)
+    messages.push(`수집이 불완전한 게시글 ${view.cleanedPosts}개를 삭제했습니다.`);
+  if (view.releasedPosts)
+    messages.push(`수집이 완료된 게시글 ${view.releasedPosts}개를 다운로드 대상으로 복원했습니다.`);
+  if (view.batch?.skippedPosts)
+    messages.push(
+      `수집이 불완전한 게시글 ${view.batch.skippedPosts}개는 다운로드에서 제외했습니다.`,
+    );
+  if (view.batch && view.batch.deferredPosts > 0)
+    messages.push(`보류된 게시글 ${view.batch.deferredPosts}개`);
+  if (view.nextAllowedAt && view.phase === 'blocked')
+    messages.push(`다음 다운로드 ${date(view.nextAllowedAt)} KST`);
+  const message = messages.join('\n');
+  return {
+    message,
+    error: !!attention,
+    key: `download:${JSON.stringify([view.revision, view.phase, view.problem?.code, view.recoverable, view.resumable, message])}`,
+  };
+}
+
+export function DownloadOverlay({ view, starting }: { view: DownloadView; starting: boolean }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const announced = useRef<string | null>(null);
+  const notify = useToast();
+  const active = activeDownload(view) || starting;
+  const outcome = downloadOutcome(view, starting);
+  // Polling returns new objects for the same result. Announce each outcome only once.
   useEffect(() => {
-    if (active) setDismissedNotice(null);
-  }, [active]);
-  // A new result gets its own timer; polling and no-op inspections keep revision.
-  useEffect(() => {
-    setCompleteVisible(true);
-    if (!complete) return;
-    const timer = setTimeout(() => setCompleteVisible(false), 3000);
-    return () => clearTimeout(timer);
-  }, [complete, view.revision]);
-  const visible =
-    (!dismissible || dismissedNotice !== noticeKey) &&
-    (active ||
-      attention ||
-      view.phase === 'error' ||
-      (view.phase === 'complete' && completeVisible));
+    if (active) {
+      announced.current = null;
+      return;
+    }
+    if (!outcome || announced.current === outcome.key) return;
+    announced.current = outcome.key;
+    notify(outcome);
+  }, [active, outcome, notify]);
   useEffect(() => {
     const element = dialog.current;
-    if (visible && element && !element.open) element.showModal();
-    if (!visible && element?.open) element.close();
+    if (active && element && !element.open) element.showModal();
+    if (!active && element?.open) element.close();
     return () => {
       if (element?.open) element.close();
     };
-  }, [visible]);
-  if (!visible) return null;
+  }, [active]);
+  if (!active) return null;
   const label = starting
     ? '다운로드 시작 중…'
     : {
-        idle: '다운로드 확인 필요',
+        idle: '다운로드 확인 중…',
         checking: '다운로드 시작 중…',
-        ready: '다운로드 준비됨',
+        ready: '다운로드 준비 중…',
         downloading: '다운로드 중…',
         validating: '저장 파일 확인 중…',
         deduplicating: '중복 게시글 확인 중…',
         waiting: '다음 다운로드를 기다리는 중…',
         stopping: '다운로드를 중지하는 중…',
         recovering: '저장 파일 복구 중…',
-        complete: attention
-          ? '다운로드 확인 필요'
-          : view.cleanedPosts || view.releasedPosts
-            ? '처리 완료'
-            : '다운로드 완료',
-        blocked: view.problem?.code === 'posts_deferred' ? '다운로드 보류' : '다운로드 중단',
+        complete: '다운로드 완료',
+        blocked: '다운로드 중단',
         error: '다운로드 중단',
       }[view.phase];
   const batch = view.batch;
-  const dismiss = () => {
-    if (!dismissible) return;
-    if (complete) setCompleteVisible(false);
-    else setDismissedNotice(noticeKey);
-  };
   return (
     <dialog
       ref={dialog}
       className="download-overlay"
       aria-labelledby="download-status-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        dismiss();
-      }}
+      onCancel={(event) => event.preventDefault()}
     >
-      <section
-        className={`download-status-card ${attention ? 'download-status-error' : complete ? 'download-status-complete' : ''} ${dismissible ? 'download-status-dismissible' : ''}`}
-      >
-        {dismissible && (
-          <button
-            type="button"
-            className="download-status-close"
-            aria-label="다운로드 상태 닫기"
-            title="상태 닫기"
-            onClick={dismiss}
-          >
-            <Icon name="close" />
-          </button>
-        )}
-        <Icon name={complete ? 'check' : 'download'} className="download-status-icon" />
+      <section className="download-status-card">
+        <Icon name="download" className="download-status-icon" />
         <div className="download-summary">
           <h2 id="download-status-title" role="status">
             {label}
           </h2>
-          {view.downloadedPosts !== undefined && (complete || !active) && (
+          {batch ? (
+            <p className="download-counts">
+              게시글 {batch.completedPosts}/{batch.totalPosts} · 파일 {batch.completedFiles}/
+              {batch.totalFiles}
+              {batch.totalRounds > 0 && ` · ${batch.currentRound}/${batch.totalRounds}회차`}
+            </p>
+          ) : (
+            <p>처리 중입니다.</p>
+          )}
+          {view.target && (
             <p>
-              게시글 {view.downloadedPosts}개 다운로드 · 중복 {view.duplicatePostsRemoved ?? 0}개
-              제거
+              @{view.target.account} · {view.target.ordinal}번째{' '}
+              {view.target.kind === 'image' ? '이미지' : '영상'}
             </p>
           )}
-          {!!view.cleanedPosts && (
-            <p>수집이 불완전한 게시글 {view.cleanedPosts}개를 삭제했습니다.</p>
+          {view.phase === 'deduplicating' && view.total !== null && (
+            <p>
+              중복 확인 {view.received}/{view.total}
+            </p>
           )}
-          {!!view.releasedPosts && (
-            <p>수집이 완료된 게시글 {view.releasedPosts}개를 다운로드 대상으로 복원했습니다.</p>
+          {view.nextAllowedAt && view.phase === 'waiting' && (
+            <p>다음 다운로드 {date(view.nextAllowedAt)} KST</p>
           )}
-          {!!batch?.skippedPosts && (
-            <p>수집이 불완전한 게시글 {batch.skippedPosts}개는 다운로드에서 제외했습니다.</p>
-          )}
-          {!complete && (
-            <>
-              {batch ? (
-                <p className="download-counts">
-                  게시글 {batch.completedPosts}/{batch.totalPosts} · 파일 {batch.completedFiles}/
-                  {batch.totalFiles}
-                  {batch.totalRounds > 0 && ` · ${batch.currentRound}/${batch.totalRounds}회차`}
-                </p>
-              ) : (
-                active && <p>처리 중입니다.</p>
-              )}
-              {view.target && active && (
-                <p>
-                  @{view.target.account} · {view.target.ordinal}번째{' '}
-                  {view.target.kind === 'image' ? '이미지' : '영상'}
-                </p>
-              )}
-              {view.phase === 'deduplicating' && view.total !== null && (
-                <p>
-                  중복 확인 {view.received}/{view.total}
-                </p>
-              )}
-              {view.nextAllowedAt && ['waiting', 'blocked'].includes(view.phase) && (
-                <p>다음 다운로드 {date(view.nextAllowedAt)} KST</p>
-              )}
-              {view.problem && (
-                <p className="download-problem" role="alert">
-                  {view.problem.message}
-                </p>
-              )}
-              {batch && batch.deferredPosts > 0 && <p>보류된 게시글 {batch.deferredPosts}개</p>}
-              {view.recoverable && !view.resumable && (
-                <p>저장된 파일을 확인하고 중단된 다운로드를 복구할 수 있습니다.</p>
-              )}
-              {['downloading', 'validating', 'stopping'].includes(view.phase) && !starting && (
-                <div className="download-progress">
-                  <progress
-                    aria-label="현재 파일 다운로드 진행"
-                    value={view.total ? view.received : undefined}
-                    max={view.total || 1}
-                  />
-                  <span>
-                    {bytes(view.received)}
-                    {view.total ? ` / ${bytes(view.total)}` : ''}
-                  </span>
-                </div>
-              )}
-            </>
+          {['downloading', 'validating', 'stopping'].includes(view.phase) && !starting && (
+            <div className="download-progress">
+              <progress
+                aria-label="현재 파일 다운로드 진행"
+                value={view.total ? view.received : undefined}
+                max={view.total || 1}
+              />
+              <span>
+                {bytes(view.received)}
+                {view.total ? ` / ${bytes(view.total)}` : ''}
+              </span>
+            </div>
           )}
         </div>
-        {!active && (view.resumable || view.recoverable) && (
-          <div className="download-actions">
-            <button type="button" onClick={view.resumable ? resume : recover} disabled={!enabled}>
-              {view.resumable ? '이어서 다운로드' : '로컬 저장 복구'}
-            </button>
-          </div>
-        )}
       </section>
     </dialog>
   );

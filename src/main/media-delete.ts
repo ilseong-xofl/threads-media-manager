@@ -35,6 +35,7 @@ export function parseMediaDeleteInput(value: unknown): MediaDeleteInput {
 
 export interface MediaDeletePlan {
   fingerprint: string;
+  disposition: 'source_only' | 'purge' | 'edit';
   fileCount: number;
   editCount: number;
   account: string;
@@ -65,12 +66,14 @@ export function mediaDeleteConfirmation(
   const scope =
     input.kind === 'edit'
       ? '선택한 편집본 1개를 삭제합니다. 이 편집본으로 만든 다른 편집본은 유지됩니다.'
-      : `게시글의 원본 이미지·영상과 모든 편집본을 삭제합니다. 편집본 ${plan.editCount}개가 포함됩니다.\n등록한 게시글의 캡션과 미디어 선택 내용도 함께 삭제됩니다.\nExcel에 삭제 기록을 남겨 목록과 다음 다운로드에서 제외합니다.`;
+      : plan.disposition === 'source_only'
+        ? '수집 탭에서만 삭제합니다. 등록한 게시글과 댓글 정보, 선택하지 않은 항목을 포함한 모든 이미지·영상·편집본은 보존됩니다.\nExcel에 삭제 기록을 남겨 수집 목록과 다음 다운로드에서 제외합니다.'
+        : `게시글의 원본 이미지·영상과 모든 편집본을 삭제합니다. 편집본 ${plan.editCount}개가 포함됩니다.\nExcel에 삭제 기록을 남겨 목록과 다음 다운로드에서 제외합니다.`;
   return {
     type: 'warning',
     title: input.kind === 'edit' ? '편집본 삭제' : '게시글 삭제',
     message: input.kind === 'edit' ? '이 편집본을 삭제할까요?' : '이 게시글을 삭제할까요?',
-    detail: `계정: @${plan.account}\n게시글 ID: ${plan.postId}\n삭제할 파일: ${plan.fileCount}개\n\n${scope}\n삭제한 파일은 복구할 수 없습니다.`,
+    detail: `계정: @${plan.account}\n게시글 ID: ${plan.postId}\n삭제할 파일: ${plan.fileCount}개\n\n${scope}${plan.disposition === 'source_only' ? '' : '\n삭제한 파일은 복구할 수 없습니다.'}`,
     buttons: ['취소', '삭제'],
     defaultId: 0,
     cancelId: 0,
@@ -97,6 +100,8 @@ export function parseMediaDeleteResult(
         command === 'prepare' &&
         typeof value.fingerprint === 'string' &&
         /^[a-f0-9]{64}$/.test(value.fingerprint) &&
+        ['source_only', 'purge', 'edit'].includes(String(value.disposition)) &&
+        (value.disposition !== 'source_only' || (value.fileCount === 0 && value.editCount === 0)) &&
         count(value.fileCount) &&
         count(value.editCount) &&
         label(value.account) &&
@@ -104,6 +109,7 @@ export function parseMediaDeleteResult(
       )
         return {
           fingerprint: value.fingerprint,
+          disposition: value.disposition as MediaDeletePlan['disposition'],
           fileCount: value.fileCount,
           editCount: value.editCount,
           account: value.account,
@@ -237,6 +243,7 @@ export class MediaDeleteController {
           : undefined;
       if (
         !post ||
+        (input.kind === 'post' && post.sourceDeleted) ||
         (input.kind === 'edit' && !post.edits?.some((item) => item.mediaId === input.mediaId))
       )
         throw new ViewError(
@@ -255,6 +262,8 @@ export class MediaDeleteController {
         !plan ||
         plan.account !== post.account ||
         plan.postId !== post.postId ||
+        plan.disposition !==
+          (input.kind === 'edit' ? 'edit' : post.draft ? 'source_only' : 'purge') ||
         (input.kind === 'edit' && (plan.editCount !== 1 || plan.fileCount > 1))
       )
         throw new ViewError(
@@ -274,13 +283,23 @@ export class MediaDeleteController {
       } catch {
         view = { snapshot: null, error: { code: 'delete_refresh_failed', message: '' } };
       }
-      if (view.error || view.snapshot?.root !== root)
+      const remaining = view.snapshot?.posts.find((item) => item.key === input.postKey);
+      const staleSource =
+        input.kind === 'post' &&
+        (plan.disposition === 'source_only'
+          ? !remaining?.sourceDeleted || !remaining.draft
+          : !!remaining);
+      if (view.error || view.snapshot?.root !== root || staleSource)
         view = {
           snapshot: before.snapshot && {
             ...before.snapshot,
             posts:
               input.kind === 'post'
-                ? before.snapshot.posts.filter((item) => item.key !== input.postKey)
+                ? plan.disposition === 'source_only'
+                  ? before.snapshot.posts.map((item) =>
+                      item.key === input.postKey ? { ...item, sourceDeleted: true } : item,
+                    )
+                  : before.snapshot.posts.filter((item) => item.key !== input.postKey)
                 : before.snapshot.posts.map((item) =>
                     item.key === input.postKey
                       ? {

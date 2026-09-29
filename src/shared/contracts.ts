@@ -1,3 +1,4 @@
+import type { ThreadsApiMethods } from './threads-api';
 export const MEDIA_SCHEME = 'threads-media';
 export const IPC = {
   capabilities: 'tmm:app:capabilities',
@@ -29,6 +30,15 @@ export const IPC = {
   backupDatabase: 'tmm:library:backup',
   restoreDatabase: 'tmm:library:restore',
   reconnectLibrary: 'tmm:library:reconnect',
+  threadsState: 'tmm:threads:state',
+  connectThreads: 'tmm:threads:connect',
+  disconnectThreads: 'tmm:threads:disconnect',
+  connectFileServer: 'tmm:threads:file-server-connect',
+  disconnectFileServer: 'tmm:threads:file-server-disconnect',
+  publishThreadsPost: 'tmm:threads:publish-post',
+  publishThreadsComment: 'tmm:threads:publish-comment',
+  syncThreadsInsights: 'tmm:threads:sync',
+  reconcileThreadsPublication: 'tmm:threads:reconcile',
 } as const;
 export interface Problem {
   code: string;
@@ -65,6 +75,7 @@ export interface Post {
   runStatus: string;
   gapStatus: string;
   downloadExcluded?: boolean;
+  sourceDeleted?: boolean;
   reasons: string[];
   source: string;
   attachments: Attachment[];
@@ -146,6 +157,7 @@ export interface OpenPostLinkInput {
 export type PostLinkResult = { status: 'opened' } | { status: 'error'; problem: Problem };
 export interface Snapshot {
   root: string;
+  libraryId?: string | null;
   loadedAt: string;
   sourceCount: number;
   posts: Post[];
@@ -159,7 +171,7 @@ export interface CollectionView {
 export interface AppCapabilities {
   aiContent: boolean;
 }
-export interface ThreadsMediaApi {
+export interface ThreadsMediaApi extends ThreadsApiMethods {
   capabilities(): Promise<AppCapabilities>;
   current(): Promise<CollectionView>;
   chooseFolder(): Promise<CollectionView>;
@@ -207,7 +219,7 @@ export type MediaEditInput =
       crop: { x: number; y: number; width: number; height: number };
     }
   | { postKey: string; mediaId: string; kind: 'capture'; png: Uint8Array; time: number }
-  | { postKey: string; mediaId: string; kind: 'trim'; start: number; end: number };
+  | { postKey: string; mediaId: string; kind: 'trim'; start: number; end: number; mute?: boolean };
 
 export type MediaEditResult =
   | { status: 'saved'; mediaId: string; view: CollectionView }

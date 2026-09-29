@@ -60,13 +60,24 @@ def _database_rows(db):
     return posts, edits
 
 
-def database_deletions(root, db=None):
+def _source_rows(db):
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_deletions'").fetchone():
+        return set()
+    result = set()
+    for account, post_id, deleted_at in db.execute("SELECT account,post_id,deleted_at FROM source_deletions"):
+        if not all(isinstance(value, str) and value for value in (account, post_id, deleted_at)):
+            raise StateError("invalid_database", "수집 목록 삭제 기록을 확인해야 합니다.")
+        result.add((account, post_id))
+    return result
+
+
+def _read_deletions(root, db, read_rows, empty):
     if db is not None:
-        return _database_rows(db)
+        return read_rows(db)
     root = Path(root)
     path = safe_path(root, "state/state.db")
     if not path.exists():
-        return set(), set()
+        return empty
     safe_path(root, "state/state.db", require_file=True)
     for suffix in ("-wal", "-journal"):
         pending = safe_path(root, "state/state.db" + suffix)
@@ -81,7 +92,17 @@ def database_deletions(root, db=None):
         saved_root = connection.execute("SELECT value FROM meta WHERE key='root'").fetchone()
         if not saved_root or json.loads(saved_root[0]) != str(root):
             raise StateError("root_changed", "기존 라이브러리의 폴더 연결을 확인해야 합니다.")
-        return _database_rows(connection)
+        return read_rows(connection)
+
+
+def database_deletions(root, db=None):
+    """Final post/edit deletion only; retained registered drafts are not deleted."""
+    return _read_deletions(root, db, _database_rows, (set(), set()))
+
+
+def source_deletions(root, db=None):
+    """Collected-list removals whose registered media may still be retained."""
+    return _read_deletions(root, db, _source_rows, set())
 
 
 def _workbook_deletions(root, source):
@@ -136,7 +157,7 @@ def excel_deletions(root, sources=None):
 
 def deleted_posts(root, *, db=None, sources=None):
     posts, _ = database_deletions(root, db)
-    return posts | excel_deletions(root, sources)
+    return posts | source_deletions(root, db) | excel_deletions(root, sources)
 
 
 def filter_source(data, deleted):

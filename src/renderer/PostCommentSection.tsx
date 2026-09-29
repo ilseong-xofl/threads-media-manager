@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Post, SavePostCommentInput } from '../shared/contracts';
 import { Icon } from './Icon';
 import { PostLink } from './PostLink';
+import { useToast, useToastMessage } from './toast';
 
 export function PostCommentSection({
   post,
@@ -11,6 +12,9 @@ export function PostCommentSection({
   saving,
   problem,
   onSave,
+  onPublish,
+  publishDisabled = true,
+  published = false,
 }: {
   post: Post;
   editing: boolean;
@@ -19,10 +23,14 @@ export function PostCommentSection({
   saving: boolean;
   problem?: string;
   onSave(input: SavePostCommentInput): Promise<void>;
+  onPublish?(): void;
+  publishDisabled?: boolean;
+  published?: boolean;
 }) {
   const [caption, setCaption] = useState('');
   const [link, setLink] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
+  useToastMessage(problem, true);
   const captionInput = useRef<HTMLTextAreaElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const pending = useRef(false);
@@ -33,7 +41,6 @@ export function PostCommentSection({
   function openForm() {
     setCaption(post.comment?.caption ?? '');
     setLink(post.comment?.link ?? '');
-    setError(null);
     onEditingChange(true);
   }
   function restoreFocus() {
@@ -42,12 +49,14 @@ export function PostCommentSection({
   async function save() {
     if (pending.current || disabled || saving) return;
     pending.current = true;
-    setError(null);
     try {
       await onSave({ postKey: post.key, caption: caption.trim(), link: link.trim() });
       restoreFocus();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '댓글 정보를 저장하지 못했습니다.');
+      notify({
+        message: cause instanceof Error ? cause.message : '댓글 정보를 저장하지 못했습니다.',
+        error: true,
+      });
     } finally {
       pending.current = false;
     }
@@ -91,11 +100,6 @@ export function PostCommentSection({
           <p className="comment-hint">
             캡션이나 링크를 입력하세요. 등록한 정보는 이 게시글에 저장됩니다.
           </p>
-          {error && (
-            <p className="comment-error" role="alert">
-              {error}
-            </p>
-          )}
           <div className="comment-actions">
             <button
               type="button"
@@ -133,12 +137,17 @@ export function PostCommentSection({
               </button>
               <button
                 type="button"
-                disabled
+                disabled={disabled || publishDisabled || !onPublish}
+                onClick={onPublish}
                 aria-label="댓글 API 업로드"
-                title="API 업로드는 준비 중입니다."
+                title={
+                  published
+                    ? '이미 게시한 댓글입니다.'
+                    : '게시한 Threads 글에 등록한 댓글을 올립니다.'
+                }
               >
                 <Icon name="upload" />
-                API 업로드
+                {published ? '댓글 완료' : 'API 업로드'}
               </button>
             </div>
           </div>
@@ -147,7 +156,7 @@ export function PostCommentSection({
             <PostLink postKey={post.key} kind="comment" url={post.comment.link} />
           )}
         </div>
-      ) : (
+      ) : !problem ? (
         <button
           ref={editButton}
           type="button"
@@ -155,17 +164,10 @@ export function PostCommentSection({
           onClick={openForm}
           disabled={disabled}
         >
-          <span>
-            {problem ? '댓글 정보를 불러오지 못했습니다.' : '댓글 정보가 등록되지 않았습니다.'}
-          </span>
-          {!problem && <span className="comment-hint">클릭하여 캡션과 링크를 등록하세요.</span>}
+          <span>댓글 정보가 등록되지 않았습니다.</span>
+          <span className="comment-hint">클릭하여 캡션과 링크를 등록하세요.</span>
         </button>
-      )}
-      {problem && (
-        <p className="comment-error" role="alert">
-          {problem}
-        </p>
-      )}
+      ) : null}
     </section>
   );
 }

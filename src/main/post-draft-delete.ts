@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
+import type { MessageBoxOptions } from 'electron';
 import type {
   CollectionView,
   DeletePostDraftResult,
@@ -9,7 +10,30 @@ import { validPostDraftActionInput } from '../shared/post-export';
 import { ViewError } from './collection';
 import { pythonCommand } from './python';
 
-export type PostDraftDeleteCommand = PostDraftActionInput & { root: string; kind: 'delete' };
+export type PostDraftDeleteCommand = PostDraftActionInput & {
+  root: string;
+  kind: 'delete';
+  expectedSourceDeleted: boolean;
+};
+
+export function postDraftDeleteConfirmation(
+  sourceDeleted: boolean,
+  signal: AbortSignal,
+): MessageBoxOptions {
+  return {
+    type: 'warning',
+    title: '등록한 게시글 삭제',
+    message: '작성한 게시글을 삭제할까요?',
+    detail: sourceDeleted
+      ? '수집 탭에서 이미 삭제한 게시글입니다. 등록한 캡션·댓글 정보와 선택하지 않은 항목을 포함한 모든 이미지·영상·편집본 파일을 함께 삭제합니다. 삭제한 파일은 복구할 수 없습니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'
+      : '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 수집 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.',
+    buttons: ['취소', '삭제'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    signal,
+  };
+}
 export type LaunchPostDraftDelete = (input: PostDraftDeleteCommand) => {
   result: Promise<void>;
   cancel(): void;
@@ -88,7 +112,11 @@ export class PostDraftDeleteController {
   private cancelled = false;
   constructor(
     private refresh: (root: string) => Promise<CollectionView>,
-    private confirm: (input: PostDraftActionInput, signal: AbortSignal) => Promise<boolean>,
+    private confirm: (
+      input: PostDraftActionInput,
+      signal: AbortSignal,
+      sourceDeleted: boolean,
+    ) => Promise<boolean>,
     private launch: LaunchPostDraftDelete,
     private busy: () => boolean = () => false,
   ) {}
@@ -132,10 +160,15 @@ export class PostDraftDeleteController {
           '등록 게시글이 변경되었습니다. 최신 게시글을 다시 열어 삭제하세요.',
         );
       this.confirmation = new AbortController();
-      const confirmed = await this.confirm(input, this.confirmation.signal);
+      const confirmed = await this.confirm(input, this.confirmation.signal, !!post.sourceDeleted);
       this.confirmation = null;
       if (!confirmed || this.cancelled) return { status: 'cancelled' };
-      this.job = this.launch({ root, ...input, kind: 'delete' });
+      this.job = this.launch({
+        root,
+        ...input,
+        kind: 'delete',
+        expectedSourceDeleted: !!post.sourceDeleted,
+      });
       started = true;
       await this.job.result;
       this.job = null;
@@ -157,12 +190,14 @@ export class PostDraftDeleteController {
         view = {
           snapshot: snapshot && {
             ...snapshot,
-            posts: snapshot.posts.map((item) => {
-              if (item.key !== input.postKey) return item;
-              const clean = { ...item };
-              delete clean.draft;
-              return clean;
-            }),
+            posts: snapshot.posts
+              .filter((item) => !post.sourceDeleted || item.key !== input.postKey)
+              .map((item) => {
+                if (item.key !== input.postKey) return item;
+                const clean = { ...item };
+                delete clean.draft;
+                return clean;
+              }),
           },
           error: {
             code: 'draft_delete_refresh_failed',

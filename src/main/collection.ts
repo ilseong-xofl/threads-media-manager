@@ -86,6 +86,9 @@ export function parseRuntimeResult(raw: string, root: string, includeAI = false)
     data.ok !== true ||
     !object(s) ||
     s.root !== root ||
+    (s.libraryId !== undefined &&
+      s.libraryId !== null &&
+      (typeof s.libraryId !== 'string' || !/^[a-f0-9]{32}$/.test(s.libraryId))) ||
     !string(s.loadedAt) ||
     !Number.isSafeInteger(s.sourceCount) ||
     !['absent', 'read_only', 'unavailable'].includes(String(s.stateStatus)) ||
@@ -113,6 +116,8 @@ export function parseRuntimeResult(raw: string, root: string, includeAI = false)
         nullable(p[k]),
       ) ||
       (p.downloadExcluded !== undefined && typeof p.downloadExcluded !== 'boolean') ||
+      (p.sourceDeleted !== undefined && typeof p.sourceDeleted !== 'boolean') ||
+      (p.sourceDeleted === true && !validPostDraft(p.draft)) ||
       !Array.isArray(p.reasons) ||
       !p.reasons.every(string) ||
       !Array.isArray(p.attachments) ||

@@ -111,7 +111,7 @@ def read_status(root, *, clock=time.time):
                 if not supported_policy(meta.get('policy')):
                     raise StateError('policy_mismatch', '저장된 다운로드 정책을 확인해야 합니다.')
                 retired = attempts.retired_ids(db)
-                deleted = deletion_state.database_deletions(root, db)[0] | deletion_state.excel_deletions(root)
+                deleted = deletion_state.deleted_posts(root, db=db)
                 jobs = [dict(row) for row in db.execute('SELECT j.*,m.account,m.post_id FROM jobs j JOIN media m USING(media_id)')
                         if row['job_id'] not in retired and (row['account'], row['post_id']) not in deleted]
         if before != stamps() or lock != _lock_snapshot(root):

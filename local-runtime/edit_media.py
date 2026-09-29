@@ -50,6 +50,7 @@ def validate_request(data):
     fields = {"root", "postKey", "mediaId", "kind"}
     kind = data.get("kind")
     extra = {"crop": {"crop"}, "capture": {"pngBase64", "time"}, "trim": {"start", "end"}}
+    if kind == "trim" and "mute" in data: extra["trim"].add("mute")
     if (kind not in extra or set(data) != fields | extra[kind] or
             not all(isinstance(data.get(key), str) and data[key] for key in fields) or
             not view.UUID.fullmatch(data["mediaId"]) or len(data["postKey"]) > 512):
@@ -61,6 +62,8 @@ def validate_request(data):
                 crop["width"] <= 0 or crop["height"] <= 0):
             raise EditError("invalid_crop", "이미지 안의 올바른 자르기 영역을 선택하세요.")
     elif kind == "trim":
+        if type(data.get("mute", False)) is not bool:
+            raise EditError("invalid_trim", "음소거 옵션을 확인하세요.")
         if (any(type(data[value]) not in (int, float) or not math.isfinite(data[value]) for value in ("start", "end")) or
                 data["start"] < 0 or data["end"] <= data["start"]):
             raise EditError("invalid_trim", "시작 시간은 0 이상, 종료 시간은 시작 시간보다 커야 합니다.")

@@ -1,18 +1,18 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import type { OpenPostLinkInput } from '../shared/contracts';
+import { useToast } from './toast';
 
 export function PostLink({ postKey, kind, url }: OpenPostLinkInput & { url: string }) {
   const pending = useRef(false);
-  const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
   async function open() {
     if (pending.current) return;
     pending.current = true;
-    setError(null);
     try {
       const result = await window.threadsMedia.openPostLink({ postKey, kind });
-      if (result.status === 'error') setError(result.problem.message);
+      if (result.status === 'error') notify({ message: result.problem.message, error: true });
     } catch {
-      setError('링크를 열지 못했습니다. 다시 시도하세요.');
+      notify({ message: '링크를 열지 못했습니다. 다시 시도하세요.', error: true });
     } finally {
       pending.current = false;
     }
@@ -36,11 +36,6 @@ export function PostLink({ postKey, kind, url }: OpenPostLinkInput & { url: stri
       >
         {url}
       </a>
-      {error && (
-        <p className="comment-error" role="alert">
-          {error}
-        </p>
-      )}
     </div>
   );
 }

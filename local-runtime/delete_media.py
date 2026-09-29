@@ -16,6 +16,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collection_view as view
+import ai_media
 from threads_runner import attempts
 from threads_runner.deletion_state import require_no_pending
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
@@ -156,7 +157,58 @@ def workbook_targets(root, account, post_id):
     return books
 
 
-def plan(root, data, lock=None):
+
+def ai_owned_files(root, post, original_ids):
+    """Enumerate only this post's proven generations; never recursively delete a directory."""
+    folder = ai_media.post_folder(post["key"])
+    parent = safe_path(root, f"ai-drafts/{folder}")
+    if not parent.exists(): return {}
+    original_ids = set(original_ids)
+    files, generations = {}, set()
+    for child in sorted(parent.iterdir()):
+        if not ai_media.TOKEN.fullmatch(child.name):
+            continue  # Unknown files and incomplete generations are not deletion authority.
+        safe_path(root, child.relative_to(root).as_posix())
+        if not child.is_dir():
+            raise DeleteError("invalid_ai_media", "AI 생성 자료의 폴더를 확인해야 합니다.")
+        try:
+            identity = parse_json(read_stable(safe_path(root, f"ai-drafts/{folder}/{child.name}/draft.json", require_file=True), max_bytes=128*1024))
+            originals = identity.get("mediaIds") if isinstance(identity, dict) else None
+            if not isinstance(originals, list) or any(not isinstance(value, str) or value not in original_ids for value in originals):
+                raise ValueError("AI inputs do not belong to this post")
+            manifest, relative, raw = ai_media.generation_manifest(root, post["key"], child.name, originals)
+        except (SourceError, ValueError, OSError, TypeError) as exc:
+            raise DeleteError("invalid_ai_media", "AI 생성 자료의 소유 정보를 확인한 뒤 삭제하세요.") from exc
+        generations.add(child.name)
+        files[relative] = file_record(root, relative, len(raw), digest(raw))
+        for name, sha in zip(manifest["files"], manifest["imageHashes"]):
+            relative = f"ai-drafts/{folder}/{child.name}/{name}"
+            files[relative] = file_record(root, relative, expected_hash=sha)
+        relative = f"ai-drafts/{folder}/{child.name}/caption.txt"
+        caption = safe_path(root, relative)
+        if caption.exists():
+            if not isinstance(manifest.get("caption"), str):
+                raise DeleteError("invalid_ai_media", "AI 캡션의 소유 정보를 확인한 뒤 삭제하세요.")
+            raw = (manifest["caption"]+"\n").encode("utf-8")
+            files[relative] = file_record(root, relative, len(raw), digest(raw))
+    relative = f"ai-drafts/{folder}/latest.json"
+    pointer = safe_path(root, relative)
+    if pointer.exists():
+        raw = read_stable(pointer, max_bytes=1024)
+        value = parse_json(raw)
+        if not isinstance(value, dict) or set(value) != {"id"} or not isinstance(value["id"], str) or value["id"] not in generations:
+            raise DeleteError("invalid_ai_media", "AI 생성 자료의 최신 버전 연결을 확인한 뒤 삭제하세요.")
+        files[relative] = file_record(root, relative, len(raw), digest(raw))
+    return files
+
+
+def ai_journal_path(document, relative):
+    post_key = json.dumps((document.get("account"), document.get("postId")), ensure_ascii=False, separators=(",", ":"))
+    folder = ai_media.post_folder(post_key)
+    return bool(re.fullmatch(rf"ai-drafts/{folder}/(?:latest\.json|[0-9a-f]{{32}}/(?:draft\.json|caption\.txt|0[12]\.(?:png|jpg|webp)))", relative))
+
+
+def plan(root, data, lock=None, *, disposition=None):
     require_no_pending(root)
     snapshot = view.read_snapshot(root, owned_lock=lock)
     if snapshot["snapshot"]["stateStatus"] != "read_only":
@@ -165,9 +217,22 @@ def plan(root, data, lock=None):
         raise DeleteError("drafts_unavailable", "등록 초안의 파일 선택 정보를 읽을 수 없습니다. 기존 초안을 확인한 뒤 삭제하세요.")
     post = next((p for p in snapshot["snapshot"]["posts"] if p["key"] == data["postKey"]), None)
     if not post: raise DeleteError("post_missing", "게시글을 찾을 수 없습니다. 목록을 새로고침하세요.")
+    if data["kind"] == "post":
+        if disposition == "purge":
+            # Only the registered-draft worker may explicitly release the last reference.
+            if not post.get("sourceDeleted") or not post.get("draft"):
+                raise DeleteError("deletion_changed", "수집·등록 상태가 변경되었습니다. 다시 확인하세요.")
+        elif disposition is not None or post.get("sourceDeleted"):
+            raise DeleteError("post_missing", "수집에서 이미 삭제된 게시글입니다. 등록 화면에서 확인하세요.")
+        else:
+            disposition = "source_only" if post.get("draft") else "purge"
+    else:
+        if disposition is not None:
+            raise DeleteError("invalid_request", "삭제 범위를 확인하세요.")
+        disposition = "edit"
     if data["kind"] == "edit" and data["mediaId"] in post.get("draft", {}).get("mediaIds", []):
         raise DeleteError("draft_media_in_use", "등록 초안에 포함된 편집본입니다. 초안을 수정해 이 항목을 뺀 뒤 삭제하세요.")
-    files, edits, jobs = {}, [], []
+    files, edits, jobs, original_ids = {}, [], [], []
     with closing(open_db(root)) as db:
         if data["kind"] == "post":
             retired = attempts.retired_ids(db)
@@ -175,14 +240,16 @@ def plan(root, data, lock=None):
                     "SELECT job_id FROM jobs WHERE status IN ('planned','running','staged')")):
                 raise DeleteError("pending_download_plan", "미완료 다운로드 계획이 있습니다. 계획을 완료·확인한 뒤 게시글을 삭제하세요.")
         library = json.loads(db.execute("SELECT value FROM meta WHERE key='library_id'").fetchone()[0])
+        if disposition == "purge":
+            original_ids = [row[0] for row in db.execute("SELECT media_id FROM media WHERE account=? AND post_id=? AND kind='image'", (post["account"], post["postId"]))]
         removed = {row[0] for row in db.execute("SELECT edit_id FROM edit_deletions")} if has_table(db, "edit_deletions") else set()
-        if has_table(db, "media_edits"):
+        if disposition != "source_only" and has_table(db, "media_edits"):
             edits = [dict(row) for row in db.execute("SELECT * FROM media_edits WHERE account=? AND post_id=? ORDER BY sequence", (post["account"], post["postId"])) if row["edit_id"] not in removed]
         if data["kind"] == "edit":
             edits = [row for row in edits if row["edit_id"] == data["mediaId"]]
             if len(edits) != 1:
                 raise DeleteError("edit_missing", "삭제할 편집본을 찾을 수 없습니다. 원본은 삭제하지 않았습니다.")
-        else:
+        elif disposition != "source_only":
             jobs = [dict(row) for row in db.execute("SELECT j.*,m.kind FROM jobs j JOIN media m USING(media_id) WHERE m.account=? AND m.post_id=? ORDER BY j.job_id", (post["account"], post["postId"]))]
         for row in edits:
             media_format = view.EDIT_FORMAT.get(row['edit_type'])
@@ -201,7 +268,11 @@ def plan(root, data, lock=None):
                 if row["part_rel"] != f"media/.partial/{row['job_id']}.part" or not view.UUID.fullmatch(row["job_id"]):
                     raise DeleteError("invalid_local_path", "미완료 파일의 연결을 확인해야 합니다.")
                 files[row["part_rel"]] = file_record(root, row["part_rel"])
-    result = {"kind": data["kind"], "postKey": data["postKey"], "account": post["account"], "postId": post["postId"],
+    if disposition == "purge":
+        files.update(ai_owned_files(root, post, original_ids))
+    result = {"kind": data["kind"], "disposition": disposition, "sourceDeleted": bool(post.get("sourceDeleted")),
+        "expectedRevision": post["draft"]["revision"] if post.get("draft") else None,
+        "postKey": data["postKey"], "account": post["account"], "postId": post["postId"],
         "mediaId": data.get("mediaId"), "libraryId": library, "draft": post.get("draft"), "files": sorted(files.values(), key=lambda item: item["path"]),
         "books": workbook_targets(root, post["account"], post["postId"]) if data["kind"] == "post" else [],
         "edits": edits, "jobs": jobs}
@@ -234,6 +305,7 @@ def prepare_journal(root, current, lock, check):
     document = {"version": 1, "id": transaction, "root": str(root), "libraryId": current["libraryId"],
         "lockToken": lock.token, "kind": current["kind"], "account": current["account"], "postId": current["postId"],
         "mediaId": current["mediaId"], "fingerprint": current["fingerprint"],
+        "disposition": current["disposition"], "expectedRevision": current["expectedRevision"],
         "deletedAt": datetime.now(KST).isoformat(), "files": [], "books": []}
     try:
         for index, item in enumerate(current["books"]):
@@ -290,13 +362,21 @@ def operation_status(root, document):
 def apply_tombstone(root, document):
     with closing(open_db(root, "rw")) as db, db:
         if document["kind"] == "post":
-            # The draft belongs to the approved whole-post deletion. Keep removal
-            # in the same transaction as the tombstone and commit receipt.
-            view.read_drafts(root, db=db)
-            if view.draft_schema(db):
-                db.execute("DELETE FROM post_drafts WHERE account=? AND post_id=?", (document["account"], document["postId"]))
-            db.execute("CREATE TABLE IF NOT EXISTS post_deletions(account TEXT NOT NULL,post_id TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(account,post_id))")
-            db.execute("INSERT INTO post_deletions VALUES(?,?,?)", (document["account"], document["postId"], document["deletedAt"]))
+            key = document["account"], document["postId"]
+            draft = view.read_drafts(root, db=db).get(key)
+            if "expectedRevision" in document and (draft["revision"] if draft else None) != document["expectedRevision"]:
+                raise DeleteError("deletion_changed", "삭제 확인 후 등록 내용이 변경되었습니다. 다시 확인하세요.")
+            if document.get("disposition", "purge") == "source_only":
+                if not draft:
+                    raise DeleteError("deletion_changed", "등록 내용이 변경되어 수집 삭제를 중단했습니다.")
+                db.execute("CREATE TABLE IF NOT EXISTS source_deletions(account TEXT NOT NULL,post_id TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(account,post_id))")
+                db.execute("INSERT INTO source_deletions VALUES(?,?,?)", (*key, document["deletedAt"]))
+            else:
+                # Purge releases the final local reference in the same durable transaction.
+                if view.draft_schema(db):
+                    db.execute("DELETE FROM post_drafts WHERE account=? AND post_id=?", key)
+                db.execute("CREATE TABLE IF NOT EXISTS post_deletions(account TEXT NOT NULL,post_id TEXT NOT NULL,deleted_at TEXT NOT NULL,PRIMARY KEY(account,post_id))")
+                db.execute("INSERT INTO post_deletions VALUES(?,?,?)", (*key, document["deletedAt"]))
         else:
             db.execute("CREATE TABLE IF NOT EXISTS edit_deletions(edit_id TEXT PRIMARY KEY,deleted_at TEXT NOT NULL)")
             db.execute("INSERT INTO edit_deletions VALUES(?,?)", (document["mediaId"], document["deletedAt"]))
@@ -313,13 +393,19 @@ def validate_journal(root, folder):
             document.get("root") != str(root) or document.get("kind") not in {"post", "edit"} or
             not isinstance(document.get("files"), list) or not isinstance(document.get("books"), list)):
         raise DeleteError("invalid_journal", "삭제 복구 기록을 확인해야 합니다.")
+    disposition = document.get("disposition", "purge" if document["kind"] == "post" else "edit")
+    if (disposition not in ({"source_only", "purge"} if document["kind"] == "post" else {"edit"}) or
+            (disposition == "source_only" and document["files"]) or
+            ("expectedRevision" in document and document["expectedRevision"] is not None and
+             (type(document["expectedRevision"]) is not int or document["expectedRevision"] < 1))):
+        raise DeleteError("invalid_journal", "삭제 복구 범위를 확인해야 합니다.")
     marker = parse_json(read_stable(safe_path(root, "media/.library.json", require_file=True), max_bytes=4096))
     if document.get("libraryId") != marker.get("library_id"):
         raise DeleteError("invalid_journal", "삭제 복구 자료와 라이브러리 연결이 다릅니다.")
     paths = set()
     for index, item in enumerate(document["files"]):
         if (not isinstance(item, dict) or item.get("slot") != f"file-{index}.bin" or
-                not isinstance(item.get("path"), str) or not (view.FILE.fullmatch(item["path"]) or PART.fullmatch(item["path"])) or
+                not isinstance(item.get("path"), str) or not (view.FILE.fullmatch(item["path"]) or PART.fullmatch(item["path"]) or (disposition == "purge" and ai_journal_path(document, item["path"]))) or
                 type(item.get("size")) is not int or item["size"] < 0 or not HEX.fullmatch(item.get("sha256", "")) or item["path"] in paths):
             raise DeleteError("invalid_journal", "삭제 복구 파일 경로가 올바르지 않습니다.")
         safe_path(root, item["path"])
@@ -396,6 +482,15 @@ def finish_committed(root, folder, document, lock):
         slot = folder/item["slot"]
         if slot.exists(): file_record(root, slot.relative_to(root).as_posix(), item["size"], item["sha256"])
     clean_journal(root, folder, document)
+    # Only empty AI directories whose files were explicitly journaled may be removed.
+    parents = {safe_path(root, item["path"]).parent for item in document["files"] if ai_journal_path(document, item["path"])}
+    for parent in sorted(parents, key=lambda path: len(path.parts), reverse=True):
+        try: parent.rmdir()
+        except OSError: pass
+    ai_parent = safe_path(root, f"ai-drafts/{ai_media.post_folder(json.dumps((document.get('account'), document.get('postId')), ensure_ascii=False, separators=(',', ':')))}")
+    if parents:
+        try: ai_parent.rmdir()
+        except OSError: pass
 
 
 def commit_current(root, current, lock, check):
@@ -532,7 +627,7 @@ def execute(data, *, check=lambda: False):
     current = plan(root, data)
     return {"ok": True, "fingerprint": current["fingerprint"],
             "fileCount": sum(item["exists"] for item in current["files"]), "editCount": len(current["edits"]),
-            "account": current["account"], "postId": current["postId"]}
+            "account": current["account"], "postId": current["postId"], "disposition": current["disposition"]}
 
 
 def main():

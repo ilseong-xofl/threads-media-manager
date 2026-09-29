@@ -7,6 +7,7 @@ import {
   launchPostDraftDelete,
   parsePostDraftDeleteResult,
   PostDraftDeleteController,
+  postDraftDeleteConfirmation,
   type LaunchPostDraftDelete,
 } from './post-draft-delete';
 
@@ -103,8 +104,13 @@ describe('registered post deletion', () => {
     const { controller, confirm, launch } = setup();
     const result = await controller.delete(root, input);
     expect(result).toEqual({ status: 'deleted', view: withoutDraft() });
-    expect(confirm).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal));
-    expect(launch).toHaveBeenCalledExactlyOnceWith({ root, kind: 'delete', ...input });
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal), false);
+    expect(launch).toHaveBeenCalledExactlyOnceWith({
+      root,
+      kind: 'delete',
+      ...input,
+      expectedSourceDeleted: false,
+    });
     expect(controller.active).toBe(false);
   });
   it.each([
@@ -276,7 +282,7 @@ describe('draft deletion worker boundary', () => {
     vi.useFakeTimers();
     const child = { kill: vi.fn(), stdin: { on: vi.fn(), end: vi.fn() } };
     vi.mocked(execFile).mockReturnValueOnce(child as unknown as ChildProcess);
-    const command = { root, kind: 'delete' as const, ...input };
+    const command = { root, kind: 'delete' as const, ...input, expectedSourceDeleted: false };
     const operation = launchPostDraftDelete('/synthetic-app')(command);
     const call = vi.mocked(execFile).mock.calls.at(-1)!;
     expect(call[1]).toEqual(['-I', '-B', '/synthetic-app/local-runtime/post_draft.py']);
@@ -291,4 +297,35 @@ describe('draft deletion worker boundary', () => {
     await vi.advanceTimersByTimeAsync(40_000);
     expect(child.kill).toHaveBeenCalledOnce();
   });
+});
+
+describe('last registered copy deletion', () => {
+  it('confirms file removal only after the source was deleted', () => {
+    const signal = new AbortController().signal;
+    expect(postDraftDeleteConfirmation(false, signal).detail).toContain('그대로 보존');
+    const final = postDraftDeleteConfirmation(true, signal);
+    expect(final.detail).toContain('선택하지 않은 항목을 포함한 모든');
+    expect(final.detail).toContain('함께 삭제');
+    expect(final.detail).toContain('Threads에 게시된 게시글과 댓글은 유지');
+    expect(final).toMatchObject({ defaultId: 0, cancelId: 0, signal });
+  });
+  it.each([true, false])(
+    'binds confirmed source state and removes the final copy on refresh failure=%s',
+    async (fail) => {
+      const hidden = view({ ...post(), sourceDeleted: true });
+      const { controller, refresh, launch, confirm } = setup(hidden);
+      refresh.mockReset().mockResolvedValueOnce(hidden);
+      if (fail) refresh.mockRejectedValueOnce(new Error('read failed'));
+      else refresh.mockResolvedValueOnce(hidden);
+      const result = await controller.delete(root, input);
+      expect(confirm).toHaveBeenCalledWith(input, expect.any(AbortSignal), true);
+      expect(launch).toHaveBeenCalledWith({
+        root,
+        kind: 'delete',
+        ...input,
+        expectedSourceDeleted: true,
+      });
+      expect(result).toMatchObject({ status: 'deleted', view: { snapshot: { posts: [] } } });
+    },
+  );
 });

@@ -82,6 +82,58 @@ class MediaTrimTests(unittest.TestCase):
         self.assertEqual([(item["kind"], item["editType"], item["ordinal"]) for item in post["edits"]], [("video", "trim", 3)])
         self.clean()
 
+    def test_mute_removes_audio_for_selected_range_and_entire_source(self):
+        source = video_trim.probe(self.fixture.originals[1], video_trim.dependencies(), lambda: False)
+        self.assertEqual(source["audioCodecs"], ["aac"])
+        for start, end in ((2, 4), (0, 5)):
+            with self.subTest(start=start, end=end):
+                result = self.editor.execute({**self.request, "start": start, "end": end, "mute": True})
+                metadata = video_trim.probe(self.output(result["mediaId"]), video_trim.dependencies(), lambda: False)
+                self.assertEqual(metadata["audioCodecs"], [])
+                self.assertEqual(metadata["videoCodec"], "h264")
+                self.assertAlmostEqual(metadata["duration"], end-start, delta=0.04)
+        self.assertEqual(video_trim.probe(self.fixture.originals[1], video_trim.dependencies(), lambda: False)["audioCodecs"], ["aac"])
+        self.clean()
+
+    def test_explicit_false_keeps_audio_and_silent_inputs_remain_silent_with_either_option(self):
+        result = self.editor.execute({**self.request, "mute": False})
+        self.assertEqual(video_trim.probe(self.output(result["mediaId"]), video_trim.dependencies(), lambda: False)["audioCodecs"], ["aac"])
+        self.clean()
+        self.replace_video(self.silent.read_bytes())
+        self.before = self.fixture.preserved()
+        for mute in (False, True):
+            with self.subTest(mute=mute):
+                result = self.editor.execute({**self.request, "mute": mute})
+                metadata = video_trim.probe(self.output(result["mediaId"]), video_trim.dependencies(), lambda: False)
+                self.assertEqual(metadata["audioCodecs"], [])
+                self.assertAlmostEqual(metadata["duration"], 2, delta=0.04)
+        self.clean()
+
+    def test_nonboolean_mute_and_mute_on_other_edit_types_are_rejected_before_encoding(self):
+        with patch.object(video_trim.subprocess, "Popen", side_effect=AssertionError("invalid input must not spawn")):
+            for value in (0, 1, None, "true", [], {}):
+                with self.subTest(value=value), self.assertRaises(self.editor.EditError) as caught:
+                    self.editor.execute({**self.request, "mute": value})
+                self.assertEqual(caught.exception.code, "invalid_trim")
+            for request in (self.fixture.request, self.fixture.capture_request()):
+                with self.subTest(kind=request["kind"]), self.assertRaises(self.editor.EditError) as caught:
+                    self.editor.execute({**request, "mute": True})
+                self.assertEqual(caught.exception.code, "invalid_request")
+        self.assertEqual(self.edit_rows(), [])
+        self.clean()
+
+    def test_mute_verification_rejects_audio_left_in_output_and_does_not_publish_an_edit(self):
+        actual = video_trim.encode
+        def accidentally_unmuted(prepared, output, check):
+            return actual({**prepared, "mute": False}, output, check)
+        with patch.object(video_trim, "encode", side_effect=accidentally_unmuted):
+            with self.assertRaises(video_trim.TrimError) as caught:
+                self.editor.execute({**self.request, "mute": True})
+        self.assertEqual(caught.exception.code, "invalid_video")
+        self.assertEqual(self.edit_rows(), [])
+        self.assertEqual(list((self.root / f"media/files/{self.fixture.library}").glob("*.mp4")), [])
+        self.clean()
+
     def test_legacy_table_migrates_without_changing_any_original_edit_values(self):
         cropped = self.editor.execute(self.fixture.request)["mediaId"]
         rows = self.edit_rows()

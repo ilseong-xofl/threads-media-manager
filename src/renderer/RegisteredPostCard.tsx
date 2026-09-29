@@ -1,4 +1,10 @@
 import type { Attachment, Post } from '../shared/contracts';
+import type { ThreadsPublication } from '../shared/threads-api';
+import {
+  isPublishedPost,
+  ThreadsPublishedBadge,
+  ThreadsReplyPublishedBadge,
+} from './ThreadsPublishedBadge';
 import { MediaCarousel } from './MediaCarousel';
 import { displayDate } from './view-model';
 import { registrationMedia } from './registration-model';
@@ -7,6 +13,8 @@ import { postDraftExportIssue } from '../shared/post-export';
 
 export function RegisteredPostCard({
   post,
+  publication,
+  replyPublication,
   ordinal,
   onChange,
   onOpen,
@@ -16,6 +24,8 @@ export function RegisteredPostCard({
   actionsDisabled,
 }: {
   post: Post;
+  publication?: ThreadsPublication;
+  replyPublication?: ThreadsPublication;
   ordinal?: number;
   onChange(ordinal: number): void;
   onOpen(): void;
@@ -68,6 +78,12 @@ export function RegisteredPostCard({
         >
           <Icon name="trash" />
         </button>
+        {isPublishedPost(publication) && (
+          <span className="post-published-marker">
+            <ThreadsPublishedBadge publication={publication} />
+            <ThreadsReplyPublishedBadge reply={replyPublication} publication={publication} />
+          </span>
+        )}
         <button
           className={`post-export-button ${exporting ? 'is-exporting' : ''}`}
           type="button"

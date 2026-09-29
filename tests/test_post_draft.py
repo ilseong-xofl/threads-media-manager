@@ -280,19 +280,22 @@ worker.execute(json.loads(sys.argv[2]))
         self.assertTrue(self.fixture.edit_path(edit).exists())
         self.assert_preserved()
 
-    def test_post_delete_cascades_only_its_draft_in_the_same_commit(self):
+    def test_source_delete_retains_its_draft_and_files_without_changing_other_posts(self):
         key, media_id, path = self.other_post()
-        drafts.execute(self.request)
+        saved = drafts.execute(self.request)["draft"]
         other = drafts.execute({**self.request, "postKey": key, "mediaIds": [media_id], "caption": "keep other"})["draft"]
+        media = self.files()
         self.assertTrue(deletion.execute(self.prepare_delete())["ok"])
-        self.assertEqual(self.stored(), {("Other", "AbC_01"): other})
+        self.assertEqual(self.stored(), {("Example", "AbC_01"): saved, ("Other", "AbC_01"): other})
         self.assertTrue(path.exists())
-        self.assertTrue(all(not path.exists() for path in self.fixture.originals))
-        self.assertEqual(self.fixture.snapshot()["snapshot"]["posts"][0]["key"], key)
+        self.assertEqual(media, self.files())
+        posts = {post["key"]: post for post in self.fixture.snapshot()["snapshot"]["posts"]}
+        self.assertTrue(posts[self.fixture.key]["sourceDeleted"])
+        self.assertFalse(posts[key].get("sourceDeleted", False))
         with closing(sqlite3.connect(self.root / "state/state.db")) as db:
             for table, expected in self.before["tables"].items(): self.assertEqual(db.execute(f"SELECT * FROM {table}").fetchall(), expected)
         with self.assertRaises(drafts.DraftError) as error: drafts.execute(self.request)
-        self.assertEqual(error.exception.code, "post_missing")
+        self.assertEqual(error.exception.code, "draft_conflict")
 
     def test_failed_post_delete_rolls_back_draft_removal_with_tombstone(self):
         original = drafts.execute(self.request)["draft"]
@@ -312,14 +315,16 @@ worker.execute(json.loads(sys.argv[2]))
         self.assertEqual(self.current(), original)
         self.assert_preserved()
 
-    def test_crash_after_post_delete_commit_does_not_resurrect_draft(self):
-        drafts.execute(self.request)
+    def test_crash_after_source_delete_commit_keeps_registration_and_originals(self):
+        saved = drafts.execute(self.request)["draft"]
         self.crash_delete(self.prepare_delete(), after=True)
         recovered = deletion.execute({"root": str(self.root), "command": "recover"})
         self.assertEqual(recovered["recovered"], 1)
-        self.assertEqual(self.stored(), {})
-        self.assertEqual(self.fixture.snapshot()["snapshot"]["posts"], [])
-        self.assertTrue(all(not path.exists() for path in self.fixture.originals))
+        self.assertEqual(self.stored(), {("Example", "AbC_01"): saved})
+        post = self.fixture.snapshot()["snapshot"]["posts"][0]
+        self.assertTrue(post["sourceDeleted"])
+        self.assertEqual(post["draft"], saved)
+        self.assertTrue(all(path.exists() for path in self.fixture.originals))
 
     def test_cli_isolated_save_conflict_and_sigterm_preserve_committed_revision(self):
         def run(value):
@@ -395,7 +400,7 @@ sys.exit(worker.main())
     def test_delete_draft_respects_lock_pending_journal_and_corrupt_schema(self):
         drafts.execute(self.request)
         with CollectionLock(self.root):
-            with self.assertRaises(SourceError): drafts.execute(self.delete_request())
+            with self.assertRaises(deletion.DeleteError): drafts.execute(self.delete_request())
         journal = self.root / ("_work/delete-" + "f"*32) / "journal.json"
         journal.parent.mkdir()
         journal.write_text("{}")

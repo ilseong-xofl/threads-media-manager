@@ -14,7 +14,7 @@ def read_status(root, *, clock=time.time):
     root = view.collection_root(Path(root))
     view.idle(root)
     deletion_state.require_no_pending(root)
-    excluded_posts = deletion_state.excel_deletions(root)
+    excluded_posts = deletion_state.deleted_posts(root)
     links, files, state, signature = view.read_state(root, excluded_posts)
     meta, jobs = {}, []
     if state != 'absent':

@@ -13,6 +13,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collection_view as view
+import delete_media
 from export_post import stable_snapshot
 from threads_runner.deletion_state import database_deletions, require_no_pending
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
@@ -35,7 +36,9 @@ def cancelled(check):
 def validate(data):
     deleting = isinstance(data, dict) and data.get("kind") == "delete"
     fields = {"root", "postKey", "kind", "expectedRevision"} if deleting else {"root", "postKey", "caption", "mediaIds", "expectedRevision"}
+    if deleting and "expectedSourceDeleted" in data: fields.add("expectedSourceDeleted")
     if (not isinstance(data, dict) or set(data) != fields or
+            (deleting and type(data.get("expectedSourceDeleted", False)) is not bool) or
             not isinstance(data.get("root"), str) or not data["root"] or
             not isinstance(data.get("postKey"), str) or not data["postKey"] or len(data["postKey"]) > 512):
         raise DraftError("invalid_request", "등록 초안 저장 요청이 올바르지 않습니다.")
@@ -66,6 +69,8 @@ def selected_post(snapshot, data):
     post = matches[0]
     check_revision(post.get("draft"), data["expectedRevision"])
     if data.get("kind") == "delete":
+        if bool(post.get("sourceDeleted")) != data.get("expectedSourceDeleted", False):
+            raise DraftError("draft_conflict", "수집·등록 상태가 변경되었습니다. 삭제 범위를 다시 확인하세요.")
         # Removing a draft releases references only; a missing media file must
         # not make a registered draft impossible to remove.
         return post
@@ -127,7 +132,8 @@ def execute(data, *, check=lambda: False, include_ai=False):
     root = collection_root(Path(data["root"]))
     require_no_pending(root)
     cancelled(check)
-    with CollectionLock(root) as lock:
+    lock_type = delete_media.DeleteLock if data.get("kind") == "delete" else CollectionLock
+    with lock_type(root) as lock:
         snapshot = view.read_snapshot(root, owned_lock=lock, include_ai=include_ai)
         post = selected_post(snapshot, data)
         cancelled(check)
@@ -139,6 +145,13 @@ def execute(data, *, check=lambda: False, include_ai=False):
         selected_post(current, data)
         if stable_snapshot(current) != stable_snapshot(snapshot):
             raise DraftError("source_changed", "저장하는 동안 게시글이나 파일 정보가 변경되었습니다. 다시 확인하세요.")
+        if data.get("kind") == "delete" and post.get("sourceDeleted"):
+            plan = delete_media.plan(root, {"kind": "post", "postKey": data["postKey"]}, lock, disposition="purge")
+            check_revision(plan.get("draft"), data["expectedRevision"])
+            cancelled(check)
+            lock.assert_owned()
+            delete_media.commit_current(root, plan, lock, check)
+            return {"ok": True, "postKey": data["postKey"], "deleted": True}
         path = safe_path(root, "state/state.db", require_file=True)
         before = path.stat()
         with closing(sqlite3.connect(path.as_uri()+"?mode=rw", uri=True, timeout=0)) as db:
@@ -190,7 +203,7 @@ def main(argv=()):
             raise DraftError("invalid_request", "등록 초안 저장 요청의 크기나 형식을 확인하세요.")
         data = parse_json(raw)
         result = execute(data, check=lambda: stopped or monitor.cancelled(), include_ai=args.include_ai)
-    except (DraftError, SourceError, view.InputError, StateError, MonitorError) as exc:
+    except (DraftError, delete_media.DeleteError, SourceError, view.InputError, StateError, MonitorError) as exc:
         result = {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
     except Exception:
         deleting = isinstance(data, dict) and data.get("kind") == "delete"

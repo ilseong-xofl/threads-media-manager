@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collection_view as view
 import edit_schema
 from threads_runner import attempts
-from threads_runner.deletion_state import database_deletions, excel_deletions, require_no_pending
+from threads_runner.deletion_state import database_deletions, excel_deletions, require_no_pending, source_deletions
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
 from threads_runner.recovery import definitely_dead, release_abandoned
 from threads_runner.state import APP_ID, SCHEMA_VERSION, StateError, file_hash, supported_policy
@@ -46,6 +46,7 @@ OPTIONAL_COLUMNS = {
     "post_drafts": view.POST_DRAFT_COLUMNS,
     "post_comments": ("account", "post_id", "caption", "link", "updated_at"),
     "post_deletions": ("account", "post_id", "deleted_at"),
+    "source_deletions": ("account", "post_id", "deleted_at"),
     "edit_deletions": ("edit_id", "deleted_at"),
     "deletion_operations": ("id", "journal_sha256", "status"),
     "job_attempts": ("previous_job_id", "replacement_job_id", "reason", "created_at"),
@@ -128,6 +129,7 @@ def validate_db(db, *, backup=False):
     view.read_drafts(None, db=db)
     read_comments(db)
     database_deletions(None, db)
+    source_deletions(None, db)
     previous_factory = db.row_factory
     try:
         db.row_factory = sqlite3.Row
@@ -246,7 +248,9 @@ def validate_ai_drafts(db, root, available, deleted, *, drafts=None, check=lambd
 def validate_files(db, root, *, check=lambda: False):
     """Hash active completed files and edits, not tombstoned deleted files."""
     deleted, deleted_edits = database_deletions(root, db)
-    deleted |= excel_deletions(root)
+    source_deleted = source_deletions(root, db)
+    retained = view.retained_source_posts(root, db=db, source_deleted=source_deleted, final_deleted=deleted)
+    deleted |= (excel_deletions(root) | source_deleted) - retained
     records = db.execute("""SELECT m.media_id,m.account,m.post_id,j.final_rel,j.size,j.sha256
         FROM jobs j JOIN media m USING(media_id) WHERE j.status='complete'""").fetchall()
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='media_edits'").fetchone():
@@ -358,6 +362,12 @@ def metadata_restore(db, backup, root, available, deleted, check):
     drafts = view.read_drafts(root, db=backup)
     current = view.read_drafts(root, db=db)
     accepted = {key: value for key, value in drafts.items() if key not in deleted}
+    # An older backup must not silently remove the sole remaining registered
+    # reference after its collected entry was removed. Explicit draft deletion
+    # owns the final file cleanup; metadata restore never deletes media.
+    retained_current = (source_deletions(root, db) - deleted) & current.keys()
+    for key in retained_current - accepted.keys():
+        accepted[key] = current[key]
     validate_ai_drafts(db, root, available, deleted, drafts=accepted, check=check, strict=True)
     for key, draft in accepted.items():
         if any(available.get(media_id) != key for media_id in draft["mediaIds"]):
@@ -365,6 +375,9 @@ def metadata_restore(db, backup, root, available, deleted, check):
         if max(draft["revision"], current.get(key, {}).get("revision", 0)) >= view.MAX_DRAFT_REVISION:
             raise MaintenanceError("draft_revision_limit", "등록 정보의 수정 버전 상한을 확인하세요.")
     comments = [tuple(row) for row in read_comments(backup) if tuple(row[:2]) not in deleted]
+    restored_comments = {row[:2] for row in comments}
+    comments.extend(tuple(row) for row in read_comments(db)
+                    if tuple(row[:2]) in retained_current and tuple(row[:2]) not in restored_comments)
     with db:
         db.execute("BEGIN IMMEDIATE")
         db.execute(DRAFT_SQL)

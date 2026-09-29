@@ -109,7 +109,8 @@ def _auto_plan(root, key, lock):
     books = deletion.workbook_targets(root, *key)
     if not books:
         raise deletion.DeleteError("post_missing", "중복 게시글의 수집 Excel 행을 찾지 못했습니다.")
-    current = {"kind": "post", "postKey": json.dumps(key, ensure_ascii=False, separators=(",", ":")),
+    current = {"kind": "post", "disposition": "purge", "expectedRevision": None, "sourceDeleted": False,
+        "postKey": json.dumps(key, ensure_ascii=False, separators=(",", ":")),
         "account": key[0], "postId": key[1], "mediaId": None, "libraryId": library, "draft": None,
         "files": sorted(files.values(), key=lambda item: item["path"]), "books": books,
         "edits": [], "jobs": rows}
@@ -131,7 +132,12 @@ def remove_new_duplicates(root, completed_keys, *, check=lambda: False, progress
             if source["errors"]:
                 raise deletion.DeleteError("invalid_source", "수집 Excel 원본을 확인해야 중복을 삭제할 수 있습니다.")
             deleted = deletion_state.deleted_posts(root, db=db, sources=source["sources"])
-            saved = _saved_posts(db, source, deleted)
+            retained = deletion.view.retained_source_posts(root, db=db)
+            # Source-hidden registered posts still own every saved original. They
+            # can identify a newly downloaded duplicate, but are never candidates
+            # for automatic deletion themselves. Final/Excel-only deletions stay out.
+            saved = _saved_posts(db, source, deleted - retained)
+        keys = [key for key in keys if key not in retained]
         if any(key not in saved or not saved[key]["collectedAt"] for key in keys):
             raise deletion.DeleteError("deletion_changed", "새로 저장한 게시글의 원본 또는 파일 상태가 변경되었습니다.")
         keepers = defaultdict(list)

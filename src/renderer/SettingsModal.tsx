@@ -5,14 +5,20 @@ import type {
   LibraryMaintenanceResult,
 } from '../shared/contracts';
 import { Icon } from './Icon';
+import { ThreadsAccountSettings } from './ThreadsAccountSettings';
+import { ThreadsWorkOverlay } from './ThreadsUploadOverlay';
+import type { ThreadsUi } from './use-threads-api';
+import { useToast } from './toast';
 
 export function SettingsModal({
   enabled,
   onClose,
   onResult,
   onWorking,
+  threads,
 }: {
   enabled: boolean;
+  threads?: ThreadsUi;
   onClose(): void;
   onResult(view: CollectionView): void;
   onWorking(working: boolean): void;
@@ -20,10 +26,13 @@ export function SettingsModal({
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const pending = useRef(false);
+  const insightsPending = useRef(false);
+  const [insightsWorking, setInsightsWorking] = useState(false);
   const [root, setRoot] = useState<string | null>(null);
   const [rootLoading, setRootLoading] = useState(true);
   const [working, setWorking] = useState<LibraryMaintenanceOperation | null>(null);
-  const [notice, setNotice] = useState<{ error: boolean; message: string } | null>(null);
+  const apiWorking = !!threads?.working || insightsWorking;
+  const setNotice = useToast();
   useEffect(() => {
     const element = dialog.current;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -53,12 +62,30 @@ export function SettingsModal({
       document.body.style.overflow = previousOverflow;
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
-  }, []);
+  }, [setNotice]);
+  function onSyncing(value: boolean) {
+    insightsPending.current = value;
+    setInsightsWorking(value);
+  }
+  function requestClose() {
+    if (!pending.current && !insightsPending.current && !apiWorking) onClose();
+  }
+  useEffect(() => {
+    if (!insightsWorking) return;
+    return () => close.current?.focus({ preventScroll: true });
+  }, [insightsWorking]);
   async function run(
     operation: LibraryMaintenanceOperation,
     action: () => Promise<LibraryMaintenanceResult>,
   ) {
-    if (pending.current || !enabled || (!root && operation !== 'reconnect')) return;
+    if (
+      pending.current ||
+      insightsPending.current ||
+      apiWorking ||
+      !enabled ||
+      (!root && operation !== 'reconnect')
+    )
+      return;
     pending.current = true;
     setWorking(operation);
     onWorking(true);
@@ -102,22 +129,29 @@ export function SettingsModal({
       aria-labelledby="settings-title"
       onCancel={(event) => {
         event.preventDefault();
-        if (!pending.current) onClose();
+        requestClose();
       }}
     >
-      <div className="modal-header">
+      <div className="modal-header" inert={insightsWorking}>
         <h2 id="settings-title">설정</h2>
         <button
           ref={close}
           className="icon-button"
           aria-label="설정 닫기"
-          onClick={onClose}
-          disabled={!!working}
+          onClick={requestClose}
+          disabled={!!working || apiWorking}
         >
           <Icon name="close" />
         </button>
       </div>
-      <div className="settings-body">
+      <div className="settings-body" inert={insightsWorking}>
+        {threads && (
+          <ThreadsAccountSettings
+            threads={threads}
+            enabled={enabled && !working}
+            onSyncing={onSyncing}
+          />
+        )}
         <section className="settings-section">
           <h3>라이브러리</h3>
           <p className="settings-root">
@@ -129,7 +163,7 @@ export function SettingsModal({
               <p>사용할 작업 폴더를 선택합니다. 기존 DB가 있으면 새 위치에 연결합니다.</p>
             </div>
             <button
-              disabled={rootLoading || !enabled || !!working}
+              disabled={rootLoading || !enabled || !!working || apiWorking}
               onClick={() => void run('reconnect', () => window.threadsMedia.reconnectLibrary())}
             >
               <Icon name="folder" />
@@ -149,7 +183,7 @@ export function SettingsModal({
               <p>현재 라이브러리의 DB를 파일로 저장합니다.</p>
             </div>
             <button
-              disabled={!root || !enabled || !!working}
+              disabled={!root || !enabled || !!working || apiWorking}
               onClick={() => void run('backup', () => window.threadsMedia.backupDatabase())}
             >
               <Icon name="download" />
@@ -165,7 +199,7 @@ export function SettingsModal({
               </p>
             </div>
             <button
-              disabled={!root || !enabled || !!working}
+              disabled={!root || !enabled || !!working || apiWorking}
               onClick={() => void run('restore', () => window.threadsMedia.restoreDatabase())}
             >
               <Icon name="refresh" />
@@ -173,15 +207,10 @@ export function SettingsModal({
             </button>
           </div>
         </section>
-        {notice && (
-          <p
-            className={`settings-notice ${notice.error ? 'error' : ''}`}
-            role={notice.error ? 'alert' : 'status'}
-          >
-            {notice.message}
-          </p>
-        )}
       </div>
+      {insightsWorking && (
+        <ThreadsWorkOverlay label="Threads 통계 조회 진행" title="통계 조회 중" />
+      )}
     </dialog>
   );
 }

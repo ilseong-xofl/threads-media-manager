@@ -263,3 +263,22 @@ it('admits generated attachments only with development opt-in and explicit AI me
     expect(() => parseRuntimeResult(JSON.stringify(input), '/example', true)).toThrow();
   }
 });
+
+it('accepts source-deleted posts only with a valid retained draft and keeps file registrations', () => {
+  const input = editedOutput();
+  const draft = {
+    caption: 'retained',
+    mediaIds: [input.snapshot.posts[0].attachments[0].mediaId],
+    revision: 1,
+    createdAt: '2026-09-22T00:00:00+00:00',
+    updatedAt: '2026-09-22T00:00:00+00:00',
+  };
+  Object.assign(input.snapshot.posts[0], { sourceDeleted: true, draft });
+  const result = parseRuntimeResult(JSON.stringify(input), '/example');
+  expect(result.snapshot.posts[0].sourceDeleted).toBe(true);
+  expect(result.files).toEqual(input.files);
+  Object.assign(input.snapshot.posts[0], { draft: undefined });
+  expect(() => parseRuntimeResult(JSON.stringify(input), '/example')).toThrow(ViewError);
+  Object.assign(input.snapshot.posts[0], { sourceDeleted: 'true', draft });
+  expect(() => parseRuntimeResult(JSON.stringify(input), '/example')).toThrow(ViewError);
+});

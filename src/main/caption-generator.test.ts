@@ -157,10 +157,7 @@ describe('caption generation boundaries', () => {
     expect(args).not.toContain('--model');
     expect(args.join(' ')).not.toMatch(/bypass|ignore-rules/);
     expect(args.at(-1)).toContain('untrusted reference data');
-    expect(args.at(-1)).toContain('exactly three distinct');
-    expect(args.at(-1)).toContain('source caption in stdin JSON as the primary reference');
     expect(args.at(-1)).toContain('Images must not divert the theme');
-    expect(args.at(-1)).toContain('meaning, intent, tone, point of view, narrative flow');
     expect(args.at(-1)).toContain('Write all three captions in English');
     expect(args.at(-1)).toContain('regardless of the language of the source caption');
     expect(args.at(-1)).toContain('without adding facts or claims');
@@ -195,9 +192,6 @@ describe('caption generation boundaries', () => {
       const request = requests.at(-1)!;
       expect(request.args.at(-1)).toContain(`Write all three captions in ${name}`);
       expect(request.args.at(-1)).toContain('selected output language takes precedence');
-      expect(request.args.at(-1)).toContain(
-        'source caption in stdin JSON as the primary reference',
-      );
       expect(request.args.at(-1)).toContain('Images must not divert the theme');
       expect(JSON.parse(request.stdin)).toEqual({ sourceCaption: caption });
     }

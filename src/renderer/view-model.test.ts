@@ -168,3 +168,22 @@ it('excludes skipped posts from pending downloads without hiding saved posts or 
   expect(filterPosts(candidates, '', '')).toEqual([saved]);
   expect(candidates).toEqual(before);
 });
+
+it('excludes source-deleted registered posts from the source gallery and pending count without removing media', () => {
+  const hidden = {
+    ...complete,
+    sourceDeleted: true,
+    draft: {
+      caption: 'draft',
+      mediaIds: ['a'.repeat(32)],
+      revision: 1,
+      createdAt: '2026-09-22T00:00:00Z',
+      updatedAt: '2026-09-22T00:00:00Z',
+    },
+  };
+  expect(isSavedPost(hidden)).toBe(true);
+  expect(filterPosts([hidden, anotherComplete], '', '')).toEqual([anotherComplete]);
+  expect(pendingPostCount([{ ...partial, sourceDeleted: true }])).toBe(0);
+  expect(hidden.attachments).toEqual(complete.attachments);
+  expect([hidden, anotherComplete].filter((item) => item.draft)).toEqual([hidden]);
+});

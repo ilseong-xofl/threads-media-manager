@@ -80,10 +80,17 @@ export function parseMediaEditInput(value: unknown): MediaEditInput {
       !Number.isFinite(value.start) ||
       !Number.isFinite(value.end) ||
       value.start < 0 ||
-      value.end <= value.start
+      value.end <= value.start ||
+      (value.mute !== undefined && typeof value.mute !== 'boolean')
     )
       return invalid();
-    return { ...identity, kind: 'trim', start: value.start, end: value.end };
+    return {
+      ...identity,
+      kind: 'trim',
+      start: value.start,
+      end: value.end,
+      mute: value.mute ?? false,
+    };
   }
   return invalid();
 }
@@ -111,6 +118,7 @@ export type MediaEditCommand =
       kind: 'trim';
       start: number;
       end: number;
+      mute?: boolean;
     };
 export type LaunchMediaEdit = (input: MediaEditCommand) => {
   result: Promise<string>;
@@ -241,6 +249,7 @@ export class MediaEditController {
                 kind: 'trim',
                 start: input.start,
                 end: input.end,
+                mute: input.mute ?? false,
               }
             : {
                 root,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AIContentDraft, CaptionLanguage, Post } from '../shared/contracts';
 import { Icon } from './Icon';
+import { useToast, useToastMessage } from './toast';
 import './ai-content.css';
 
 export function AIContentModal({
@@ -24,8 +25,8 @@ export function AIContentModal({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [language, setLanguage] = useState<CaptionLanguage>(draft?.language ?? 'en');
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState('');
+  const notify = useToast();
+  useToastMessage(error, true);
   useEffect(() => {
     const element = dialog.current;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -39,9 +40,13 @@ export function AIContentModal({
     };
   }, []);
   useEffect(() => {
-    if (draft) setLanguage(draft.language);
-    setCopied(false);
-  }, [draft]);
+    if (!draft) return;
+    setLanguage(draft.language);
+    notify({
+      message: '이미지와 캡션이 AI 초안 폴더에 저장되었습니다. 검토 후 사용하세요.',
+      key: `ai-draft:${draft.id}`,
+    });
+  }, [draft, notify]);
   const count = post.attachments.filter((item) => item.kind === 'image').length;
   return (
     <dialog
@@ -92,11 +97,6 @@ export function AIContentModal({
             <p>완료까지 몇 분 걸릴 수 있습니다.</p>
           </div>
         )}
-        {error && (
-          <p className="editor-notice editor-error" role="alert">
-            {error}
-          </p>
-        )}
         {draft && (
           <>
             <div className="ai-content-images">
@@ -115,19 +115,20 @@ export function AIContentModal({
                 <button
                   type="button"
                   onClick={() => {
-                    setCopyError('');
                     void onCopy()
-                      .then(() => setCopied(true))
+                      .then(() => notify({ message: '캡션을 복사했습니다.' }))
                       .catch(() =>
-                        setCopyError('복사하지 못했습니다. 캡션을 직접 선택해 복사하세요.'),
+                        notify({
+                          message: '복사하지 못했습니다. 캡션을 직접 선택해 복사하세요.',
+                          error: true,
+                        }),
                       );
                   }}
                 >
-                  {copied ? '복사됨' : '캡션 복사'}
+                  캡션 복사
                 </button>
               </div>
               <p className="caption">{draft.caption}</p>
-              {copyError && <p role="alert">{copyError}</p>}
             </section>
             <section className="detail-section">
               <h3>홍보 컨셉</h3>
@@ -145,9 +146,6 @@ export function AIContentModal({
                 </p>
               ))}
             </details>
-            <p className="ai-content-saved">
-              이미지와 캡션이 AI 초안 폴더에 저장되었습니다. 검토 후 사용하세요.
-            </p>
           </>
         )}
         {!draft && !working && !error && (

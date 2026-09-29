@@ -11,7 +11,12 @@ import type {
   Post,
 } from '../shared/contracts';
 import { ViewError } from './collection';
-import { captionArguments, codexCommand, runProcess } from './caption-generator';
+import {
+  captionArguments,
+  codexCommand,
+  runProcess,
+  threadsCaptionStyle,
+} from './caption-generator';
 import { pythonCommand } from './python';
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -71,7 +76,8 @@ export function contentInstruction(count: number, language: CaptionLanguage): st
     'All visible people and body parts must be fictional ADULT WOMEN aged 25 or older, distinct from every source person, with coherent new identity across related outputs.',
     'Use the corresponding original as a composition/concept reference in each generation tool call, never as an identity, clothing or background template. Write each image prompt as one concise paragraph of at most 100 English words. Include the intended promotional use, framing to retain and ALL applicable mandatory changes above. Keep directions generic: let the image model choose the new appearance, clothing, setting and pose; do not prescribe detailed scene settings or exhaustively redescribe the source. Briefly summarize the intended distinction in concept without asking the user to choose variations.',
     `Generate exactly ${count} separate photorealistic SNS images, one tool call per output, following the app-supplied reference mapping. No collage, added text, watermarks or invented packaging/logos.`,
-    'Write natural conversational product/category promotional copy with one gentle call to action, at most 450 Unicode characters. Do not invent brands, ingredients, prices, measured or medical benefits, treatment results, personal testimonials or retailer endorsements. Generated imagery is not evidence of real product results.',
+    'Write a natural Threads caption about the supported product/category point, at most 450 Unicode characters. Do not insert a call to action by default. Do not invent brands, ingredients, prices, measured or medical benefits, treatment results, personal testimonials or retailer endorsements. Generated imagery is not evidence of real product results.',
+    threadsCaptionStyle(language),
     `Write caption in ${{ en: 'English', ko: 'Korean', ja: 'Japanese' }[language]}; analysis, concept and product in Korean. Note unknown brands in product.`,
     'Use only the built-in image generation tool. No shell, browser, code, API keys, delegation or file copying. If generation fails or is unavailable, return images as an empty array; never fabricate paths or return input files.',
     'Return only JSON: analysis, concept, product, caption, imagePrompts (exact prompts used), images (actual absolute tool-output paths in order). This is a local draft for review, not registration or publishing.',

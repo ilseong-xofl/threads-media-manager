@@ -7,6 +7,7 @@ import { ImageCropEditor } from './ImageCropEditor';
 import { captureVideoFrame } from './capture-frame';
 import { VideoEditControls } from './VideoEditControls';
 import { PostLink } from './PostLink';
+import { useToast } from './toast';
 
 export function PostDetailModal({
   post,
@@ -36,22 +37,16 @@ export function PostDetailModal({
   const pending = useRef(false);
   const [editing, setEditing] = useState(false);
   const [working, setWorking] = useState(false);
-  const [notice, setNotice] = useState<{ error: boolean; message: string } | null>(null);
+  const notify = useToast();
   const imageEditing = editing && item?.kind === 'image' && !!item.localUrl;
   const canEdit = !!item?.mediaId && !!item.localUrl && item.status === 'saved';
   useEffect(() => {
     setEditing(false);
   }, [item?.mediaId]);
-  useEffect(() => {
-    if (!notice || notice.error) return;
-    const timer = setTimeout(() => setNotice(null), 3000);
-    return () => clearTimeout(timer);
-  }, [notice]);
   async function saveEdit(makeInput: () => Promise<MediaEditInput> | MediaEditInput) {
     if (pending.current || editDisabled) return;
     pending.current = true;
     setWorking(true);
-    setNotice(null);
     try {
       const input = await makeInput();
       const saved = await onEdit(input);
@@ -59,14 +54,14 @@ export function PostDetailModal({
         setEditing(false);
         if (saved) onChange(saved.ordinal);
       }
-      setNotice({
+      notify({
         error: !saved,
         message: saved
           ? '편집본이 캐러셀에 추가되었습니다.'
           : '편집본은 저장되었습니다. 상세 화면을 닫고 새로고침해 확인하세요.',
       });
     } catch (error) {
-      setNotice({
+      notify({
         error: true,
         message:
           error instanceof Error ? error.message : '편집본을 저장하지 못했습니다. 다시 시도하세요.',
@@ -138,7 +133,6 @@ export function PostDetailModal({
             saving={working}
             onCancel={() => {
               setEditing(false);
-              setNotice(null);
             }}
             onSave={(crop) =>
               void saveEdit(() => ({
@@ -156,7 +150,6 @@ export function PostDetailModal({
             disabled={working}
             ordinal={ordinal}
             onChange={(next) => {
-              setNotice(null);
               onChange(next);
             }}
             detail
@@ -227,14 +220,6 @@ export function PostDetailModal({
           </div>
         )}
       </div>
-      {notice && (
-        <p
-          className={`editor-notice ${notice.error ? 'editor-error' : ''}`}
-          role={notice.error ? 'alert' : 'status'}
-        >
-          {notice.message}
-        </p>
-      )}
       {!imageEditing && (
         <div className="media-editor-footer">
           {editing && item?.kind === 'video' ? (
@@ -245,7 +230,6 @@ export function PostDetailModal({
               working={working}
               onClose={() => {
                 setEditing(false);
-                setNotice(null);
               }}
               onCapture={() =>
                 void saveEdit(async () => {
@@ -253,13 +237,14 @@ export function PostDetailModal({
                   return { postKey: post.key, mediaId: item.mediaId!, kind: 'capture', ...frame };
                 })
               }
-              onTrim={(start, end) =>
+              onTrim={(start, end, mute) =>
                 void saveEdit(() => ({
                   postKey: post.key,
                   mediaId: item.mediaId!,
                   kind: 'trim',
                   start,
                   end,
+                  mute,
                 }))
               }
             />
@@ -285,7 +270,6 @@ export function PostDetailModal({
                 className="post-detail-action"
                 disabled={!canEdit || editDisabled}
                 onClick={() => {
-                  setNotice(null);
                   setEditing(true);
                 }}
               >

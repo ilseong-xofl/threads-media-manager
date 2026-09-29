@@ -23,7 +23,7 @@ import { Icon } from './Icon';
 import { PostCard } from './PostCard';
 import { PostDetailModal } from './PostDetailModal';
 import { AIContentModal } from './AIContentModal';
-import { ToastLayer } from './ToastLayer';
+import { useToast, useToastMessage } from './toast';
 import { Pagination } from './Pagination';
 import { paginate, POST_PAGE_SIZE, type PostListMode } from './post-pagination';
 import { defaultDateRange, type DateRange } from './date-range';
@@ -35,6 +35,8 @@ import { parseAICaptionResponse } from './ai-caption-response';
 import './registration.css';
 import { SettingsModal } from './SettingsModal';
 import './settings.css';
+import { useThreadsApi } from './use-threads-api';
+import { latestPublication } from './ThreadsPublicationPanel';
 
 const captionCacheKey = (root: string, postKey: string) => JSON.stringify([root, postKey]);
 
@@ -56,9 +58,7 @@ export function App() {
   const [confirmDownload, setConfirmDownload] = useState(false);
   const [download, setDownload] = useState(idleDownload);
   const [exporting, setExporting] = useState<string | null>(null);
-  const [actionNotice, setActionNotice] = useState<{ error: boolean; message: string } | null>(
-    null,
-  );
+  const setActionNotice = useToast();
   const [savingEdit, setSavingEdit] = useState(false);
   const editPending = useRef(false);
   const [deleting, setDeleting] = useState(false);
@@ -84,7 +84,12 @@ export function App() {
   const captionSuggestions = useRef(
     new Map<string, { language: CaptionLanguage; captions: string[] | null }>(),
   );
+  const threads = useThreadsApi(
+    settingsOpen || !!registration,
+    view.snapshot?.libraryId ?? view.snapshot?.root ?? '',
+  );
   const localMutation =
+    threads.working ||
     maintaining ||
     savingEdit ||
     deleting ||
@@ -100,6 +105,13 @@ export function App() {
   const deletionRecovery =
     view.error?.code === 'deletion_recovery_required' ||
     !!snapshot?.warnings.some((warning) => warning.code === 'deletion_recovery_required');
+  useToastMessage(
+    deletionRecovery
+      ? '이전 삭제 작업을 정리해야 합니다. 상단의 삭제 작업 복구를 눌러 주세요.'
+      : view.error?.message,
+  );
+  const downloadRecovery =
+    !download.resumable && (download.recoverable || view.error?.code === 'busy');
   const posts = useMemo(
     () =>
       (snapshot?.posts ?? []).map((post) =>
@@ -107,7 +119,10 @@ export function App() {
       ),
     [snapshot, aiContentEnabled],
   );
-  const savedPosts = useMemo(() => posts.filter(isSavedPost), [posts]);
+  const savedPosts = useMemo(
+    () => posts.filter((post) => !post.sourceDeleted && isSavedPost(post)),
+    [posts],
+  );
   const pendingPosts = pendingPostCount(posts);
   const registeredPosts = useMemo(() => posts.filter((post) => post.draft), [posts]);
   const accounts = useMemo(
@@ -200,12 +215,16 @@ export function App() {
   async function act(action: () => Promise<CollectionView>) {
     setBusy(true);
     try {
-      setView(await action());
+      const next = await action();
+      setView(next);
+      if (next.error) setActionNotice({ message: next.error.message, error: true });
     } catch {
+      const message = '앱과 연결하지 못했습니다. 다시 시도하세요.';
       setView((old) => ({
         ...old,
-        error: { code: 'app_connection', message: '앱과 연결하지 못했습니다. 다시 시도하세요.' },
+        error: { code: 'app_connection', message },
       }));
+      setActionNotice({ message, error: true });
     } finally {
       setBusy(false);
     }
@@ -257,11 +276,7 @@ export function App() {
       clearInterval(timer);
     };
   }, []);
-  useEffect(() => {
-    if (!actionNotice || actionNotice.error) return;
-    const timer = setTimeout(() => setActionNotice(null), 3000);
-    return () => clearTimeout(timer);
-  }, [actionNotice]);
+
   async function downloadAction(action: () => Promise<DownloadView>) {
     try {
       setDownload(await action());
@@ -446,11 +461,13 @@ export function App() {
     deletePending.current = true;
     setDeleting(true);
     setActionNotice(null);
+    let deletionApplied = false;
     try {
       const result = input
         ? await window.threadsMedia.deleteMedia(input)
         : await window.threadsMedia.recoverDeletions();
       if (result.status === 'deleted') {
+        deletionApplied = true;
         if (input?.kind === 'post' && snapshot?.root)
           captionSuggestions.current.delete(captionCacheKey(snapshot.root, input.postKey));
         setView(result.view);
@@ -485,7 +502,7 @@ export function App() {
             result.view.error?.message ??
             (input
               ? input.kind === 'post'
-                ? '게시글을 삭제했습니다.'
+                ? '수집에서 게시글을 삭제했습니다.'
                 : '편집본을 삭제했습니다.'
               : '삭제 작업을 복구했습니다.'),
         });
@@ -500,10 +517,11 @@ export function App() {
     } finally {
       deletePending.current = false;
       setDeleting(false);
-      void window.threadsMedia
-        .current()
-        .then(setView)
-        .catch(() => {});
+      if (!deletionApplied)
+        void window.threadsMedia
+          .current()
+          .then(setView)
+          .catch(() => {});
     }
   }
 
@@ -512,9 +530,11 @@ export function App() {
     deletePending.current = true;
     setDeleting(true);
     setActionNotice(null);
+    let deletionApplied = false;
     try {
       const result = await window.threadsMedia.deletePostDraft(input);
       if (result.status === 'deleted') {
+        deletionApplied = true;
         setView(result.view);
         if (snapshot?.root)
           captionSuggestions.current.delete(captionCacheKey(snapshot.root, input.postKey));
@@ -539,10 +559,11 @@ export function App() {
     } finally {
       deletePending.current = false;
       setDeleting(false);
-      void window.threadsMedia
-        .current()
-        .then(setView)
-        .catch(() => {});
+      if (!deletionApplied)
+        void window.threadsMedia
+          .current()
+          .then(setView)
+          .catch(() => {});
     }
   }
 
@@ -604,23 +625,34 @@ export function App() {
               {busy ? '읽는 중…' : '새로고침'}
             </button>
             <button
-              className={`download-button ${pendingPosts === 0 && !download.resumable ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
-              onClick={() => setConfirmDownload(true)}
+              className={`download-button ${pendingPosts === 0 && !download.resumable && !downloadRecovery && !deletionRecovery ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
+              onClick={() => {
+                if (deletionRecovery) void deleteMedia();
+                else if (downloadRecovery)
+                  void downloadAction(() => window.threadsMedia.recoverDownloads());
+                else setConfirmDownload(true);
+              }}
               disabled={
                 busy ||
                 downloading ||
                 !!exporting ||
                 localMutation ||
-                deletionRecovery ||
-                (!download.resumable && pendingPosts === 0)
+                (!deletionRecovery &&
+                  !downloadRecovery &&
+                  !download.resumable &&
+                  pendingPosts === 0)
               }
             >
               <Icon name="download" />
-              {download.resumable
-                ? '이어서 다운로드'
-                : pendingPosts > 0
-                  ? `다운로드 (${pendingPosts})`
-                  : '다운로드'}
+              {deletionRecovery
+                ? '삭제 작업 복구'
+                : downloadRecovery
+                  ? '로컬 저장 복구'
+                  : download.resumable
+                    ? '이어서 다운로드'
+                    : pendingPosts > 0
+                      ? `다운로드 (${pendingPosts})`
+                      : '다운로드'}
             </button>
             <button
               className="settings-button"
@@ -652,36 +684,11 @@ export function App() {
             <span title={snapshot?.root}>{snapshot?.root ?? '연결된 수집 폴더가 없습니다'}</span>
           </div>
           {snapshot && (
-            <span className="collection-updated">{displayDate(snapshot.loadedAt)} 갱신</span>
+            <span className="collection-updated">
+              {displayDate(snapshot.loadedAt)} {view.error ? '마지막 확인' : '갱신'}
+            </span>
           )}
         </div>
-        {view.error && (
-          <div className="notice error" role="alert">
-            <strong>{view.error.message}</strong>
-            {snapshot && view.error.code !== 'settings_save_failed' && (
-              <p>아래 목록은 마지막으로 확인한 자료입니다.</p>
-            )}
-            {view.error.code === 'busy' && (
-              <button
-                disabled={busy || downloading || !!exporting || localMutation || deletionRecovery}
-                onClick={() => void downloadAction(() => window.threadsMedia.recoverDownloads())}
-              >
-                로컬 저장 복구
-              </button>
-            )}
-          </div>
-        )}
-        {deletionRecovery && (
-          <div className="notice warning deletion-recovery" role="alert">
-            <span>이전 삭제 작업을 정리해야 합니다. 복구 후 다른 작업을 진행할 수 있습니다.</span>
-            <button
-              disabled={busy || downloading || !!exporting || localMutation}
-              onClick={() => void deleteMedia()}
-            >
-              {deleting ? '복구 중…' : '삭제 작업 복구'}
-            </button>
-          </div>
-        )}
         <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
           <button
             type="button"
@@ -799,6 +806,8 @@ export function App() {
                   <RegisteredPostCard
                     key={post.key}
                     post={post}
+                    publication={latestPublication(threads.state, post.key, 'post')}
+                    replyPublication={latestPublication(threads.state, post.key, 'reply')}
                     ordinal={positions[`draft:${post.key}`]}
                     onChange={(ordinal) => changePosition(`draft:${post.key}`, ordinal)}
                     onOpen={() => setRegistration({ postKey: post.key, mode: 'view' })}
@@ -817,7 +826,8 @@ export function App() {
                       localMutation ||
                       !!view.error ||
                       deletionRecovery ||
-                      !!draftProblem
+                      !!draftProblem ||
+                      threads.working
                     }
                   />
                 ) : (
@@ -990,6 +1000,7 @@ export function App() {
             if (r.status === 'error') throw new Error(r.problem.message);
           }}
           onReveal={async () => {
+            setContentError(null);
             try {
               const r = await window.threadsMedia.revealContent({ postKey: contentPost.key });
               if (r.status === 'error') setContentError(r.problem.message);
@@ -1027,7 +1038,8 @@ export function App() {
             savingComment ||
             !!view.error ||
             deletionRecovery ||
-            !!draftProblem
+            !!draftProblem ||
+            threads.working
           }
           onSaveComment={savePostComment}
           commentProblem={
@@ -1048,6 +1060,7 @@ export function App() {
               void exportPost(registrationPost.key, registrationPost.draft.revision);
           }}
           exporting={exporting === registrationPost.key}
+          threads={threads}
           onSave={savePostDraft}
           onGenerate={generateCaption}
           onCancelGeneration={() => window.threadsMedia.cancelCaption()}
@@ -1056,6 +1069,7 @@ export function App() {
       )}
       {settingsOpen && (
         <SettingsModal
+          threads={threads}
           enabled={
             !busy &&
             !downloading &&
@@ -1072,13 +1086,7 @@ export function App() {
           }}
         />
       )}
-      <DownloadOverlay
-        view={download}
-        starting={startingDownload}
-        enabled={!busy && !exporting && !localMutation && !deletionRecovery}
-        resume={() => setConfirmDownload(true)}
-        recover={() => void downloadAction(() => window.threadsMedia.recoverDownloads())}
-      />
+      <DownloadOverlay view={download} starting={startingDownload} />
       {confirmDownload && (
         <DownloadConfirmation
           resuming={!!download.resumable}
@@ -1089,27 +1097,6 @@ export function App() {
           }}
         />
       )}
-      <ToastLayer
-        modalKey={
-          settingsOpen
-            ? 'settings'
-            : registrationPost
-              ? `registration:${registrationPost.key}`
-              : detail?.key
-        }
-      >
-        {actionNotice && (
-          <div
-            className={`export-toast ${actionNotice.error ? 'export-toast-error' : ''}`}
-            role={actionNotice.error ? 'alert' : 'status'}
-          >
-            <span>{actionNotice.message}</span>
-            <button type="button" aria-label="저장 안내 닫기" onClick={() => setActionNotice(null)}>
-              <Icon name="close" />
-            </button>
-          </div>
-        )}
-      </ToastLayer>
     </div>
   );
 }

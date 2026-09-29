@@ -859,7 +859,9 @@ input::placeholder {
   line-height: 1.7;
 }
 .export-toast > span {
+  flex: 1;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .export-toast button {
   flex-shrink: 0;
@@ -1810,7 +1812,7 @@ dd {
   color: #748093;
   font-size: 11px;
 }
-.video-trim-fields input {
+.video-trim-fields input[type='number'] {
   width: 110px;
   height: 38px;
   padding: 8px 10px;
@@ -1820,6 +1822,23 @@ dd {
   background: white;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+.video-trim-fields .video-mute-option {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 7px;
+  height: 38px;
+  color: #344054;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.video-mute-option input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
 }
 .trim-range-divider {
   align-self: flex-end;
@@ -1866,7 +1885,7 @@ dd {
   font-size: 12px;
   margin-left: 4px;
 }
-/* The source list marks posts already used in a saved draft. */
+/* Separate the saved-draft and published badges from each card's download action. */
 .post-draft-marker {
   position: relative;
   border-left: 1px solid transparent;
@@ -1881,7 +1900,9 @@ dd {
   left: -1px;
   border-left: 1px solid #e0e5ea;
 }
-.post-draft-badge {
+.post-draft-badge,
+.threads-published-badge,
+.registration-section-heading > .threads-published-badge {
   display: inline-flex;
   align-items: center;
   padding: 4px 7px;
@@ -1891,4 +1912,30 @@ dd {
   font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.post-published-marker {
+  position: relative;
+  border-right: 1px solid transparent;
+  padding-right: 10px;
+  margin-right: 2px;
+}
+.post-published-marker::after {
+  content: '';
+  position: absolute;
+  top: 10%;
+  bottom: 10%;
+  right: -1px;
+  border-right: 1px solid #e0e5ea;
+}
+.post-published-marker,
+.threads-publication-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.threads-reply-published-badge {
+  background: #eeebff;
+  color: #655bdd;
 }

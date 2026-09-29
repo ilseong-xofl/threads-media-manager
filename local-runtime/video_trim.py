@@ -122,17 +122,18 @@ def prepare(root, item, data, check):
     source = probe(path, dep, check)
     if data["start"] >= source["duration"] or data["end"] > source["selectionEnd"]+1e-6:
         raise TrimError("invalid_trim", "시작·종료 시간을 영상 길이 안에서 지정하세요.")
-    return {"dep": dep, "path": path, "source": source, "start": data["start"],
+    return {"dep": dep, "path": path, "source": source, "start": data["start"], "mute": data.get("mute", False),
             "duration": min(data["end"], source["duration"])-data["start"]}
 
 
 def encode(prepared, output, check):
+    audio = ["-an"] if prepared.get("mute", False) else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k"]
     command = [prepared["dep"]["ffmpeg"], "-v", "error", "-nostdin", "-protocol_whitelist", "file,pipe",
         "-format_whitelist", "mov,matroska,webm", "-ss", format(prepared["start"], ".12g"), "-i", str(prepared["path"]),
-        "-t", format(prepared["duration"], ".12g"), "-map", "0:v:0", "-map", "0:a:0?",
+        "-t", format(prepared["duration"], ".12g"), "-map", "0:v:0", *audio,
         "-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn",
         "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-bf", "0", "-c:a", "aac", "-b:a", "192k",
+        "-pix_fmt", "yuv420p", "-bf", "0",
         # Pipe output writes only our already-open exclusive file descriptor on both OSes.
         "-movflags", "+frag_keyframe+delay_moov+default_base_moof", "-f", "mp4", "pipe:1"]
     run(command, output, timeout=ENCODE_TIMEOUT, check=check, maximum=MAX_OUTPUT_BYTES)
@@ -141,9 +142,10 @@ def encode(prepared, output, check):
 def verify(path, prepared, check):
     result = probe(path, prepared["dep"], check)
     tolerance = max(0.15, 2/max(prepared["source"]["fps"], 1))
+    expected_audio = 0 if prepared.get("mute", False) else min(1, len(prepared["source"]["audioCodecs"]))
     if (result["videoCodec"] != "h264" or "mp4" not in result["format"].split(",") or
             abs(result["duration"]-prepared["duration"]) > tolerance or
-            bool(result["audioCodecs"]) != bool(prepared["source"]["audioCodecs"]) or
+            len(result["audioCodecs"]) != expected_audio or
             any(codec != "aac" for codec in result["audioCodecs"])):
         raise TrimError("invalid_video", "저장된 영상의 구간·코덱·오디오 검증에 실패했습니다.")
     return result

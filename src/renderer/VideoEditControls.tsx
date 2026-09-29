@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Icon } from './Icon';
 import { timeInput, trimRange } from './trim-model';
+import { useToastMessage } from './toast';
 
 export function VideoEditControls({
   videoRef,
@@ -14,19 +15,24 @@ export function VideoEditControls({
   disabled: boolean;
   working: boolean;
   onCapture(): void;
-  onTrim(start: number, end: number): void;
+  onTrim(start: number, end: number, mute: boolean): void;
   onClose(): void;
 }) {
   const [mode, setMode] = useState<'trim' | 'capture'>('trim');
   const [duration, setDuration] = useState(0);
   const [start, setStart] = useState('0');
   const [end, setEnd] = useState('');
+  const [mute, setMute] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const previewEnd = useRef<number | null>(null);
   const previewRevision = useRef(0);
   const initialized = useRef(false);
   const range = trimRange(start, end, duration);
+  useToastMessage(
+    mode === 'trim' ? previewError || (duration > 0 ? range.error : null) : null,
+    true,
+  );
 
   useEffect(() => {
     const video = videoRef.current;
@@ -70,6 +76,16 @@ export function VideoEditControls({
       previewEnd.current = null;
     };
   }, [videoRef]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || mode !== 'trim') return;
+    const previousMuted = video.muted;
+    video.muted = mute;
+    return () => {
+      video.muted = previousMuted;
+    };
+  }, [videoRef, mode, mute]);
 
   function stopPreview() {
     previewRevision.current += 1;
@@ -161,6 +177,18 @@ export function VideoEditControls({
                 }}
               />
             </label>
+            <label className="video-mute-option">
+              <input
+                type="checkbox"
+                checked={mute}
+                disabled={disabled}
+                onChange={(event) => {
+                  stopPreview();
+                  setMute(event.target.checked);
+                }}
+              />
+              음소거
+            </label>
             <div className="video-trim-actions">
               <button
                 type="button"
@@ -177,7 +205,7 @@ export function VideoEditControls({
                 onClick={() => {
                   if (!range.error) {
                     stopPreview();
-                    onTrim(range.start, range.end);
+                    onTrim(range.start, range.end, mute);
                   }
                 }}
               >
@@ -186,14 +214,8 @@ export function VideoEditControls({
               </button>
             </div>
           </div>
-          <p
-            id="trim-help"
-            className={range.error || previewError ? 'trim-help trim-error' : 'trim-help'}
-            aria-live="polite"
-          >
-            {previewError ||
-              range.error ||
-              `전체 ${timeInput(duration)}초 · 선택 ${timeInput(range.length)}초`}
+          <p id="trim-help" className="trim-help" aria-live="polite">
+            {`전체 ${duration > 0 ? timeInput(duration) : '—'}초 · 선택 ${range.error ? '—' : timeInput(range.length)}초`}
           </p>
         </>
       ) : (

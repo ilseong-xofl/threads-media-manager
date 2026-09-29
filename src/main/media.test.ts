@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, realpath, symlink, unlink } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  readFile,
+  rm,
+  realpath,
+  symlink,
+  unlink,
+  stat,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -118,4 +128,40 @@ describe('development AI media registrations', () => {
     await symlink(join(root, file.relativePath), join(root, generated.relativePath));
     await expect(registry.adopt(root, [generated])).rejects.toThrow();
   });
+});
+
+describe('frozen media copies for API upload', () => {
+  it('copies exactly the registered bytes and refuses destination overwrites', async () => {
+    const registry = new MediaRegistry();
+    await registry.adopt(root, [file]);
+    const destination = join(root, 'frozen.mp4');
+    expect(await registry.copyForUpload(root, file.id, destination)).toEqual(file);
+    expect(await readFile(destination, 'utf8')).toBe('0123456789');
+    if (process.platform !== 'win32') expect((await stat(destination)).mode & 0o777).toBe(0o600);
+    await expect(registry.copyForUpload(root, file.id, destination)).rejects.toThrow();
+    expect(await readFile(destination, 'utf8')).toBe('0123456789');
+  });
+  it('rejects another library root or an unregistered media ID before creating a copy', async () => {
+    const registry = new MediaRegistry();
+    await registry.adopt(root, [file]);
+    const destination = join(root, 'frozen.mp4');
+    await expect(registry.copyForUpload(root + '-other', file.id, destination)).rejects.toThrow(
+      'Unregistered upload',
+    );
+    await expect(registry.copyForUpload(root, 'f'.repeat(32), destination)).rejects.toThrow(
+      'Unregistered upload',
+    );
+    await expect(stat(destination)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it.each(['9876543210', '0123456789extra'])(
+    'rejects changed bytes or length after registration: %s',
+    async (bytes) => {
+      const registry = new MediaRegistry();
+      await registry.adopt(root, [file]);
+      await writeFile(join(root, file.relativePath), bytes);
+      const destination = join(root, 'frozen.mp4');
+      await expect(registry.copyForUpload(root, file.id, destination)).rejects.toThrow();
+      await expect(stat(destination)).rejects.toMatchObject({ code: 'ENOENT' });
+    },
+  );
 });

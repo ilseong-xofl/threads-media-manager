@@ -333,6 +333,17 @@ def read_drafts(root, excluded_posts=None, *, db=None):
         return _read_drafts(connection, excluded_posts)
 
 
+def retained_source_posts(root, *, db=None, source_deleted=None, final_deleted=None):
+    """Source-only deletions with a valid draft, never final/legacy deletions."""
+    if source_deleted is None:
+        source_deleted = deletion_state.source_deletions(root, db)
+    if final_deleted is None:
+        final_deleted = deletion_state.database_deletions(root, db)[0]
+    if not source_deleted:
+        return set()
+    return (source_deleted - final_deleted) & read_drafts(root, db=db).keys()
+
+
 def read_snapshot(path, *, owned_lock=None, include_ai=False):
     root = collection_root(Path(path))
     idle(root, owned_lock)
@@ -355,8 +366,23 @@ def read_snapshot(path, *, owned_lock=None, include_ai=False):
     if deletion_state.deletion_pending(root):
         warnings.append({"code": "deletion_recovery_required", "message": "완료되지 않은 삭제 작업이 있습니다. 삭제 작업 복구를 실행하세요."})
     state_stamp = None
+    library_id = None
+    retained = set()
     try:
+        deletion_stamp = state_signature(root)
+        final_deleted, _ = deletion_state.database_deletions(root)
+        source_deleted = deletion_state.source_deletions(root)
+        excluded_posts |= final_deleted | source_deleted
+        if source_deleted:
+            # Only an explicit source-only deletion and a valid local draft may
+            # override Excel Y. Historical final deletions always take priority.
+            retained = retained_source_posts(root, source_deleted=source_deleted, final_deleted=final_deleted)
+            excluded_posts -= retained
         links, files, state_status, state_stamp = read_state(root, excluded_posts)
+        if state_stamp != deletion_stamp:
+            raise SourceError("state_changed", "읽는 중 삭제·등록 정보가 변경되었습니다. 다시 새로고침하세요.")
+        if state_status == "read_only":
+            library_id = parse_json(read_stable(safe_path(root, "media/.library.json", require_file=True), max_bytes=4096))["library_id"]
         excluded_posts |= deletion_state.database_deletions(root)[0]
     except (SourceError, StateError, sqlite3.Error, ValueError, OSError, TypeError) as exc:
         links, files, state_status = {}, [], "unavailable"
@@ -434,7 +460,9 @@ def read_snapshot(path, *, owned_lock=None, include_ai=False):
         except (SourceError, sqlite3.Error, ValueError, OSError, TypeError, KeyError):
             warnings.append({"code": "drafts_unavailable", "message": "등록 초안을 읽을 수 없습니다. 기존 초안을 보존하려면 저장 상태를 확인하세요."})
     for post in posts:
-        post["downloadExcluded"] = False
+        if (post["account"], post["postId"]) in retained:
+            post["sourceDeleted"] = True
+        post["downloadExcluded"] = bool(post.get("sourceDeleted"))
         after = max((item["ordinal"] for item in post["attachments"]), default=0)
         post["edits"] = [{**item, "ordinal": after + index} for index, item in
                          enumerate(edits.get((post["account"], post["postId"]), []), 1)]
@@ -460,6 +488,7 @@ def read_snapshot(path, *, owned_lock=None, include_ai=False):
     idle(root, owned_lock)
     posts.sort(key=lambda p: (p["publishedAt"] or p["observedAt"] or "", p["account"], p["postId"]), reverse=True)
     return {"ok": True, "snapshot": {"root": str(root), "loadedAt": datetime.now(timezone.utc).isoformat(),
+        "libraryId": library_id if state_status == "read_only" else None,
         "sourceCount": len(source["sources"]), "posts": posts, "warnings": warnings, "stateStatus": state_status}, "files": files}
 
 
