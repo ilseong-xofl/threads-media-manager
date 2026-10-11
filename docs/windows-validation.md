@@ -1,6 +1,6 @@
 # Windows 자동 검증과 설치 후보
 
-GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.3`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
+GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.4`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
 
 ## 자동으로 확인하는 범위
 
@@ -12,6 +12,14 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
+
+## 2026-10-12 0.1.4 공개 완료
+
+- [0.1.4 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.4)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.4/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. 로컬 이미지·영상 직접 등록, 파일 드래그 앤 드롭, 선택 사항인 캡션, 직접 작성 구분과 목록 카드의 블러·아이콘 통계를 포함한다.
+- 앱 소스·태그는 `2831d44a3cd59a48fda18eeb350a55d92d7cb819`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/38156513944)에서 TypeScript 양쪽 **43개 파일 / 1,228개**, Python Mac **567개 통과**, Windows **563개 통과·OS별 4개 제외**, 린트·타입·포맷 검사를 통과했다. 캡션을 비운 직접 등록도 실제 격리 worker 통합 검사에 포함했다.
+- Windows 내장 런타임·패키지 무결성 검사와 실제 패키지 앱 실행·renderer·preload·조회 IPC를 통과했다. `verification.json`의 UI 네 항목이 모두 참이며, CI가 저장한 Windows 화면도 확인했다. 실제 사용자 PC의 Explorer 드롭·Setup 설치·버전 간 업데이트와 자료 보존은 별도 확인 항목이다.
+- [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/38157619922)은 동일 CI에서 검증한 파일을 재빌드 없이 공개했다. Release 자산 5개와 GitHub digest·SHA256SUMS의 일치, Setup/nupkg HEAD 200과 크기 일치, Electron feed의 **0.1.3 → 0.1.4 안내 200**, 최신 **0.1.4 조회 204**를 확인했다.
+- 설치 파일 SHA-256: `0fc63a5a0ede20f50fb91c7b06f27f8a1ad4d7b7e36ffd34b47dc7d53bb14fdd`. Mac에는 Windows 설치 파일이나 nupkg를 내려받지 않았다. 기존 사용자 `artifacts/`·DB·미디어·인증정보는 소스 커밋에 포함하지 않았다.
 
 ## 2026-09-29 0.1.3 공개 완료
 
