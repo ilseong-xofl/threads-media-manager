@@ -28,6 +28,7 @@ from threads_source.excel_input import InputError
 from threads_runner.state import APP_ID, SCHEMA_VERSION, StateError
 from threads_runner import attempts, deletion_state, source_readiness
 import ai_media
+import local_post_store
 
 UUID = re.compile(r"[0-9a-f]{32}")
 FILE = re.compile(r"media/files/[0-9a-f]{32}/([0-9a-f]{32})\.(jpg|jpeg|png|webp|gif|mp4|webm|mov)")
@@ -43,9 +44,19 @@ def idle(root, owned_lock=None):
         return
     lock = safe_path(root, "_work/collector.lock")
     if lock.exists():
+        from threads_runner.recovery import definitely_dead
+        try:
+            owner = parse_json(read_stable(lock, max_bytes=4096))
+        except (ValueError, TypeError, AttributeError):
+            owner = None
+        if isinstance(owner, dict) and owner.get("owner") == "local-post" and definitely_dead(owner.get("pid")):
+            raise SourceError("local_post_recovery_required", "중단된 개인 글 등록이 있습니다. 새 글 작성을 눌러 로컬 복구를 진행하세요.")
         if deletion_state.abandoned_deletion(root):
             raise SourceError("deletion_recovery_required", "완료되지 않은 삭제 작업이 있습니다. 삭제 작업 복구를 실행하세요.")
         raise SourceError("busy", "수집 또는 다운로드가 진행 중입니다. 종료 후 새로고침하세요.")
+    pending = safe_path(root, "_work")
+    if pending.exists() and any(re.fullmatch(r"local-post-[a-f0-9]{32}", item.name) and (item / "journal.json").exists() for item in pending.iterdir()):
+        raise SourceError("local_post_recovery_required", "중단된 개인 글 등록이 있습니다. 새 글 작성을 눌러 로컬 복구를 진행하세요.")
 
 
 def stamp(path):
@@ -100,7 +111,7 @@ def local_file(root, row, *, include_ai=False):
             "sha256": row["sha256"], "kind": row["kind"]}
 
 
-def read_state(root, excluded_posts=None):
+def read_state(root, excluded_posts=None, *, include_local=True):
     signature = state_signature(root)
     if signature["state/state.db"] is None:
         media = safe_path(root, "media")
@@ -126,6 +137,8 @@ def read_state(root, excluded_posts=None):
         rows = db.execute("""SELECT m.*, j.job_id,j.status,j.final_rel,j.size,j.sha256,j.error_code
             FROM media m LEFT JOIN jobs j ON j.media_id=m.media_id
             ORDER BY (j.status='complete') DESC, j.updated_at DESC, j.job_id DESC""").fetchall()
+        local_media = local_post_store.read(db, meta["library_id"])[1] if include_local else []
+        rows = list(rows) + [{**item, "job_id": None, "status": "complete", "error_code": None} for item in local_media]
         deleted, _ = deletion_state.database_deletions(root, db)
         deleted |= set(excluded_posts or ())
     links, files = {}, []
@@ -152,6 +165,14 @@ def read_state(root, excluded_posts=None):
     if state_signature(root) != signature:
         raise SourceError("state_changed", "읽는 중 상태 DB가 변경되었습니다. 다시 새로고침하세요.")
     return links, files, "read_only", signature
+
+
+def read_local_posts(root):
+    path = safe_path(root, "state/state.db", require_file=True)
+    with closing(sqlite3.connect(path.as_uri()+"?mode=ro&immutable=1", uri=True, timeout=0)) as db:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("PRAGMA trusted_schema=OFF")
+        return local_post_store.read(db)[0]
 
 
 def read_edits(root, links, excluded_posts=None):
@@ -429,6 +450,19 @@ def read_snapshot(path, *, owned_lock=None, include_ai=False):
             "attachmentStatus": latest.get("_latest_attachment_status") or latest["첨부 상태"], "runStatus": run.get("결과", "unknown"),
             "gapStatus": run.get("누락상태", "unknown"), "reasons": reasons,
             "source": row["_source"], "attachments": sorted(attachments.get(key, []), key=lambda x: x["ordinal"])})
+    if state_status == "read_only":
+        for row in read_local_posts(root):
+            key = row["account"], row["post_id"]
+            if key in excluded_posts:
+                continue
+            posts.append({"key": json.dumps(key, ensure_ascii=False, separators=(",", ":")),
+                "origin": "local", "account": key[0], "postId": key[1], "originalUrl": "",
+                "publishedAt": None, "collectedAt": None, "observedAt": row["created_at"],
+                "caption": "", "captionStatus": "complete", "captionObservedAt": row["created_at"],
+                "attachmentStatus": "complete", "runStatus": "complete", "gapStatus": "none",
+                "reasons": [], "source": "", "attachments": [
+                    {"ordinal": ordinal, "addressStatus": "available", "observedAt": row["created_at"], **link}
+                    for (account, post_id, ordinal), link in links.items() if (account, post_id) == key]})
     # Retain saved connections whose source JSONL was removed, without inventing captions.
     visible_keys = {(p["account"], p["postId"], item["ordinal"]) for p in posts for item in p["attachments"]}
     for key, link in links.items():
@@ -464,7 +498,7 @@ def read_snapshot(path, *, owned_lock=None, include_ai=False):
     for post in posts:
         if (post["account"], post["postId"]) in retained:
             post["sourceDeleted"] = True
-        post["downloadExcluded"] = bool(post.get("sourceDeleted"))
+        post["downloadExcluded"] = bool(post.get("sourceDeleted")) or post.get("origin") == "local"
         after = max((item["ordinal"] for item in post["attachments"]), default=0)
         post["edits"] = [{**item, "ordinal": after + index} for index, item in
                          enumerate(edits.get((post["account"], post["postId"]), []), 1)]

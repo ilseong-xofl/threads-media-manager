@@ -15,7 +15,7 @@ def read_status(root, *, clock=time.time):
     view.idle(root)
     deletion_state.require_no_pending(root)
     excluded_posts = deletion_state.deleted_posts(root)
-    links, files, state, signature = view.read_state(root, excluded_posts)
+    links, files, state, signature = view.read_state(root, excluded_posts, include_local=False)
     meta, jobs = {}, []
     if state != 'absent':
         path = view.safe_path(root, 'state/state.db', require_file=True)

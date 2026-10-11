@@ -49,7 +49,7 @@ const config: ForgeConfig = {
       port: 3120,
       loggerPort: 9120,
       devContentSecurityPolicy:
-        "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src threads-media:; media-src threads-media:; connect-src 'self' ws://localhost:3120; font-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+        "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src threads-media: threads-import:; media-src threads-media: threads-import:; connect-src 'self' ws://localhost:3120; font-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'",
       mainConfig,
       renderer: {
         config: rendererConfig,

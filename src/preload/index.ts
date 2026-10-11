@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
 const api: ThreadsMediaApi = {
   reportUpdateBlocked: (blocked) => ipcRenderer.invoke(IPC.reportUpdateBlocked, blocked),
@@ -39,6 +39,32 @@ const api: ThreadsMediaApi = {
   savePostComment: (input) => ipcRenderer.invoke(IPC.savePostComment, input),
   openPostLink: (input) => ipcRenderer.invoke(IPC.openPostLink, input),
   savePostDraft: (input) => ipcRenderer.invoke(IPC.savePostDraft, input),
+  pickLocalPostMedia: () => ipcRenderer.invoke(IPC.pickLocalPostMedia),
+  addLocalPostMedia: async (files, current) => {
+    try {
+      if (!Array.isArray(files) || files.length < 1 || files.length > 100)
+        throw new Error('Invalid drop');
+      // Only Electron can extract the native path from a real dropped File.
+      // Never expose a renderer-callable path-string import or return these paths.
+      const paths = files.map((file) => webUtils.getPathForFile(file));
+      if (paths.some((path) => !path)) throw new Error('No native file');
+      return await ipcRenderer.invoke(IPC.addLocalPostMedia, {
+        paths,
+        ...(current === undefined ? {} : { current }),
+      });
+    } catch {
+      return {
+        status: 'error',
+        problem: {
+          code: 'local_post_drop',
+          message: '내 컴퓨터의 이미지·영상 파일을 최대 100개까지 끌어다 놓으세요.',
+        },
+      };
+    }
+  },
+  createLocalPost: (input) => ipcRenderer.invoke(IPC.createLocalPost, input),
+  discardLocalPostMedia: (selectionId) =>
+    ipcRenderer.invoke(IPC.discardLocalPostMedia, selectionId),
   generateCaption: (input) => ipcRenderer.invoke(IPC.generateCaption, input),
   cancelCaption: () => ipcRenderer.invoke(IPC.cancelCaption),
   generateContent: (input) => ipcRenderer.invoke(IPC.generateContent, input),

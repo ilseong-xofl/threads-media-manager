@@ -102,6 +102,17 @@ describe('snapshot adoption', () => {
   });
 });
 describe('runtime response boundary', () => {
+  it('accepts local origin and rejects ambiguous origin values', () => {
+    const input = editedOutput();
+    Object.assign(input.snapshot.posts[0], { origin: 'local' });
+    expect(parseRuntimeResult(JSON.stringify(input), '/example').snapshot.posts[0].origin).toBe(
+      'local',
+    );
+    for (const origin of [null, false, {}, 'direct', ['local']]) {
+      Object.assign(input.snapshot.posts[0], { origin });
+      expect(() => parseRuntimeResult(JSON.stringify(input), '/example')).toThrow(ViewError);
+    }
+  });
   it('accepts explicit download exclusion without changing local media', () => {
     const input = editedOutput();
     Object.assign(input.snapshot.posts[0], { downloadExcluded: true });

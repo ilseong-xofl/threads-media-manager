@@ -17,6 +17,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collection_view as view
 import ai_media
+import local_post_store
 from threads_runner import attempts
 from threads_runner.deletion_state import require_no_pending
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
@@ -222,9 +223,9 @@ def plan(root, data, lock=None, *, disposition=None):
     if data["kind"] == "post":
         if disposition == "purge":
             # Only the registered-draft worker may explicitly release the last reference.
-            if not post.get("sourceDeleted") or not post.get("draft"):
+            if not (post.get("sourceDeleted") or post.get("origin") == "local") or not post.get("draft"):
                 raise DeleteError("deletion_changed", "수집·등록 상태가 변경되었습니다. 다시 확인하세요.")
-        elif disposition is not None or post.get("sourceDeleted"):
+        elif disposition is not None or post.get("sourceDeleted") or post.get("origin") == "local":
             raise DeleteError("post_missing", "수집에서 이미 삭제된 게시글입니다. 등록 화면에서 확인하세요.")
         else:
             disposition = "source_only" if post.get("draft") else "purge"
@@ -244,6 +245,13 @@ def plan(root, data, lock=None, *, disposition=None):
         library = json.loads(db.execute("SELECT value FROM meta WHERE key='library_id'").fetchone()[0])
         if disposition == "purge":
             original_ids = [row[0] for row in db.execute("SELECT media_id FROM media WHERE account=? AND post_id=? AND kind='image'", (post["account"], post["postId"]))]
+            _, local_media = local_post_store.read(db, library)
+            for row in local_media:
+                if (row["account"], row["post_id"]) != (post["account"], post["postId"]):
+                    continue
+                files[row["final_rel"]] = file_record(root, row["final_rel"], row["size"], row["sha256"])
+                if row["kind"] == "image":
+                    original_ids.append(row["media_id"])
         removed = {row[0] for row in db.execute("SELECT edit_id FROM edit_deletions")} if has_table(db, "edit_deletions") else set()
         if disposition != "source_only" and has_table(db, "media_edits"):
             edits = [dict(row) for row in db.execute("SELECT * FROM media_edits WHERE account=? AND post_id=? ORDER BY sequence", (post["account"], post["postId"])) if row["edit_id"] not in removed]
@@ -276,7 +284,7 @@ def plan(root, data, lock=None, *, disposition=None):
         "expectedRevision": post["draft"]["revision"] if post.get("draft") else None,
         "postKey": data["postKey"], "account": post["account"], "postId": post["postId"],
         "mediaId": data.get("mediaId"), "libraryId": library, "draft": post.get("draft"), "files": sorted(files.values(), key=lambda item: item["path"]),
-        "books": workbook_targets(root, post["account"], post["postId"]) if data["kind"] == "post" else [],
+        "books": workbook_targets(root, post["account"], post["postId"]) if data["kind"] == "post" and post.get("origin") != "local" else [],
         "edits": edits, "jobs": jobs}
     result["fingerprint"] = digest(encoded(result))
     return result

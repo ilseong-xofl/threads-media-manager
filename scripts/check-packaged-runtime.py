@@ -12,10 +12,14 @@ root = Path(sys.argv[1]).resolve()
 assert Path(sys.executable).resolve().is_relative_to(root), "System Python must not be used"
 sys.path.insert(0, str(root / "local-runtime"))
 import collection_view
+import local_post
+import local_post_store
 import perceptual_hash
 from PIL import Image
 
 assert Path(collection_view.__file__).resolve().is_relative_to(root)
+assert Path(local_post.__file__).resolve().is_relative_to(root)
+assert Path(local_post_store.__file__).resolve().is_relative_to(root)
 assert Path(Image.__file__).resolve().is_relative_to(root)
 with tempfile.TemporaryDirectory(prefix="tmm-한글 日本語 ") as directory:
     folder = Path(directory).resolve()

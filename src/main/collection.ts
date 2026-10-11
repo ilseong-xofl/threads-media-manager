@@ -116,6 +116,7 @@ export function parseRuntimeResult(raw: string, root: string, includeAI = false)
         nullable(p[k]),
       ) ||
       (p.downloadExcluded !== undefined && typeof p.downloadExcluded !== 'boolean') ||
+      (p.origin !== undefined && p.origin !== 'collected' && p.origin !== 'local') ||
       (p.sourceDeleted !== undefined && typeof p.sourceDeleted !== 'boolean') ||
       (p.sourceDeleted === true && !validPostDraft(p.draft)) ||
       !Array.isArray(p.reasons) ||

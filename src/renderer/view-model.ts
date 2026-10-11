@@ -7,8 +7,13 @@ export const isSavedPost = (post: Post) =>
     (attachment) => attachment.status === 'saved' && !!attachment.localUrl && !!attachment.mediaId,
   );
 export const pendingPostCount = (posts: Post[]) =>
-  posts.filter((post) => !post.sourceDeleted && !post.downloadExcluded && !isSavedPost(post))
-    .length;
+  posts.filter(
+    (post) =>
+      post.origin !== 'local' &&
+      !post.sourceDeleted &&
+      !post.downloadExcluded &&
+      !isSavedPost(post),
+  ).length;
 export const savedCount = (post: Post) =>
   post.attachments.filter((a) => a.status === 'saved').length;
 export function storageStatus(post: Post): string {
@@ -25,6 +30,7 @@ export function filterPosts(
   const term = query.trim().toLocaleLowerCase();
   return posts.filter(
     (post) =>
+      post.origin !== 'local' &&
       !post.sourceDeleted &&
       isSavedPost(post) &&
       (!account || post.account === account) &&

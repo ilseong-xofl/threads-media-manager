@@ -52,6 +52,13 @@ const pending = post('C', 'two', [attachment('not_downloaded')]);
 const anotherComplete = post('D', 'two', [attachment('saved')]);
 const posts = [complete, partial, pending, anotherComplete];
 
+it('keeps directly authored posts out of collection and download counts even with missing media', () => {
+  const localSaved: Post = { ...complete, origin: 'local', account: ':local:' };
+  const localMissing: Post = { ...pending, origin: 'local', account: ':local:' };
+  expect(filterPosts([localSaved, localMissing, complete], '', '')).toEqual([complete]);
+  expect(pendingPostCount([localSaved, localMissing, pending])).toBe(1);
+});
+
 it('shows only fully saved posts while preserving account and full-caption search', () => {
   const before = structuredClone(posts);
   expect(filterPosts(posts, '', '')).toEqual([complete, anotherComplete]);

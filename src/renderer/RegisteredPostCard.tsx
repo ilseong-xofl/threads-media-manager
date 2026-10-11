@@ -37,6 +37,20 @@ export function RegisteredPostCard({
   if (!post.draft) return null;
   const exportIssue = postDraftExportIssue(post);
   const available = registrationMedia(post);
+  const metricsPublication =
+    isPublishedPost(publication) && publication.metricsUpdatedAt ? publication : undefined;
+  const metrics = metricsPublication
+    ? (
+        [
+          ['조회', metricsPublication.metrics?.views, 'eye'],
+          ['좋아요', metricsPublication.metrics?.likes, 'heart'],
+          ['댓글', metricsPublication.metrics?.replies, 'comment'],
+        ] as const
+      ).map(([label, value, icon]) => ({ label, value: value?.toLocaleString() ?? '—', icon }))
+    : [];
+  const metricsDescription = metricsPublication
+    ? `${metrics.map(({ label, value }) => `${label} ${value}`).join(' · ')} · ${displayDate(metricsPublication.metricsUpdatedAt)} 갱신`
+    : undefined;
   const items: Attachment[] = post.draft.mediaIds.map((id, index) => ({
     ...(available.find((item) => item.mediaId === id) ?? {
       kind: 'image',
@@ -50,18 +64,41 @@ export function RegisteredPostCard({
     ordinal: index + 1,
   }));
   return (
-    <article className="post-card" aria-label={`@${post.account} 등록한 게시글`}>
+    <article
+      className="post-card"
+      aria-label={post.origin === 'local' ? '직접 작성한 게시글' : `@${post.account} 등록한 게시글`}
+    >
       <MediaCarousel
         items={items}
         includeEditsInType
         ordinal={ordinal}
         onChange={onChange}
         onOpen={onOpen}
-        label={`@${post.account} 등록 미디어`}
+        label={post.origin === 'local' ? '직접 작성한 미디어' : `@${post.account} 등록 미디어`}
+        overlayDescription={metricsDescription}
+        overlay={
+          metricsPublication && (
+            <dl className="post-card-metrics" aria-label={`게시글 통계 · ${metricsDescription}`}>
+              {metrics.map(({ label, value, icon }) => (
+                <div key={label}>
+                  <dt>
+                    <Icon name={icon} />
+                    <span className="sr-only">{label}</span>
+                  </dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )
+        }
       />
       <button className="post-card-copy" type="button" onClick={onOpen}>
         <div className="post-card-account">
-          <strong>@{post.account}</strong>
+          {post.origin === 'local' ? (
+            <strong className="post-origin-text">직접 작성</strong>
+          ) : (
+            <strong>@{post.account}</strong>
+          )}
           <Icon name="right" />
         </div>
         <p>{post.draft.caption || '캡션이 없는 게시글'}</p>

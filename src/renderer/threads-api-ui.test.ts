@@ -12,6 +12,7 @@ import {
 import { threadsUploadLabel, ThreadsUploadOverlay } from './ThreadsUploadOverlay';
 import { RegisteredPostCard } from './RegisteredPostCard';
 import { PostRegistrationModal } from './PostRegistrationModal';
+import { LocalPostModal } from './LocalPostModal';
 import {
   latestPublication,
   publicationBlocksUpload,
@@ -432,6 +433,47 @@ function renderRegisteredDetail(value: ThreadsState, post = registeredPost()) {
   );
 }
 
+it('identifies directly authored cards and details without exposing a synthetic source account', () => {
+  const post: Post = { ...registeredPost(), origin: 'local', account: ':local:', caption: '' };
+  const card = renderToStaticMarkup(
+    createElement(RegisteredPostCard, {
+      post,
+      onChange: () => undefined,
+      onOpen: () => undefined,
+      onDelete: () => undefined,
+      onExport: () => undefined,
+      exporting: false,
+      actionsDisabled: false,
+    }),
+  );
+  const detail = renderRegisteredDetail(state(), post);
+  expect(card).toContain('<strong class="post-origin-text">직접 작성</strong>');
+  expect(card).not.toContain('post-origin-badge');
+  expect(detail).toContain('post-origin-badge');
+  for (const html of [card, detail]) {
+    expect(html).toContain('직접 작성');
+    expect(html).not.toContain('@:local:');
+  }
+  expect(detail).not.toContain('원본 캡션');
+  expect(detail).toContain('API 업로드');
+  expect(detail).toContain('Locally revised caption');
+  expect(renderRegisteredDetail(state())).toContain('@source');
+});
+
+it('starts direct composition with a file picker and manual caption, requiring media before registration', () => {
+  const html = renderToStaticMarkup(
+    createElement(LocalPostModal, {
+      onSave: async () => undefined,
+      onClose: () => undefined,
+    }),
+  );
+  expect(html).toContain('<h2 id="local-post-title">등록</h2>');
+  expect(html).toContain('파일 선택');
+  expect(html).toContain('aria-label="직접 작성 캡션"');
+  expect(html).toMatch(/class="primary" disabled="">등록<\/button>/);
+  expect(html).not.toContain('원본 캡션');
+});
+
 it.each([
   ['missing publication', undefined],
   ['preparing', publication({ status: 'preparing', remoteId: null })],
@@ -450,6 +492,48 @@ it.each([
   const card = renderRegisteredCard(item);
   expect(card).not.toContain('등록 완료');
   expect(card).not.toContain('post-published-marker');
+  expect(card).not.toContain('post-card-metrics');
+});
+
+it('shows cached post metrics over card media, preserving zero and missing values on refresh errors', () => {
+  const card = renderRegisteredCard(
+    publication({
+      metrics: { views: 1234, likes: 0, replies: null },
+      metricsUpdatedAt: '2026-09-29T01:00:00Z',
+      metricsProblem: { code: 'offline', message: '다시 조회해야 합니다.' },
+    }),
+  );
+  expect(card).toContain('class="post-card-metrics"');
+  expect(card).toContain(
+    `<span class="sr-only">조회</span></dt><dd>${(1234).toLocaleString()}</dd>`,
+  );
+  expect(card).toContain('<span class="sr-only">좋아요</span></dt><dd>0</dd>');
+  expect(card).toContain('<span class="sr-only">댓글</span></dt><dd>—</dd>');
+  expect(card).toContain('갱신');
+  expect(card).not.toContain('다시 조회해야 합니다.');
+  expect(card.indexOf('post-card-metrics')).toBeLessThan(card.indexOf('post-card-copy'));
+});
+
+it.each([
+  publication(),
+  publication({ metrics: { views: 5, likes: 1, replies: 0 } }),
+  publication({
+    status: 'uncertain',
+    metrics: { views: 5, likes: 1, replies: 0 },
+    metricsUpdatedAt: '2026-09-29T01:00:00Z',
+  }),
+  publication({
+    kind: 'reply',
+    metrics: { views: 5, likes: 1, replies: 0 },
+    metricsUpdatedAt: '2026-09-29T01:00:00Z',
+  }),
+  publication({
+    remoteId: null,
+    metrics: { views: 5, likes: 1, replies: 0 },
+    metricsUpdatedAt: '2026-09-29T01:00:00Z',
+  }),
+])('hides card metrics until a confirmed post has fetched statistics', (item) => {
+  expect(renderRegisteredCard(item)).not.toContain('post-card-metrics');
 });
 
 it('marks a successfully published post beside download even after its local draft is edited', () => {

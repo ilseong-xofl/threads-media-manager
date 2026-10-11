@@ -134,6 +134,9 @@ def selected_post(snapshot, post_key, expected_revision=None):
 
 
 def post_text(post):
+    if post.get("origin") == "local":
+        return (f"구분: 개인 등록\n등록일: {post.get('draft', {}).get('createdAt') or post.get('observedAt') or ''}\n\n"
+                f"캡션\n{post['caption']}").encode("utf-8")
     collected = post.get("collectedAt")
     if collected:
         try:

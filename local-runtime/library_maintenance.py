@@ -23,6 +23,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collection_view as view
 import edit_schema
+import local_post_store
 from threads_runner import attempts
 from threads_runner.deletion_state import database_deletions, excel_deletions, require_no_pending, source_deletions
 from threads_runner.parent_monitor import MonitorError, ParentMonitor
@@ -42,6 +43,8 @@ BASE_COLUMNS = {
     "requests": ("id", "job_id", "url_hash", "hostname", "hop", "consumed_at", "http_status", "content_type", "stage"),
 }
 OPTIONAL_COLUMNS = {
+    "local_posts": local_post_store.POST_COLUMNS,
+    "local_post_media": local_post_store.MEDIA_COLUMNS,
     "post_drafts": view.POST_DRAFT_COLUMNS,
     "post_comments": ("account", "post_id", "caption", "link", "updated_at"),
     "post_deletions": ("account", "post_id", "deleted_at"),
@@ -130,6 +133,7 @@ def validate_db(db, *, backup=False):
     read_comments(db)
     database_deletions(None, db)
     source_deletions(None, db)
+    local_post_store.read(db, meta["library_id"])
     previous_factory = db.row_factory
     try:
         db.row_factory = sqlite3.Row
@@ -255,6 +259,8 @@ def validate_files(db, root, *, check=lambda: False):
         FROM jobs j JOIN media m USING(media_id) WHERE j.status='complete'""").fetchall()
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='media_edits'").fetchone():
         records += db.execute("SELECT edit_id,account,post_id,final_rel,size,sha256 FROM media_edits").fetchall()
+    _, local_media = local_post_store.read(db, json_meta(db)["library_id"])
+    records += [(item["media_id"], item["account"], item["post_id"], item["final_rel"], item["size"], item["sha256"]) for item in local_media]
     available = {}
     for media_id, account, post_id, relative, size, digest in records:
         check_cancel(check)
@@ -387,9 +393,32 @@ def metadata_restore(db, backup, root, available, deleted, check):
     # An older backup must not silently remove the sole remaining registered
     # reference after its collected entry was removed. Explicit draft deletion
     # owns the final file cleanup; metadata restore never deletes media.
-    retained_current = (source_deletions(root, db) - deleted) & current.keys()
+    local_posts, local_media = local_post_store.read(db, json_meta(db)["library_id"])
+    backed_posts, backed_media = local_post_store.read(backup, json_meta(db)["library_id"])
+    local_keys = {(row["account"], row["post_id"]) for row in local_posts}
+    retained_current = ((source_deletions(root, db) | local_keys) - deleted) & current.keys()
     for key in retained_current - accepted.keys():
         accepted[key] = current[key]
+    restored_posts, restored_media = [], []
+    for row in backed_posts:
+        key = row["account"], row["post_id"]
+        if key in deleted:
+            continue
+        records = [item for item in backed_media if (item["account"], item["post_id"]) == key]
+        if key in local_keys:
+            existing = next(item for item in local_posts if (item["account"], item["post_id"]) == key)
+            existing_media = [item for item in local_media if (item["account"], item["post_id"]) == key]
+            if existing != row or existing_media != records:
+                raise MaintenanceError("restore_media_unavailable", "개인 등록 글의 미디어 연결이 백업과 다릅니다.")
+            continue
+        for item in records:
+            check_cancel(check)
+            if item["media_id"] in available:
+                raise MaintenanceError("restore_media_unavailable", "개인 등록 글의 미디어 식별자가 충돌합니다.")
+            view.local_file(root, item)
+            available[item["media_id"]] = key
+        restored_posts.append(tuple(row[column] for column in local_post_store.POST_COLUMNS))
+        restored_media.extend(tuple(item[column] for column in local_post_store.MEDIA_COLUMNS) for item in records)
     validate_ai_drafts(db, root, available, deleted, drafts=accepted, check=check, strict=True)
     for key, draft in accepted.items():
         if any(available.get(media_id) != key for media_id in draft["mediaIds"]):
@@ -404,6 +433,10 @@ def metadata_restore(db, backup, root, available, deleted, check):
         db.execute("BEGIN IMMEDIATE")
         db.execute(DRAFT_SQL)
         db.execute(COMMENT_SQL)
+        if restored_posts:
+            local_post_store.create_schema(db)
+            db.executemany("INSERT INTO local_posts VALUES(?,?,?)", restored_posts)
+            db.executemany("INSERT INTO local_post_media VALUES(?,?,?,?,?,?,?,?)", restored_media)
         db.execute("DELETE FROM post_drafts")
         db.execute("DELETE FROM post_comments")
         for (account, post_id), draft in accepted.items():

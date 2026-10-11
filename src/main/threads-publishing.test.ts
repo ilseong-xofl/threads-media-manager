@@ -202,6 +202,45 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+it('publishes a directly authored draft without collection data and keeps reply and duplicate safeguards', async () => {
+  const f = await fixture();
+  f.post.origin = 'local';
+  f.post.account = ':local:';
+  f.post.postId = 'e'.repeat(32);
+  f.post.key = JSON.stringify([f.post.account, f.post.postId]);
+  f.post.caption = '';
+  f.post.originalUrl = '';
+  f.post.source = '';
+  f.post.downloadExcluded = true;
+  f.view.snapshot!.sourceCount = 0;
+  const input = { postKey: f.post.key, expectedRevision: 1 };
+  expect((await f.controller.publish(input, 'post')).status).toBe('ok');
+  expect(f.options.prepareMedia).toHaveBeenCalledOnce();
+  expect(f.storage.upload).toHaveBeenCalledOnce();
+  expect(f.getSaved()?.records[0]).toMatchObject({
+    postKey: f.post.key,
+    text: f.post.draft!.caption,
+    accountId: '123',
+    remoteId: '9000',
+    status: 'published',
+  });
+  expect(await f.restart().publish(input, 'post')).toMatchObject({
+    status: 'error',
+    problem: { code: 'threads_duplicate' },
+  });
+  expect(f.client.publishContainer).toHaveBeenCalledOnce();
+  f.client.publishContainer.mockResolvedValueOnce({ id: '9001' });
+  expect(
+    (await f.controller.publish({ ...input, expectedCommentUpdatedAt: AT }, 'reply')).status,
+  ).toBe('ok');
+  expect(f.client.createContainer).toHaveBeenLastCalledWith(TOKEN, '123', {
+    media_type: 'TEXT',
+    text: 'Approved reply\nhttps://example.test/product',
+    reply_to_id: '9000',
+  });
+  expect(f.storage.upload).toHaveBeenCalledOnce();
+});
+
 describe('publication history when moving computers', () => {
   it('exports only this library, without calling credentials or remote APIs', async () => {
     const f = await fixture([savedRecord(1), savedRecord(2, { libraryId: 'd'.repeat(32) })]);

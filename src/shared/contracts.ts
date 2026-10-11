@@ -1,5 +1,6 @@
 import type { ThreadsApiMethods } from './threads-api';
 export const MEDIA_SCHEME = 'threads-media';
+export const IMPORT_MEDIA_SCHEME = 'threads-import';
 export const IPC = {
   capabilities: 'tmm:app:capabilities',
   reportUpdateBlocked: 'tmm:app:update-blocked',
@@ -22,6 +23,10 @@ export const IPC = {
   savePostComment: 'tmm:post:comment',
   openPostLink: 'tmm:post:open-link',
   savePostDraft: 'tmm:post:draft',
+  pickLocalPostMedia: 'tmm:local-post:pick',
+  addLocalPostMedia: 'tmm:local-post:add',
+  createLocalPost: 'tmm:local-post:create',
+  discardLocalPostMedia: 'tmm:local-post:discard',
   deletePostDraft: 'tmm:post:draft-delete',
   exportPostDraft: 'tmm:post:draft-export',
   generateCaption: 'tmm:caption:generate',
@@ -67,6 +72,7 @@ export interface Attachment {
   createdAt?: string;
 }
 export interface Post {
+  origin?: 'collected' | 'local';
   key: string;
   account: string;
   postId: string;
@@ -105,6 +111,31 @@ export interface SavePostDraftInput {
 }
 export type PostDraftResult =
   | { status: 'saved'; draft: PostDraft; view: CollectionView }
+  | { status: 'error'; problem: Problem };
+export interface LocalPostMedia {
+  id: string;
+  name: string;
+  kind: 'image' | 'video';
+  url: string;
+}
+export interface LocalPostMediaSelection {
+  status: 'selected';
+  selectionId: string;
+  files: LocalPostMedia[];
+}
+export interface LocalPostMediaCurrent {
+  selectionId: string;
+  mediaIds: string[];
+}
+export type PickLocalPostMediaResult =
+  LocalPostMediaSelection | { status: 'cancelled' } | { status: 'error'; problem: Problem };
+export interface CreateLocalPostInput {
+  selectionId: string;
+  mediaIds: string[];
+  caption: string;
+}
+export type CreateLocalPostResult =
+  | { status: 'saved'; postKey: string; view: CollectionView }
   | { status: 'error'; problem: Problem };
 export interface PostDraftActionInput {
   postKey: string;
@@ -211,6 +242,13 @@ export interface ThreadsMediaApi extends ThreadsApiMethods {
   savePostComment(input: SavePostCommentInput): Promise<PostCommentResult>;
   openPostLink(input: OpenPostLinkInput): Promise<PostLinkResult>;
   savePostDraft(input: SavePostDraftInput): Promise<PostDraftResult>;
+  pickLocalPostMedia(): Promise<PickLocalPostMediaResult>;
+  addLocalPostMedia(
+    files: File[],
+    current?: LocalPostMediaCurrent,
+  ): Promise<PickLocalPostMediaResult>;
+  createLocalPost(input: CreateLocalPostInput): Promise<CreateLocalPostResult>;
+  discardLocalPostMedia(selectionId: string): Promise<void>;
   deletePostDraft(input: PostDraftActionInput): Promise<DeletePostDraftResult>;
   exportPostDraft(input: PostDraftActionInput): Promise<PostExportResult>;
   generateCaption(input: GenerateCaptionInput): Promise<GenerateCaptionResult>;

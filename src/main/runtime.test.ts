@@ -33,6 +33,16 @@ it('fails on an incomplete installation instead of falling back to user-installe
   expect(() => configureRuntime(true, '/app.asar', '/resources', 'win32')).toThrow('누락');
 });
 
+it.each(['local_post.py', 'local_post_store.py'])(
+  'rejects a package missing personal post worker %s',
+  (file) => {
+    vi.mocked(existsSync).mockImplementation(
+      (path) => !String(path).endsWith(join('local-runtime', file)),
+    );
+    expect(() => configureRuntime(true, '/app.asar', '/resources', 'win32')).toThrow('누락');
+  },
+);
+
 it.each(runtimeManifest.codexRequiredFiles)(
   'rejects a package missing Codex dependency %s',
   (file) => {

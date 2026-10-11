@@ -18,6 +18,8 @@ Codex 플러그인으로 Threads 게시글 정보를 수집하고, Electron 앱�
 
 ## 현재 범위
 
+- **직접 작성:** 등록 탭의 **등록** 버튼을 눌러 내 이미지·영상을 선택하거나 창에 끌어다 놓고 순서와 캡션을 정해 등록한다. 다시 끌어다 놓으면 선택 목록 뒤에 추가한다. 카드의 짙은 주황색 **직접 작성** 텍스트로 구분하며 등록 후 기존 **API 업로드**를 사용할 수 있다. 앱은 파일을 복사해 보관하고 외부 원본을 변경하지 않는다. [등록 계약](docs/phase-2-registration.md).
+
 [수집 플러그인](plugins/threads-collector/README.md)은 초기 설정·설치 점검·수집·영구 원본 저장을 제공한다. 다운로드 스킬은 제공하지 않는다. 설치·업데이트는 [전용 GitHub 저장소](https://github.com/ilseong-xofl/threads-collector)를 사용한다. 깨끗한 Windows의 최종 시험은 [수집 가이드](docs/windows-collector-test.md)와 [로컬 앱 가이드](docs/windows-install-test.md) 순서로 진행한다.
 
 - **다운로드:** 한 번 클릭으로 현재 미완료 게시글을 회차별 순차 처리한다. 파일·회차·계정 대기와 첫 오류 중단을 유지한다. [다운로드 계약](docs/phase-1e-download.md).

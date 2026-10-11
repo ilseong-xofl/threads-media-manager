@@ -17,7 +17,7 @@ import { configureAutoUpdates } from './updates';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { IPC, MEDIA_SCHEME } from '../shared/contracts';
+import { IPC, MEDIA_SCHEME, IMPORT_MEDIA_SCHEME } from '../shared/contracts';
 import {
   CollectionController,
   problem,
@@ -44,6 +44,12 @@ import { MediaDeleteController, launchMediaDelete, mediaDeleteConfirmation } fro
 import { PostCommentController, launchPostComment } from './post-comment';
 import { openPostLink } from './open-post-link';
 import { PostDraftController, launchPostDraft } from './post-draft';
+import {
+  LocalPostController,
+  LOCAL_POST_EXTENSIONS,
+  launchLocalPost,
+  launchLocalPostRecovery,
+} from './local-post';
 import { CaptionGenerator } from './caption-generator';
 import { CodexConnection } from './codex-connection';
 import { ContentGenerator, parseContentInput } from './content-generator';
@@ -77,6 +83,16 @@ app.setPath(
 protocol.registerSchemesAsPrivileged([
   {
     scheme: MEDIA_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      stream: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: IMPORT_MEDIA_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -126,6 +142,7 @@ const edits: MediaEditController = new MediaEditController(
     deletions.active ||
     comments.active ||
     drafts.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active,
@@ -149,6 +166,7 @@ const deletions: MediaDeleteController = new MediaDeleteController(
     edits.active ||
     comments.active ||
     drafts.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active,
@@ -164,6 +182,7 @@ const comments: PostCommentController = new PostCommentController(
     edits.active ||
     deletions.active ||
     drafts.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active,
@@ -179,17 +198,18 @@ const drafts: PostDraftController = new PostDraftController(
     edits.active ||
     deletions.active ||
     comments.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active,
 );
 const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
   (root) => controller.refresh(root),
-  async (_input, signal, sourceDeleted) => {
+  async (_input, signal, sourceDeleted, origin) => {
     if (!window || signal.aborted) return false;
     const choice = await dialog.showMessageBox(
       window,
-      postDraftDeleteConfirmation(sourceDeleted, signal),
+      postDraftDeleteConfirmation(sourceDeleted, signal, origin),
     );
     return choice.response === 1 && !signal.aborted;
   },
@@ -203,6 +223,7 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     deletions.active ||
     comments.active ||
     drafts.active ||
+    localPosts.active ||
     captions.active ||
     content.active,
 );
@@ -225,6 +246,36 @@ const content = new ContentGenerator(
     const { width, height } = image.getSize();
     return !image.isEmpty() && width >= 256 && height >= 256 && width * height <= 40_000_000;
   },
+);
+
+const localPosts: LocalPostController = new LocalPostController(
+  async () => {
+    if (!window) return null;
+    const choice = await dialog.showOpenDialog(window, {
+      title: '직접 작성할 글의 이미지·영상 선택',
+      buttonLabel: '파일 선택',
+      filters: [{ name: '이미지·영상', extensions: LOCAL_POST_EXTENSIONS }],
+      properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
+    });
+    return choice.canceled ? null : choice.filePaths;
+  },
+  (root) => controller.refresh(root),
+  launchLocalPost(runtimeRoot),
+  () => controller.root,
+  () =>
+    maintenance.active ||
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    drafts.active ||
+    draftDeletions.active ||
+    captions.active ||
+    content.active ||
+    threads.active,
+  launchLocalPostRecovery(runtimeRoot),
 );
 
 const maintenance: LibraryMaintenanceController = new LibraryMaintenanceController(
@@ -293,6 +344,7 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
     deletions.active ||
     comments.active ||
     drafts.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active ||
@@ -353,6 +405,7 @@ const threads = new ThreadsPublishingController({
     deletions.active ||
     comments.active ||
     drafts.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active,
@@ -426,6 +479,7 @@ function updateBusy(): boolean {
     deletions.active ||
     comments.active ||
     drafts.active ||
+    localPosts.active ||
     draftDeletions.active ||
     captions.active ||
     content.active ||
@@ -467,9 +521,11 @@ function createWindow(): void {
   });
   window.webContents.on('did-start-loading', () => {
     rendererUpdateBlocked = true;
+    void localPosts.shutdown();
   });
   window.webContents.on('render-process-gone', () => {
     rendererUpdateBlocked = true;
+    void localPosts.shutdown();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -492,9 +548,12 @@ function createWindow(): void {
         !archives.active &&
         !edits.active &&
         !deletions.active &&
+        !localPosts.active &&
+        !localPosts.hasSelection &&
         !(
           comments.active ||
           drafts.active ||
+          localPosts.active ||
           draftDeletions.active ||
           captions.active ||
           content.active ||
@@ -511,6 +570,7 @@ function createWindow(): void {
       deletions.shutdown(),
       comments.shutdown(),
       drafts.shutdown(),
+      localPosts.shutdown(),
       draftDeletions.shutdown(),
       captions.cancelAndWait(),
       content.cancelAndWait(),
@@ -553,6 +613,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             : new Response(null, { status: 404 })
           : registry.respond(request),
       );
+      protocol.handle(IMPORT_MEDIA_SCHEME, (request) => localPosts.respond(request));
       const userData = app.getPath('userData');
       try {
         const settings =
@@ -633,6 +694,12 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             if (channel === IPC.syncThreadsInsights) return threads.sync();
             if (channel === IPC.reconcileThreadsPublication) return threads.reconcile(args[0]);
           }
+          if (channel === IPC.discardLocalPostMedia) {
+            if (args.length !== 1 || typeof args[0] !== 'string')
+              throw new Error('Unexpected arguments');
+            await localPosts.discard(args[0]);
+            return;
+          }
           if (
             threads.publishing &&
             ![IPC.current, IPC.downloadStatus, IPC.libraryRoot, IPC.openPostLink].some(
@@ -663,6 +730,35 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                 message: 'AI 이미지 생성은 개발 실행에서만 사용할 수 있습니다.',
               },
             };
+          }
+          if (
+            channel === IPC.pickLocalPostMedia ||
+            channel === IPC.addLocalPostMedia ||
+            channel === IPC.createLocalPost
+          ) {
+            if (args.length !== (channel === IPC.pickLocalPostMedia ? 0 : 1))
+              throw new Error('Unexpected arguments');
+            if (!controller.root)
+              return {
+                status: 'error',
+                problem: {
+                  code: 'local_post_folder',
+                  message: '설정에서 작업 폴더를 연결한 뒤 새 글을 작성하세요.',
+                },
+              };
+            if (deletionNeedsRecovery())
+              return {
+                status: 'error',
+                problem: {
+                  code: 'deletion_recovery_required',
+                  message: '중단된 삭제 작업을 먼저 복구하세요.',
+                },
+              };
+            if (channel === IPC.pickLocalPostMedia) return localPosts.pick(controller.root);
+            if (channel === IPC.addLocalPostMedia) return localPosts.add(controller.root, args[0]);
+            const result = await localPosts.create(controller.root, args[0]);
+            if (result.status === 'saved') controller.view = result.view;
+            return result;
           }
           if (channel === IPC.openPostLink) {
             if (args.length !== 1)
@@ -721,6 +817,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                   ? await maintenance.restore(controller.root)
                   : await maintenance.reconnect(controller.root);
             if (result.status === 'complete') {
+              if (channel !== IPC.backupDatabase) await localPosts.shutdown();
               controller.view = result.view;
               if ((channel === IPC.reconnectLibrary || channel === IPC.choose) && controller.root) {
                 try {
@@ -775,6 +872,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               deletions.active ||
               comments.active ||
               drafts.active ||
+              localPosts.active ||
               draftDeletions.active ||
               captions.active ||
               content.active ||
@@ -879,6 +977,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                 deletions.active ||
                 comments.active ||
                 drafts.active ||
+                localPosts.active ||
                 draftDeletions.active ||
                 captions.active ||
                 content.active ||
@@ -930,6 +1029,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               deletions.active ||
               comments.active ||
               drafts.active ||
+              localPosts.active ||
               draftDeletions.active ||
               captions.active ||
               content.active ||
@@ -953,6 +1053,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             deletions.active ||
             comments.active ||
             drafts.active ||
+            localPosts.active ||
             draftDeletions.active ||
             captions.active ||
             content.active
@@ -1032,9 +1133,12 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         !archives.active &&
         !edits.active &&
         !deletions.active &&
+        !localPosts.active &&
+        !localPosts.hasSelection &&
         !(
           comments.active ||
           drafts.active ||
+          localPosts.active ||
           draftDeletions.active ||
           captions.active ||
           content.active ||
@@ -1051,6 +1155,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       deletions.shutdown(),
       comments.shutdown(),
       drafts.shutdown(),
+      localPosts.shutdown(),
       draftDeletions.shutdown(),
       captions.shutdown(),
       content.shutdown(),

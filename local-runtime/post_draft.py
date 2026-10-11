@@ -145,7 +145,7 @@ def execute(data, *, check=lambda: False, include_ai=False):
         selected_post(current, data)
         if stable_snapshot(current) != stable_snapshot(snapshot):
             raise DraftError("source_changed", "저장하는 동안 게시글이나 파일 정보가 변경되었습니다. 다시 확인하세요.")
-        if data.get("kind") == "delete" and post.get("sourceDeleted"):
+        if data.get("kind") == "delete" and (post.get("sourceDeleted") or post.get("origin") == "local"):
             plan = delete_media.plan(root, {"kind": "post", "postKey": data["postKey"]}, lock, disposition="purge")
             check_revision(plan.get("draft"), data["expectedRevision"])
             cancelled(check)

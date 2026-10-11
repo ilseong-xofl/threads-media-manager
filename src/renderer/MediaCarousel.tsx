@@ -1,4 +1,4 @@
-import { useRef, useState, type Ref } from 'react';
+import { useRef, useState, type ReactNode, type Ref } from 'react';
 import type { Attachment } from '../shared/contracts';
 import { Icon } from './Icon';
 
@@ -76,6 +76,8 @@ export function MediaCarousel({
   onDeleteEdit,
   deleteDisabled = false,
   includeEditsInType = false,
+  overlay,
+  overlayDescription,
 }: {
   items: Attachment[];
   ordinal?: number;
@@ -88,6 +90,8 @@ export function MediaCarousel({
   onDeleteEdit?(mediaId: string): void;
   deleteDisabled?: boolean;
   includeEditsInType?: boolean;
+  overlay?: ReactNode;
+  overlayDescription?: string;
 }) {
   const found = items.findIndex((item) => item.ordinal === ordinal);
   const index = found < 0 ? 0 : found;
@@ -162,6 +166,7 @@ export function MediaCarousel({
             className="media-open"
             type="button"
             aria-label={`${label} 상세 보기`}
+            title={overlayDescription}
             onClick={() => {
               if (Date.now() >= swipeUntil.current) onOpen();
             }}
@@ -171,6 +176,7 @@ export function MediaCarousel({
         ) : (
           media
         )}
+        {overlay}
         {item && (
           <span className="media-type">
             <Icon name={hasVideos ? 'play' : 'image'} />

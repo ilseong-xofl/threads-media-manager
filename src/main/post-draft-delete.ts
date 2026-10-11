@@ -19,14 +19,18 @@ export type PostDraftDeleteCommand = PostDraftActionInput & {
 export function postDraftDeleteConfirmation(
   sourceDeleted: boolean,
   signal: AbortSignal,
+  origin?: 'collected' | 'local',
 ): MessageBoxOptions {
   return {
     type: 'warning',
     title: '등록한 게시글 삭제',
     message: '작성한 게시글을 삭제할까요?',
-    detail: sourceDeleted
-      ? '수집 탭에서 이미 삭제한 게시글입니다. 등록한 캡션·댓글 정보와 선택하지 않은 항목을 포함한 모든 이미지·영상·편집본 파일을 함께 삭제합니다. 삭제한 파일은 복구할 수 없습니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'
-      : '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 수집 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.',
+    detail:
+      origin === 'local'
+        ? '직접 작성한 게시글의 캡션·댓글과 앱에 복사해 보관한 이미지·영상·편집본을 삭제합니다. 처음 선택한 내 컴퓨터의 원본 파일은 그대로 보존됩니다. 삭제한 앱 보관 파일은 복구할 수 없습니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'
+        : sourceDeleted
+          ? '수집 탭에서 이미 삭제한 게시글입니다. 등록한 캡션·댓글 정보와 선택하지 않은 항목을 포함한 모든 이미지·영상·편집본 파일을 함께 삭제합니다. 삭제한 파일은 복구할 수 없습니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'
+          : '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 수집 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.',
     buttons: ['취소', '삭제'],
     defaultId: 0,
     cancelId: 0,
@@ -116,6 +120,7 @@ export class PostDraftDeleteController {
       input: PostDraftActionInput,
       signal: AbortSignal,
       sourceDeleted: boolean,
+      origin?: 'collected' | 'local',
     ) => Promise<boolean>,
     private launch: LaunchPostDraftDelete,
     private busy: () => boolean = () => false,
@@ -160,7 +165,12 @@ export class PostDraftDeleteController {
           '등록 게시글이 변경되었습니다. 최신 게시글을 다시 열어 삭제하세요.',
         );
       this.confirmation = new AbortController();
-      const confirmed = await this.confirm(input, this.confirmation.signal, !!post.sourceDeleted);
+      const confirmed = await this.confirm(
+        input,
+        this.confirmation.signal,
+        !!post.sourceDeleted,
+        post.origin,
+      );
       this.confirmation = null;
       if (!confirmed || this.cancelled) return { status: 'cancelled' };
       this.job = this.launch({
@@ -191,7 +201,10 @@ export class PostDraftDeleteController {
           snapshot: snapshot && {
             ...snapshot,
             posts: snapshot.posts
-              .filter((item) => !post.sourceDeleted || item.key !== input.postKey)
+              .filter(
+                (item) =>
+                  (!post.sourceDeleted && post.origin !== 'local') || item.key !== input.postKey,
+              )
               .map((item) => {
                 if (item.key !== input.postKey) return item;
                 const clean = { ...item };

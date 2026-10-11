@@ -410,7 +410,13 @@ function RegistrationDialog({
       <header className="modal-header" inert={discard || uploading}>
         <div>
           <h2 id="registration-title">{editing ? '등록 화면' : '상세 화면'}</h2>
-          <p className="registration-account">@{post.account}</p>
+          <p className="registration-account">
+            {post.origin === 'local' ? (
+              <span className="post-origin-badge">직접 작성</span>
+            ) : (
+              `@${post.account}`
+            )}
+          </p>
         </div>
         <button
           type="button"
@@ -664,15 +670,17 @@ function RegistrationDialog({
               <h3 id="registration-caption-title">캡션</h3>
             </div>
             <div className="registration-caption-box">
-              <div
-                className="registration-original-caption"
-                aria-labelledby="registration-original-title"
-              >
-                <h4 className="registration-original-label" id="registration-original-title">
-                  원본 캡션
-                </h4>
-                <p className="caption">{post.caption || '원본 캡션이 없습니다.'}</p>
-              </div>
+              {post.origin !== 'local' && (
+                <div
+                  className="registration-original-caption"
+                  aria-labelledby="registration-original-title"
+                >
+                  <h4 className="registration-original-label" id="registration-original-title">
+                    원본 캡션
+                  </h4>
+                  <p className="caption">{post.caption || '원본 캡션이 없습니다.'}</p>
+                </div>
+              )}
               {editing ? (
                 <>
                   <textarea

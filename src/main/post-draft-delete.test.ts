@@ -105,7 +105,12 @@ describe('registered post deletion', () => {
     const { controller, confirm, launch } = setup();
     const result = await controller.delete(root, input);
     expect(result).toEqual({ status: 'deleted', view: withoutDraft() });
-    expect(confirm).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal), false);
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(
+      input,
+      expect.any(AbortSignal),
+      false,
+      undefined,
+    );
     expect(launch).toHaveBeenCalledExactlyOnceWith({
       root,
       kind: 'delete',
@@ -301,6 +306,30 @@ describe('draft deletion worker boundary', () => {
 });
 
 describe('last registered copy deletion', () => {
+  it('describes personal copy deletion while preserving the externally selected original', () => {
+    const options = postDraftDeleteConfirmation(false, new AbortController().signal, 'local');
+    expect(options.detail).toContain('직접 작성한 게시글');
+    expect(options.detail).toContain('앱에 복사해 보관한');
+    expect(options.detail).toContain('내 컴퓨터의 원본 파일은 그대로 보존');
+    expect(options.detail).toContain('Threads에 게시된 게시글과 댓글은 유지');
+  });
+  it('removes a deleted personal post from fallback views without marking it source-deleted', async () => {
+    const original = view({ ...post(), origin: 'local', sourceDeleted: false });
+    const { controller, refresh, launch, confirm } = setup(original);
+    refresh
+      .mockReset()
+      .mockResolvedValueOnce(original)
+      .mockRejectedValueOnce(new Error('Read failed'));
+    const result = await controller.delete(root, input);
+    expect(confirm).toHaveBeenCalledWith(input, expect.any(AbortSignal), false, 'local');
+    expect(launch).toHaveBeenCalledWith({
+      root,
+      kind: 'delete',
+      ...input,
+      expectedSourceDeleted: false,
+    });
+    expect(result).toMatchObject({ status: 'deleted', view: { snapshot: { posts: [] } } });
+  });
   it('confirms file removal only after the source was deleted', () => {
     const signal = new AbortController().signal;
     expect(postDraftDeleteConfirmation(false, signal).detail).toContain('그대로 보존');
@@ -319,7 +348,7 @@ describe('last registered copy deletion', () => {
       if (fail) refresh.mockRejectedValueOnce(new Error('read failed'));
       else refresh.mockResolvedValueOnce(hidden);
       const result = await controller.delete(root, input);
-      expect(confirm).toHaveBeenCalledWith(input, expect.any(AbortSignal), true);
+      expect(confirm).toHaveBeenCalledWith(input, expect.any(AbortSignal), true, undefined);
       expect(launch).toHaveBeenCalledWith({
         root,
         kind: 'delete',

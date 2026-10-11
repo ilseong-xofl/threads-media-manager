@@ -17,6 +17,7 @@ import type {
   CaptionLanguage,
   PostDraftActionInput,
   AIContentDraft,
+  CreateLocalPostInput,
 } from '../shared/contracts';
 import { displayDate, filterPosts, isSavedPost, pendingPostCount, postMedia } from './view-model';
 import { Icon } from './Icon';
@@ -30,6 +31,7 @@ import { defaultDateRange, type DateRange } from './date-range';
 import { DatePicker } from './DatePicker';
 import { PostRegistrationModal } from './PostRegistrationModal';
 import { RegisteredPostCard } from './RegisteredPostCard';
+import { LocalPostModal } from './LocalPostModal';
 import { matchesDateRange } from './date-range';
 import { parseAICaptionResponse } from './ai-caption-response';
 import './registration.css';
@@ -54,6 +56,7 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [positions, setPositions] = useState<Record<string, number>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localPostOpen, setLocalPostOpen] = useState(false);
   const [maintaining, setMaintaining] = useState(false);
   const [startingDownload, setStartingDownload] = useState(false);
   const [confirmDownload, setConfirmDownload] = useState(false);
@@ -86,7 +89,7 @@ export function App() {
     new Map<string, { language: CaptionLanguage; captions: string[] | null }>(),
   );
   const threads = useThreadsApi(
-    settingsOpen || !!registration,
+    settingsOpen || !!registration || libraryTab === 'registered',
     view.snapshot?.libraryId ?? view.snapshot?.root ?? '',
   );
   const localMutation =
@@ -109,7 +112,7 @@ export function App() {
     exporting,
     localMutation,
     selected,
-    registration,
+    registration: registration ?? (localPostOpen ? {} : null),
     settingsOpen,
     contentPostKey,
     confirmDownload,
@@ -138,6 +141,7 @@ export function App() {
   );
   const downloadRecovery =
     !download.resumable && (download.recoverable || view.error?.code === 'busy');
+  const localPostRecovery = view.error?.code === 'local_post_recovery_required';
   const posts = useMemo(
     () =>
       (snapshot?.posts ?? []).map((post) =>
@@ -146,7 +150,8 @@ export function App() {
     [snapshot, aiContentEnabled],
   );
   const savedPosts = useMemo(
-    () => posts.filter((post) => !post.sourceDeleted && isSavedPost(post)),
+    () =>
+      posts.filter((post) => post.origin !== 'local' && !post.sourceDeleted && isSavedPost(post)),
     [posts],
   );
   const pendingPosts = pendingPostCount(posts);
@@ -169,7 +174,7 @@ export function App() {
           (!account || post.account === account) &&
           matchesDateRange(post.draft!.updatedAt, dateRange) &&
           (!term ||
-            `${post.account}\n${post.postId}\n${post.draft!.caption}`
+            `${post.origin === 'local' ? '직접 작성' : post.account}\n${post.postId}\n${post.draft!.caption}`
               .toLocaleLowerCase()
               .includes(term)),
       )
@@ -391,6 +396,31 @@ export function App() {
         message:
           result.view.error?.message ??
           (input.expectedRevision === null ? '게시글을 등록했습니다.' : '게시글을 수정했습니다.'),
+      });
+    } finally {
+      draftPending.current = false;
+      setSavingDraft(false);
+    }
+  }
+  async function createLocalPost(input: CreateLocalPostInput): Promise<void> {
+    if (draftPending.current) throw new Error('게시글을 저장하고 있습니다.');
+    draftPending.current = true;
+    setSavingDraft(true);
+    try {
+      const result = await window.threadsMedia.createLocalPost(input);
+      if (result.status === 'error') throw new Error(result.problem.message);
+      setView(result.view);
+      setLocalPostOpen(false);
+      setLibraryTab('registered');
+      setAccount('');
+      setQuery('');
+      setDateRange(defaultDateRange());
+      resetList();
+      setActionNotice({
+        error: !!result.view.error,
+        message: result.view.error
+          ? `게시글을 등록했습니다. ${result.view.error.message}`
+          : '직접 작성한 게시글을 등록했습니다.',
       });
     } finally {
       draftPending.current = false;
@@ -715,31 +745,52 @@ export function App() {
             </span>
           )}
         </div>
-        <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
-          <button
-            type="button"
-            aria-pressed={libraryTab === 'source'}
-            onClick={() => {
-              setLibraryTab('source');
-              setAccount('');
-              setSelected(null);
-              resetList();
-            }}
-          >
-            수집 <span>{savedPosts.length}</span>
-          </button>
-          <button
-            type="button"
-            aria-pressed={libraryTab === 'registered'}
-            onClick={() => {
-              setLibraryTab('registered');
-              setAccount('');
-              setSelected(null);
-              resetList();
-            }}
-          >
-            등록 <span>{registeredPosts.length}</span>
-          </button>
+        <div className="library-tabs-row">
+          <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
+            <button
+              type="button"
+              aria-pressed={libraryTab === 'source'}
+              onClick={() => {
+                setLibraryTab('source');
+                setAccount('');
+                setSelected(null);
+                resetList();
+              }}
+            >
+              수집 <span>{savedPosts.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={libraryTab === 'registered'}
+              onClick={() => {
+                setLibraryTab('registered');
+                setAccount('');
+                setSelected(null);
+                resetList();
+              }}
+            >
+              등록 <span>{registeredPosts.length}</span>
+            </button>
+          </div>
+          {libraryTab === 'registered' && (
+            <button
+              type="button"
+              className="primary local-post-create"
+              disabled={
+                busy ||
+                downloading ||
+                !!exporting ||
+                localMutation ||
+                (!snapshot && !localPostRecovery) ||
+                (!!view.error && !localPostRecovery) ||
+                deletionRecovery ||
+                !!draftProblem
+              }
+              onClick={() => setLocalPostOpen(true)}
+            >
+              <Icon name="plus" /> 등록
+            </button>
+          )}
         </div>
         <div className="toolbar">
           <div className="filters">
@@ -759,7 +810,7 @@ export function App() {
                 <option value="">전체 계정</option>
                 {accounts.map((value) => (
                   <option key={value} value={value}>
-                    @{value}
+                    {value === ':local:' ? '직접 작성' : `@${value}`}
                   </option>
                 ))}
               </select>
@@ -900,7 +951,7 @@ export function App() {
                 </h3>
                 <p>
                   {libraryTab === 'registered' && registeredPosts.length === 0
-                    ? '수집 목록의 상세 화면에서 작성 버튼을 눌러 미디어와 캡션을 준비하세요.'
+                    ? '등록 버튼으로 내 파일과 캡션을 등록하거나 수집 목록에서 작성하세요.'
                     : '다른 검색어, 계정 또는 날짜 범위로 다시 찾아보세요.'}
                 </p>
                 <button
@@ -1091,6 +1142,15 @@ export function App() {
           onGenerate={generateCaption}
           onCancelGeneration={() => window.threadsMedia.cancelCaption()}
           onClose={() => setRegistration(null)}
+        />
+      )}
+      {localPostOpen && (
+        <LocalPostModal
+          onSave={createLocalPost}
+          onClose={() => {
+            setLocalPostOpen(false);
+            if (localPostRecovery) void act(() => window.threadsMedia.current());
+          }}
         />
       )}
       {settingsOpen && (

@@ -29,6 +29,8 @@ export function configureRuntime(
     'bin/ffmpeg.exe',
     'bin/ffprobe.exe',
     'local-runtime/collection_view.py',
+    'local-runtime/local_post.py',
+    'local-runtime/local_post_store.py',
     'plugins/threads-collector/scripts/threads_source/excel_input.py',
     ...runtimeManifest.codexRequiredFiles.map((file) => `codex/${file}`),
   ]) {
