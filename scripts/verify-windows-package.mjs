@@ -19,6 +19,18 @@ for (const relative of [
   'resources/runtime/bin/ffmpeg.README',
 ])
   await access(join(app, relative));
+const iconVerification = [];
+for (const name of ['app-icon.png', 'app-icon.ico']) {
+  const sourceHash = createHash('sha256')
+    .update(await readFile(resolve('assets', name)))
+    .digest('hex');
+  const packagedHash = createHash('sha256')
+    .update(await readFile(join(app, 'resources', name)))
+    .digest('hex');
+  assert.equal(packagedHash, sourceHash, `Packaged app icon checksum: ${name}`);
+  iconVerification.push({ name, sha256: packagedHash });
+}
+console.log(JSON.stringify({ icons: iconVerification }));
 // Exclude the runner's Node/Python/ffmpeg from PATH while checking the shipped copies.
 const env = {
   SystemRoot: process.env.SystemRoot,
@@ -153,6 +165,7 @@ await writeFile(
   JSON.stringify(
     {
       commit: process.env.GITHUB_SHA ?? null,
+      icons: iconVerification,
       runtime: JSON.parse(result),
       codex: codexVerification,
       release,

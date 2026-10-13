@@ -10,13 +10,19 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
 import runtimeManifest from './scripts/windows-runtime.json';
+import packageMetadata from './package.json';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     appBundleId: 'com.threadsmediamanager.desktop',
     executableName: 'ThreadsMediaManager',
-    extraResource: process.platform === 'win32' ? [join('build', 'runtime')] : [],
+    icon: join(__dirname, 'assets', 'app-icon.ico'),
+    extraResource: [
+      join(__dirname, 'assets', 'app-icon.png'),
+      join(__dirname, 'assets', 'app-icon.ico'),
+      ...(process.platform === 'win32' ? [join('build', 'runtime')] : []),
+    ],
   },
   hooks: {
     preStart: async () => {
@@ -42,6 +48,8 @@ const config: ForgeConfig = {
     new MakerSquirrel({
       name: 'threads_media_manager',
       setupExe: 'ThreadsMediaManager-win32-x64-Setup.exe',
+      setupIcon: join(__dirname, 'assets', 'app-icon.ico'),
+      iconUrl: `https://raw.githubusercontent.com/ilseong-xofl/threads-media-manager/v${packageMetadata.version}/assets/app-icon.ico`,
     }),
   ],
   plugins: [

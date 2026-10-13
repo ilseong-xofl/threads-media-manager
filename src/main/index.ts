@@ -62,6 +62,10 @@ import { LibraryMaintenanceController, launchLibraryMaintenance } from './librar
 import { readLibraryPublications, saveLibraryPublications } from './library-publications';
 
 const runtimeRoot = configureRuntime(app.isPackaged, app.getAppPath(), process.resourcesPath);
+const appIconPath = join(
+  app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'assets'),
+  process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png',
+);
 const rendererEntry = app.isPackaged
   ? pathToFileURL(join(__dirname, '..', 'renderer', 'main_window', 'index.html')).href
   : MAIN_WINDOW_WEBPACK_ENTRY;
@@ -511,6 +515,7 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#f5f6f8',
     title: 'Threads Media Manager',
+    icon: appIconPath,
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       contextIsolation: true,
@@ -598,6 +603,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
   void app
     .whenReady()
     .then(async () => {
+      if (process.platform === 'darwin') app.dock?.setIcon(appIconPath);
       // Only the application renderer and managed local media may load in this session.
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
         callback(false),
