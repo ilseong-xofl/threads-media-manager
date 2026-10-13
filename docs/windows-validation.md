@@ -1,6 +1,6 @@
 # Windows 자동 검증과 설치 후보
 
-GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.4`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
+GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.5`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
 
 ## 자동으로 확인하는 범위
 
@@ -8,10 +8,18 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 2. Windows에서는 앱에 포함할 Python 3.13.15·Pillow 12.3.0·ffmpeg/ffprobe로 검사한다. 영상 도구가 없어서 관련 테스트를 건너뛰지 않도록 먼저 실행을 확인한다.
 3. Electron Forge와 Squirrel.Windows로 `ThreadsMediaManager-win32-x64-Setup.exe`, `RELEASES`, `*-full.nupkg` 생성.
 4. 패키지의 ASAR 밖 `resources/runtime`에서 Python·Pillow·SQLite·pHash·영상 생성/검증·한글/일본어/공백 경로를 오프라인 합성 자료로 확인한다. 이 검사는 개발 PC용 Python·ffmpeg를 PATH에서 제외한다.
-5. 산출물 SHA-256과 `verification.json`을 저장한다. 검사 결과에는 설치 파일 실제 실행 및 자동 업데이트가 미검증임을 별도로 기록한다.
+5. 패키지의 PNG·ICO가 소스와 동일한지 SHA-256으로 확인하고, 산출물 SHA-256과 `verification.json`을 저장한다. 검사 결과에는 설치 파일 실제 실행 및 자동 업데이트가 미검증임을 별도로 기록한다.
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
+
+## 2026-10-13 0.1.5 공개 완료
+
+- [0.1.5 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.5)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.5/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. 검은 배경의 흰색 Threads 형태 심볼과 하늘색 ILS 배지를 실행 파일·앱 창·Setup에 적용했다. 프로그램 목록용 아이콘은 해당 버전 태그의 공개 ICO 주소를 사용한다. 통계 조회·새 계정 API 업로드 안내도 소스 가이드에 포함했다.
+- 앱 소스·태그는 `c61d4654891b3180067c2066e626895890e6a184`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/38332616535)에서 TypeScript 양쪽 **43개 파일 / 1,228개**, Python Mac **567개 통과**, Windows **563개 통과·OS별 4개 제외**, 린트·타입·포맷 검사를 통과했다.
+- Windows 패키지의 PNG·ICO 해시가 확정된 원본과 일치했다. 내장 런타임·패키지 무결성과 실제 패키지 앱 실행·renderer·preload·조회 IPC를 통과했으며, CI 화면도 확인했다. `verification.json`의 `icons`와 `ui`에 결과가 포함된다. 사용자 PC의 Setup 설치·바로가기 및 프로그램 목록 표시·버전 간 업데이트와 자료 보존은 별도 실기 확인 항목이다.
+- [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/38334203899)은 동일 CI의 검증된 파일 5개를 재빌드 없이 공개했다. GitHub digest·SHA256SUMS 일치, Setup/nupkg HEAD 200과 크기 일치, 공개 ICO 원본 해시 일치, Electron feed의 **0.1.4 → 0.1.5 안내 200** 및 최신 **0.1.5 조회 204**를 확인했다.
+- 설치 파일 SHA-256: `09e56875931c583386e9f4bde7435da219a49dddd2718064b6299b19672c8eea`. Mac에는 Windows 설치 파일이나 nupkg를 내려받지 않았다. 기존 사용자 `artifacts/`는 커밋하지 않았다.
 
 ## 2026-10-12 0.1.4 공개 완료
 
