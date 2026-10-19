@@ -60,6 +60,7 @@ export interface ThreadsPublishProgress {
   total?: number;
 }
 export interface ThreadsState {
+  desktopRequestsDisabled?: boolean;
   account: ThreadsAccountView | null;
   accountProblem: Problem | null;
   storageConfigured: boolean;

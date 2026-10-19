@@ -9,6 +9,7 @@ const idle: UpdateUiState = {
   selected: null,
   registration: null,
   settingsOpen: false,
+  accountsOpen: false,
   contentPostKey: null,
   confirmDownload: false,
 };
@@ -31,6 +32,7 @@ describe('update restart protection', () => {
     ['detail and nested image/video editor', { selected: 'post:1' }],
     ['unsaved registration or comment', { registration: { postKey: 'post:1', mode: 'edit' } }],
     ['settings including connection input', { settingsOpen: true }],
+    ['account management with an unsaved token form', { accountsOpen: true }],
     ['AI draft dialog', { contentPostKey: 'post:1' }],
     ['download confirmation before its worker exists', { confirmDownload: true }],
   ])('blocks during %s even while every main worker could still be idle', (_name, change) => {

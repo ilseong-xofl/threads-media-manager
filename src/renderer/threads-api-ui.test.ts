@@ -455,7 +455,8 @@ it('identifies directly authored cards and details without exposing a synthetic 
     expect(html).not.toContain('@:local:');
   }
   expect(detail).not.toContain('원본 캡션');
-  expect(detail).toContain('API 업로드');
+  expect(detail).toContain('모바일로 보내기');
+  expect(detail).not.toContain('API 업로드');
   expect(detail).toContain('Locally revised caption');
   expect(renderRegisteredDetail(state())).toContain('@source');
 });
@@ -703,7 +704,7 @@ it('places completed reply badges immediately after the completed post on cards 
   );
 });
 
-it('keeps the published reply badge after local comment edits and distinguishes its completed button', () => {
+it('keeps the published reply badge after local comment edits without restoring a desktop publish button', () => {
   const post = registeredPost();
   post.comment = {
     caption: 'Edited after the reply was published',
@@ -716,9 +717,9 @@ it('keeps the published reply badge after local comment edits and distinguishes 
   );
   expect(detail).toContain('threads-reply-published-badge');
   expect(detail).toContain('Edited after the reply was published');
-  expect(detail).toMatch(
-    /<button[^>]*disabled=""[^>]*aria-label="댓글 API 업로드"[^>]*>.*?댓글 완료<\/button>/,
-  );
+  expect(detail).toContain('댓글 완료');
+  expect(detail).not.toContain('aria-label="댓글 API 업로드"');
+  expect(detail).toContain('휴대폰에서 원글 게시 후 별도로 게시');
 });
 
 it('does not show a completed reply for a saved comment or an unrelated account publication', () => {
@@ -825,4 +826,22 @@ it('disables publication links during other work or when the account requires re
     );
     expect(html.match(/class="threads-publication-link" disabled=""/g)).toHaveLength(2);
   }
+});
+
+it('shows paused desktop actions while preserving old publication details', () => {
+  const paused = ui(state({ desktopRequestsDisabled: true, publications: [publication()] }));
+  const settings = renderToStaticMarkup(
+    createElement(ThreadsAccountSettings, { threads: paused, enabled: true }),
+  );
+  expect(settings).toContain('토큰 확인·갱신은 휴대폰에서 직접 처리');
+  expect(settings).not.toContain('name="token"');
+  expect(settings).not.toContain('지금 조회');
+  expect(settings).toMatch(/<button[^>]*disabled=""[^>]*>토큰 교체<\/button>/);
+  const history = renderToStaticMarkup(
+    createElement(ThreadsPublicationPanel, { postKey: 'source:post', threads: paused }),
+  );
+  expect(history).toContain('기존 PC 게시 이력');
+  expect(history).toContain('이전에 PC에서 게시한 원글·댓글 이력을 보관합니다.');
+  expect(history).toContain('게시 ID:');
+  expect(history).not.toContain('자동 갱신됩니다.');
 });

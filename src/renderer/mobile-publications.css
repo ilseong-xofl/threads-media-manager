@@ -1,0 +1,128 @@
+.registration-body > .mobile-publications {
+  margin-top: 22px;
+}
+.mobile-publications > .section-divider {
+  margin-bottom: 16px;
+}
+.mobile-publications-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mobile-publications-heading .registration-hint {
+  margin: 0;
+}
+.mobile-publications-heading button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+.mobile-publications-heading svg {
+  width: 15px;
+  height: 15px;
+}
+.mobile-publication-item {
+  padding: 14px 16px;
+  margin-top: 10px;
+  border: 1px solid #e3e6ef;
+  border-radius: 12px;
+  background: #fff;
+}
+.mobile-publication-item > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px 14px;
+}
+.mobile-publication-item strong {
+  color: #434d60;
+  font-size: 13px;
+}
+.mobile-publication-item span,
+.mobile-publication-item p {
+  color: #7d8798;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mobile-publication-item p {
+  margin: 6px 0;
+}
+.mobile-publication-item button {
+  margin-top: 5px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.mobile-publication-item .mobile-publication-deadline {
+  color: #7866ad;
+}
+.mobile-publication-account-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.mobile-publication-account-field select {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #d8deea;
+  border-radius: 9px;
+  background: #fff;
+  color: #303b4b;
+  font: inherit;
+}
+.mobile-publication-history-note {
+  border-left: 3px solid #d2c8e7;
+  padding-left: 12px;
+}
+.mobile-publication-edit-hint {
+  margin: 0;
+  color: #8c7b56;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mobile-publication-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 80px;
+  color: #675bca;
+}
+.mobile-publication-progress svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mobile-publication-dialog-body {
+  display: grid;
+  gap: 16px;
+}
+.mobile-publication-dialog-body > p {
+  margin: 0;
+  color: #7d8798;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.mobile-publication-dialog-body > p strong {
+  color: #434d60;
+}
+.mobile-publication-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 18px;
+  border-top: 1px solid #edf0f5;
+}

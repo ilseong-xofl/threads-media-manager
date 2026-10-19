@@ -33,3 +33,12 @@ out/
 .venv/
 
 build/
+
+# Local evidence/export workspaces can include independent repositories and user data.
+/artifacts/
+.aws/
+.ssh/
+*.pem
+*.key
+*.p12
+*.pfx

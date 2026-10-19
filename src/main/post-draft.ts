@@ -128,6 +128,10 @@ export class PostDraftController {
     private refresh: (root: string) => Promise<CollectionView>,
     private launch: LaunchPostDraft,
     private busy: () => boolean = () => false,
+    private beforeSave?: (
+      view: CollectionView,
+      post: import('../shared/contracts').Post,
+    ) => Promise<void>,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -172,6 +176,8 @@ export class PostDraftController {
           'draft_source',
           '게시글을 저장할 게시글을 찾을 수 없습니다. 목록을 새로고침하세요.',
         );
+      if (this.beforeSave) await this.beforeSave(before, post);
+      if (this.cancelled) throw new ViewError('draft_cancelled', '게시글 저장을 중지했습니다.');
       this.job = this.launch({ root, ...input });
       const draft = await this.job.result;
       this.job = null;

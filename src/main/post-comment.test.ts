@@ -29,6 +29,23 @@ vi.mock('electron', () => ({
 }));
 
 const root = '/synthetic-collection';
+it('checks the central publication guard before changing a saved comment', async () => {
+  const launch = vi.fn(() => ({ result: Promise.resolve(comment()), cancel: vi.fn() }));
+  const guard = vi.fn(async () => {
+    throw new ViewError('mobile_publication_recall_required', '회수하세요.');
+  });
+  const controller = new PostCommentController(
+    async () => view(),
+    launch,
+    () => false,
+    guard,
+  );
+  expect(await controller.save(root, input())).toMatchObject({
+    status: 'error',
+    problem: { code: 'mobile_publication_recall_required' },
+  });
+  expect(launch).not.toHaveBeenCalled();
+});
 const postKey = 'demo:PostA';
 const input = () => ({
   postKey,

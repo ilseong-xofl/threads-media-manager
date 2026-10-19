@@ -1,7 +1,25 @@
+import type { AppAuthState } from './service-auth';
 import type { ThreadsApiMethods } from './threads-api';
+import type { ManagedThreadsMethods } from './managed-threads';
+import type { MobilePublicationMethods } from './mobile-publications';
 export const MEDIA_SCHEME = 'threads-media';
 export const IMPORT_MEDIA_SCHEME = 'threads-import';
 export const IPC = {
+  getAuthState: 'tmm:auth:state',
+  signIn: 'tmm:auth:sign-in',
+  signOut: 'tmm:auth:sign-out',
+  changePassword: 'tmm:auth:password',
+  managedThreadsAccounts: 'tmm:managed-threads:list',
+  deleteManagedThreadsAccount: 'tmm:managed-threads:delete',
+  registerManagedThreadsAccount: 'tmm:managed-threads:register',
+  replaceManagedThreadsToken: 'tmm:managed-threads:replace',
+  retryManagedThreadsAccount: 'tmm:managed-threads:retry',
+  discardPendingManagedThreadsAccount: 'tmm:managed-threads:discard-pending',
+  mobilePublications: 'tmm:mobile-publications:list',
+  sendMobilePublication: 'tmm:mobile-publications:send',
+  retryMobilePublication: 'tmm:mobile-publications:retry',
+  cancelPendingMobilePublication: 'tmm:mobile-publications:cancel-pending',
+  recallMobilePublication: 'tmm:mobile-publications:recall',
   capabilities: 'tmm:app:capabilities',
   reportUpdateBlocked: 'tmm:app:update-blocked',
   chatGptState: 'tmm:chatgpt:state',
@@ -216,7 +234,13 @@ export type ChatGptResult =
   | { status: 'ok' | 'cancelled'; state: ChatGptState }
   | { status: 'error'; state: ChatGptState; problem: Problem };
 
-export interface ThreadsMediaApi extends ThreadsApiMethods {
+export interface ThreadsMediaApi
+  extends ThreadsApiMethods, ManagedThreadsMethods, MobilePublicationMethods {
+  getAuthState(): Promise<AppAuthState>;
+  signIn(accountId: string, password: string): Promise<AppAuthState>;
+  signOut(): Promise<AppAuthState>;
+  changePassword(currentPassword: string, newPassword: string): Promise<AppAuthState>;
+  onAuthStateChanged(listener: (state: AppAuthState) => void): () => void;
   reportUpdateBlocked(blocked: boolean): Promise<void>;
   chatGptState(): Promise<ChatGptState>;
   loginChatGpt(): Promise<ChatGptResult>;

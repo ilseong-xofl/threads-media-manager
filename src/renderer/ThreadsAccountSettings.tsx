@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { ThreadsUi } from './use-threads-api';
 import { displayDate } from './view-model';
 import { FileServerSettings } from './FileServerSettings';
+import { ManagedThreadsAccountSettings } from './ManagedThreadsAccountSettings';
 import { useToast, useToastMessage } from './toast';
 import './threads-api.css';
 
@@ -68,6 +69,8 @@ export function ThreadsAccountSettings({
       notify({ message: 'Threads 계정과 만료 일시를 확인하고 암호화하여 저장했습니다.' });
     }
   }
+  if (state?.desktopRequestsDisabled)
+    return <ManagedThreadsAccountSettings enabled={enabled} onSyncing={onSyncing} />;
   return (
     <>
       <section

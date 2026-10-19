@@ -6,6 +6,7 @@ export interface UpdateUiState {
   selected: string | null;
   registration: object | null;
   settingsOpen: boolean;
+  accountsOpen: boolean;
   contentPostKey: string | null;
   confirmDownload: boolean;
 }
@@ -20,6 +21,7 @@ export function updateBlockedByUi(state: UpdateUiState): boolean {
     state.selected !== null ||
     state.registration !== null ||
     state.settingsOpen ||
+    state.accountsOpen ||
     state.contentPostKey !== null ||
     state.confirmDownload
   );

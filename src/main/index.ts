@@ -11,6 +11,17 @@ import {
   session,
   shell,
 } from 'electron';
+import { AUTH_STATE_CHANGED, type AppAuthState } from '../shared/service-auth';
+import { EncryptedAuthTokenStore } from './auth-token-store';
+import { ServiceApiClient, ServiceApiError, serviceBaseUrl } from './service-api';
+import { MobilePublicationsController } from './mobile-publications';
+import { cleanupPublicationOutbox } from './publication-outbox';
+import { mobilePublicationBlocks } from './publication-work-gate';
+import { validPublicationJournal, type PublicationJournal } from './mobile-publication-data';
+import { ServiceAccess } from './service-access';
+import { ManagedThreadsManager } from './managed-threads';
+import { EncryptedManagedThreadsStore } from './managed-threads-store';
+import { handleManagedThreadsRequest } from './managed-threads-ipc';
 import squirrelStartup from 'electron-squirrel-startup';
 import { configureRuntime } from './runtime';
 import { configureAutoUpdates } from './updates';
@@ -24,10 +35,11 @@ import {
   readRootSetting,
   readRuntime,
   rememberRoot,
+  ViewError,
 } from './collection';
 import { MediaRegistry } from './media';
 import { ThreadsAccountManager } from './threads-account';
-import { ThreadsClient } from './threads-client';
+import { createDesktopThreadsClient } from './desktop-threads';
 import { FileServerStorage } from './file-server-storage';
 import { EncryptedLocalStore } from './threads-secret-store';
 import {
@@ -121,7 +133,7 @@ const downloads = new DownloadController(launchWorker(runtimeRoot), () => contro
 const archives = new PostExportController(
   (root) => controller.refresh(root),
   async (fileName) => {
-    if (!window) return null;
+    if (!window || !(await serviceAccess.allowed())) return null;
     const choice = await dialog.showSaveDialog(window, {
       title: '게시글 ZIP 다운로드',
       defaultPath: join(app.getPath('downloads'), fileName),
@@ -130,7 +142,7 @@ const archives = new PostExportController(
       properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent'],
       showsTagField: false,
     });
-    return choice.canceled ? null : choice.filePath;
+    return choice.canceled || !(await serviceAccess.allowed()) ? null : choice.filePath;
   },
   launchExport(runtimeRoot, aiContentEnabled),
 );
@@ -140,6 +152,7 @@ const edits: MediaEditController = new MediaEditController(
   launchMediaEdit(runtimeRoot),
   () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -155,15 +168,16 @@ const deletions: MediaDeleteController = new MediaDeleteController(
   (root) => controller.refresh(root),
   launchMediaDelete(runtimeRoot),
   async (input, plan, signal) => {
-    if (!window || signal.aborted) return false;
+    if (!window || signal.aborted || !(await serviceAccess.allowed())) return false;
     const choice = await dialog.showMessageBox(
       window,
       mediaDeleteConfirmation(input, plan, signal),
     );
-    return choice.response === 1 && !signal.aborted;
+    return choice.response === 1 && !signal.aborted && (await serviceAccess.allowed());
   },
   () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -180,6 +194,7 @@ const comments: PostCommentController = new PostCommentController(
   launchPostComment(runtimeRoot),
   () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -190,12 +205,17 @@ const comments: PostCommentController = new PostCommentController(
     draftDeletions.active ||
     captions.active ||
     content.active,
+  (view, post) =>
+    guardPublicationWrite(() =>
+      mobilePublications.requireEditable(view.snapshot!.libraryId!, post.key),
+    ),
 );
 const drafts: PostDraftController = new PostDraftController(
   (root) => controller.refresh(root),
   launchPostDraft(runtimeRoot, aiContentEnabled),
   () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -206,20 +226,25 @@ const drafts: PostDraftController = new PostDraftController(
     draftDeletions.active ||
     captions.active ||
     content.active,
+  (view, post) =>
+    guardPublicationWrite(() =>
+      mobilePublications.requireEditable(view.snapshot!.libraryId!, post.key),
+    ),
 );
 const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
   (root) => controller.refresh(root),
   async (_input, signal, sourceDeleted, origin) => {
-    if (!window || signal.aborted) return false;
+    if (!window || signal.aborted || !(await serviceAccess.allowed())) return false;
     const choice = await dialog.showMessageBox(
       window,
       postDraftDeleteConfirmation(sourceDeleted, signal, origin),
     );
-    return choice.response === 1 && !signal.aborted;
+    return choice.response === 1 && !signal.aborted && (await serviceAccess.allowed());
   },
   launchPostDraftDelete(runtimeRoot),
   () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -230,6 +255,9 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     localPosts.active ||
     captions.active ||
     content.active,
+  (view, post) =>
+    guardPublicationWrite(() => mobilePublications.beforeDelete(view.snapshot!.libraryId!, post)),
+  (view, post) => mobilePublications.afterDelete(view.snapshot!.libraryId!, post),
 );
 const chatGpt: CodexConnection = new CodexConnection(
   join(app.getPath('userData'), 'codex'),
@@ -254,20 +282,21 @@ const content = new ContentGenerator(
 
 const localPosts: LocalPostController = new LocalPostController(
   async () => {
-    if (!window) return null;
+    if (!window || !(await serviceAccess.allowed())) return null;
     const choice = await dialog.showOpenDialog(window, {
       title: '직접 작성할 글의 이미지·영상 선택',
       buttonLabel: '파일 선택',
       filters: [{ name: '이미지·영상', extensions: LOCAL_POST_EXTENSIONS }],
       properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
     });
-    return choice.canceled ? null : choice.filePaths;
+    return choice.canceled || !(await serviceAccess.allowed()) ? null : choice.filePaths;
   },
   (root) => controller.refresh(root),
   launchLocalPost(runtimeRoot),
   () => controller.root,
   () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -291,7 +320,7 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
   },
   {
     chooseBackup: async (fileName, signal) => {
-      if (!window || signal.aborted) return null;
+      if (!window || signal.aborted || !(await serviceAccess.allowed())) return null;
       const choice = await dialog.showSaveDialog(window, {
         title: '데이터베이스 백업 저장',
         defaultPath: join(app.getPath('documents'), fileName),
@@ -300,20 +329,24 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
         properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent'],
         showsTagField: false,
       });
-      return choice.canceled || signal.aborted ? null : (choice.filePath ?? null);
+      return choice.canceled || signal.aborted || !(await serviceAccess.allowed())
+        ? null
+        : (choice.filePath ?? null);
     },
     chooseRestore: async (signal) => {
-      if (!window || signal.aborted) return null;
+      if (!window || signal.aborted || !(await serviceAccess.allowed())) return null;
       const choice = await dialog.showOpenDialog(window, {
         title: '데이터베이스 백업 선택',
         buttonLabel: '백업 선택',
         filters: [{ name: 'Threads Media Manager DB 백업', extensions: ['sqlite'] }],
         properties: ['openFile', 'dontAddToRecent'],
       });
-      return choice.canceled || signal.aborted ? null : (choice.filePaths[0] ?? null);
+      return choice.canceled || signal.aborted || !(await serviceAccess.allowed())
+        ? null
+        : (choice.filePaths[0] ?? null);
     },
     confirmRestore: async (_sourcePath, signal) => {
-      if (!window || signal.aborted) return false;
+      if (!window || signal.aborted || !(await serviceAccess.allowed())) return false;
       const choice = await dialog.showMessageBox(window, {
         type: 'warning',
         title: '데이터베이스 복원',
@@ -326,21 +359,24 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
         noLink: true,
         signal,
       });
-      return choice.response === 1 && !signal.aborted;
+      return choice.response === 1 && !signal.aborted && (await serviceAccess.allowed());
     },
     chooseReconnect: async (root, signal) => {
-      if (!window || signal.aborted) return null;
+      if (!window || signal.aborted || !(await serviceAccess.allowed())) return null;
       const choice = await dialog.showOpenDialog(window, {
         title: root ? '작업 폴더 재연결' : '처음 사용할 작업 폴더 선택',
         buttonLabel: '폴더 선택',
         defaultPath: root ?? initialFolderHint,
         properties: ['openDirectory', 'dontAddToRecent'],
       });
-      return choice.canceled || signal.aborted ? null : (choice.filePaths[0] ?? null);
+      return choice.canceled || signal.aborted || !(await serviceAccess.allowed())
+        ? null
+        : (choice.filePaths[0] ?? null);
     },
   },
   launchLibraryMaintenance(runtimeRoot, app.getVersion()),
   () =>
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -373,7 +409,59 @@ const encryption = {
   encryptString: (value: string) => safeStorage.encryptStringAsync(value),
   decryptString: async (value: Buffer) => (await safeStorage.decryptStringAsync(value)).result,
 };
-const threadsClient = new ThreadsClient();
+const serviceOrigin = serviceBaseUrl(TMM_SERVICE_URL, app.isPackaged);
+const serviceClient = new ServiceApiClient(
+  serviceOrigin,
+  new EncryptedAuthTokenStore(join(app.getPath('userData'), 'service-session.enc'), {
+    isEncryptionAvailable: encryption.isAvailable,
+    encryptString: encryption.encryptString,
+    decryptString: encryption.decryptString,
+  }),
+);
+const managedThreads = new ManagedThreadsManager(
+  serviceClient,
+  new EncryptedManagedThreadsStore(join(app.getPath('userData'), 'managed-threads.enc'), {
+    isEncryptionAvailable: encryption.isAvailable,
+    encryptString: encryption.encryptString,
+    decryptString: encryption.decryptString,
+  }),
+  serviceOrigin ?? 'unconfigured',
+);
+let managedAccountOperations = 0;
+let managedAccountMutations = 0;
+let authState: AppAuthState | null = null;
+let authMutation = false;
+let authGeneration = 0;
+function broadcastAuthState(state: AppAuthState): AppAuthState {
+  if (JSON.stringify(authState) !== JSON.stringify(state)) {
+    authState = state;
+    if (state.status !== 'authenticated' || state.mustChangePassword) rendererUpdateBlocked = true;
+    if (window && !window.webContents.isDestroyed())
+      window.webContents.send(AUTH_STATE_CHANGED, state);
+  }
+  if (state.status === 'authenticated' && !state.mustChangePassword) {
+    // A closed account modal must not retain a token revoked on another PC.
+    // The manager coalesces concurrent checks and only consumes explicit tombstones.
+    managedAccountOperations += 1;
+    void managedThreads.reconcileDeletedAccounts(state.user.id, authGeneration).finally(() => {
+      managedAccountOperations -= 1;
+    });
+  }
+  return state;
+}
+const serviceAccess = new ServiceAccess(serviceClient, broadcastAuthState);
+async function mutateAuth(action: () => Promise<AppAuthState>): Promise<AppAuthState> {
+  if (authMutation) throw new Error('진행 중인 로그인 작업을 기다려 주세요.');
+  authGeneration += 1;
+  authMutation = true;
+  try {
+    return broadcastAuthState(await action());
+  } finally {
+    authMutation = false;
+  }
+}
+// Legacy account/history code remains readable, but no desktop Meta request is permitted.
+const threadsClient = createDesktopThreadsClient();
 const threadsAccounts = new ThreadsAccountManager({
   userData: app.getPath('userData'),
   encryption,
@@ -402,6 +490,7 @@ const threads = new ThreadsPublishingController({
   refresh: () => controller.refresh(),
   localBusy: () =>
     maintenance.active ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -421,7 +510,7 @@ const threads = new ThreadsPublishingController({
       return image.toPNG();
     }),
   confirm: async (summary) => {
-    if (!window) return false;
+    if (!window || !(await serviceAccess.allowed())) return false;
     const choice = await dialog.showMessageBox(window, {
       type: 'question',
       title: summary.kind === 'post' ? 'Threads 게시글 업로드' : 'Threads 댓글 업로드',
@@ -432,10 +521,74 @@ const threads = new ThreadsPublishingController({
       cancelId: 0,
       noLink: true,
     });
-    return choice.response === 1;
+    return choice.response === 1 && (await serviceAccess.allowed());
   },
 });
+const mobilePublications: MobilePublicationsController = new MobilePublicationsController({
+  client: serviceClient,
+  store: new EncryptedLocalStore<PublicationJournal>({
+    userData: app.getPath('userData'),
+    fileName: 'mobile-publications.json',
+    encryption,
+    validate: validPublicationJournal,
+  }),
+  service: serviceOrigin ?? 'unconfigured',
+  userData: app.getPath('userData'),
+  refresh: () => controller.refresh(),
+  localBusy: () =>
+    maintenance.active ||
+    mobilePublications?.active ||
+    controller.loading ||
+    downloads.active ||
+    archives.active ||
+    edits.active ||
+    deletions.active ||
+    comments.active ||
+    drafts.active ||
+    localPosts.active ||
+    draftDeletions.active ||
+    captions.active ||
+    content.active ||
+    chatGpt.active ||
+    threads.active ||
+    managedAccountMutations > 0,
+  prepareMedia: (root, ids, directory) =>
+    prepareThreadsMedia(registry, root, ids, directory, (bytes) => {
+      const image = nativeImage.createFromBuffer(bytes);
+      const { width, height } = image.getSize();
+      if (image.isEmpty() || width * height > 40_000_000) throw new Error('Invalid upload image');
+      return image.toPNG();
+    }),
+});
+async function guardPublicationWrite(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    if (error instanceof ServiceApiError) {
+      if (['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(error.code))
+        await serviceAccess.check();
+      throw new ViewError(error.code, error.message);
+    }
+    throw error;
+  }
+}
 let threadsCloseNoticeOpen = false;
+let managedAccountCloseNoticeOpen = false;
+function explainManagedAccountWork() {
+  if (!window || managedAccountCloseNoticeOpen) return;
+  managedAccountCloseNoticeOpen = true;
+  void dialog
+    .showMessageBox(window, {
+      type: 'info',
+      title: '계정 정보 저장 중',
+      message: '계정 정보 저장과 동기화가 끝난 뒤 앱을 종료할 수 있습니다.',
+      buttons: ['확인'],
+      noLink: true,
+    })
+    .finally(() => {
+      managedAccountCloseNoticeOpen = false;
+    });
+}
 function explainActiveThreads() {
   if (!window || threadsCloseNoticeOpen) return;
   threadsCloseNoticeOpen = true;
@@ -471,11 +624,13 @@ let closing = false;
 function updateBusy(): boolean {
   return (
     updateQuitting ||
+    managedAccountOperations > 0 ||
     closing ||
     rendererUpdateBlocked ||
     !window ||
     window.isDestroyed() ||
     window.webContents.isDestroyed() ||
+    mobilePublications?.active ||
     controller.loading ||
     downloads.active ||
     archives.active ||
@@ -489,7 +644,8 @@ function updateBusy(): boolean {
     content.active ||
     chatGpt.active ||
     maintenance.active ||
-    threads.active
+    threads.active ||
+    mobilePublications?.active
   );
 }
 function deletionNeedsRecovery(): boolean {
@@ -537,7 +693,12 @@ function createWindow(): void {
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
   window.once('ready-to-show', () => window?.show());
   window.on('close', (event) => {
-    if (threads.active) {
+    if (managedAccountOperations > 0) {
+      event.preventDefault();
+      explainManagedAccountWork();
+      return;
+    }
+    if (threads.active || mobilePublications?.active) {
       event.preventDefault();
       explainActiveThreads();
       return;
@@ -612,36 +773,50 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       session.defaultSession.webRequest.onBeforeRequest((details, callback) =>
         callback({ cancel: !isLocalRequest(details.url, rendererEntry) }),
       );
-      protocol.handle(MEDIA_SCHEME, (request) =>
-        request.url.startsWith('threads-media://ai/')
+      protocol.handle(MEDIA_SCHEME, async (request) => {
+        if (authMutation || !(await serviceAccess.allowed()))
+          return new Response(null, { status: 403 });
+        return request.url.startsWith('threads-media://ai/')
           ? aiContentEnabled
             ? content.respond(request)
             : new Response(null, { status: 404 })
-          : registry.respond(request),
-      );
-      protocol.handle(IMPORT_MEDIA_SCHEME, (request) => localPosts.respond(request));
+          : registry.respond(request);
+      });
+      protocol.handle(IMPORT_MEDIA_SCHEME, async (request) => {
+        if (authMutation || !(await serviceAccess.allowed()))
+          return new Response(null, { status: 403 });
+        return localPosts.respond(request);
+      });
       const userData = app.getPath('userData');
-      try {
-        const settings =
-          !app.isPackaged && process.env.TMM_SETTINGS_PATH
-            ? process.env.TMM_SETTINGS_PATH
-            : join(homedir(), '.threads-media-manager', 'settings.json');
-        const root = await readRootSetting(join(userData, 'view-settings.json'));
-        if (!root) {
-          // Collector settings are a picker hint, not the app's first-use choice.
-          try {
-            initialFolderHint = (await readRootSetting(settings)) ?? undefined;
-          } catch {
-            initialFolderHint = undefined;
-          }
-        }
-        if (root) {
-          await controller.refresh(root);
-          downloads.inspect(root);
-          await downloads.settled();
-        }
-      } catch (error) {
-        controller.view = { snapshot: null, error: problem(error) };
+      await cleanupPublicationOutbox(userData).catch(() => {});
+      let libraryInitialization: Promise<void> | undefined;
+      function initializeLibrary(): Promise<void> {
+        if (!libraryInitialization)
+          libraryInitialization = (async () => {
+            try {
+              const settings =
+                !app.isPackaged && process.env.TMM_SETTINGS_PATH
+                  ? process.env.TMM_SETTINGS_PATH
+                  : join(homedir(), '.threads-media-manager', 'settings.json');
+              const root = await readRootSetting(join(userData, 'view-settings.json'));
+              if (!root) {
+                // Collector settings are a picker hint, not the app's first-use choice.
+                try {
+                  initialFolderHint = (await readRootSetting(settings)) ?? undefined;
+                } catch {
+                  initialFolderHint = undefined;
+                }
+              }
+              if (root) {
+                await controller.refresh(root);
+                downloads.inspect(root);
+                await downloads.settled();
+              }
+            } catch (error) {
+              controller.view = { snapshot: null, error: problem(error) };
+            }
+          })();
+        return libraryInitialization;
       }
       for (const channel of Object.values(IPC)) {
         ipcMain.handle(channel, async (event, ...args: unknown[]) => {
@@ -665,6 +840,84 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             rendererUpdateBlocked = args[0];
             return;
           }
+          if (channel === IPC.getAuthState) {
+            if (args.length) throw new Error('Unexpected arguments');
+            return serviceAccess.check();
+          }
+          if (
+            mobilePublications.active &&
+            [IPC.signIn, IPC.signOut, IPC.changePassword].some((c) => c === channel)
+          )
+            throw new Error('게시 대기 전송이 끝난 뒤 계정 작업을 진행하세요.');
+          if (channel === IPC.signIn || channel === IPC.changePassword) {
+            if (args.length !== 2 || typeof args[0] !== 'string' || typeof args[1] !== 'string')
+              throw new Error('Invalid auth input');
+            const first = args[0];
+            const second = args[1];
+            return mutateAuth(() =>
+              channel === IPC.signIn
+                ? serviceClient.signIn(first, second)
+                : serviceClient.changePassword(first, second),
+            );
+          }
+          if (channel === IPC.signOut) {
+            if (args.length) throw new Error('Unexpected arguments');
+            return mutateAuth(() => serviceClient.signOut());
+          }
+          if (authMutation) throw new Error('로그인 상태를 확인 중입니다.');
+          const requestAuthGeneration = authGeneration;
+          await serviceAccess.require();
+          if (authMutation || requestAuthGeneration !== authGeneration)
+            throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+          if (mobilePublicationBlocks(channel, mobilePublications.active))
+            throw new Error('게시 대기 전송이 끝난 뒤 작업하세요.');
+          if (channel.startsWith('tmm:managed-threads:')) {
+            managedAccountOperations += 1;
+            const mutation = channel !== IPC.managedThreadsAccounts;
+            if (mutation) managedAccountMutations += 1;
+            try {
+              const result = await handleManagedThreadsRequest(channel, args, managedThreads);
+              if (authMutation || requestAuthGeneration !== authGeneration)
+                throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+              if (
+                result.problem &&
+                ['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(
+                  result.problem.code,
+                )
+              )
+                await serviceAccess.check();
+              if (authMutation || requestAuthGeneration !== authGeneration)
+                throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+              return result;
+            } finally {
+              managedAccountOperations -= 1;
+              if (mutation) managedAccountMutations -= 1;
+            }
+          }
+          await initializeLibrary();
+          if (mobilePublicationBlocks(channel, mobilePublications.active))
+            throw new Error('게시 대기 전송이 끝난 뒤 작업하세요.');
+          if (channel.startsWith('tmm:mobile-publications:')) {
+            if (args.length !== 1) throw new Error('Unexpected arguments');
+            const result =
+              channel === IPC.mobilePublications
+                ? await mobilePublications.get(args[0])
+                : channel === IPC.sendMobilePublication
+                  ? await mobilePublications.send(args[0])
+                  : channel === IPC.retryMobilePublication
+                    ? await mobilePublications.retry(args[0])
+                    : channel === IPC.cancelPendingMobilePublication
+                      ? await mobilePublications.cancelPending(args[0])
+                      : await mobilePublications.recall(args[0]);
+            if (authMutation || requestAuthGeneration !== authGeneration)
+              throw new Error('로그인이 변경되었습니다. 다시 확인하세요.');
+            if (
+              result.problem &&
+              ['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(result.problem.code)
+            )
+              await serviceAccess.check();
+            return result;
+          }
           if (channel === IPC.capabilities) {
             if (args.length) throw new Error('Unexpected arguments');
             return { aiContent: aiContentEnabled };
@@ -686,11 +939,22 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               IPC.openThreadsPublication,
             ].some((value) => value === channel);
             if (args.length !== (hasInput ? 1 : 0)) throw new Error('Unexpected arguments');
-            if (channel === IPC.threadsState) return threads.state();
+            if (channel === IPC.threadsState)
+              return { ...(await threads.state()), desktopRequestsDisabled: true };
             if (channel === IPC.openThreadsPublication)
               return threads.openPublication(args[0], (url) =>
                 shell.openExternal(url, { activate: true }),
               );
+            // All mutations are paused until the mobile/S3 account workflow is connected.
+            return {
+              status: 'error',
+              problem: {
+                code: 'desktop_meta_disabled',
+                message:
+                  'PC의 Threads 게시·토큰 확인·갱신·통계 기능은 중단되었습니다. 모바일 연결 기능을 준비 중입니다.',
+              },
+            };
+            /* Legacy implementation retained for history and migration reference.
             if (channel === IPC.connectThreads) return threads.connect(args[0]);
             if (channel === IPC.disconnectThreads) return threads.disconnect();
             if (channel === IPC.connectFileServer) return threads.connectFileServer(args[0]);
@@ -699,6 +963,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             if (channel === IPC.publishThreadsComment) return threads.publish(args[0], 'reply');
             if (channel === IPC.syncThreadsInsights) return threads.sync();
             if (channel === IPC.reconcileThreadsPublication) return threads.reconcile(args[0]);
+            */
           }
           if (channel === IPC.discardLocalPostMedia) {
             if (args.length !== 1 || typeof args[0] !== 'string')
@@ -871,6 +1136,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               };
             if (
               maintenance.active ||
+              mobilePublications?.active ||
               controller.loading ||
               downloads.active ||
               archives.active ||
@@ -976,6 +1242,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             if (channel === IPC.generateCaption) {
               if (
                 maintenance.active ||
+                mobilePublications?.active ||
                 controller.loading ||
                 downloads.active ||
                 archives.active ||
@@ -1029,6 +1296,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           if (channel === IPC.exportPost || channel === IPC.exportPostDraft) {
             if (
               maintenance.active ||
+              mobilePublications?.active ||
               controller.loading ||
               downloads.active ||
               edits.active ||
@@ -1103,14 +1371,14 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           updateQuitting = false;
         },
       });
-      const threadsTimer = setInterval(() => {
-        if (!updateQuitting) void threads.tick().catch(() => {});
+      const accessTimer = setInterval(() => {
+        if (!updateQuitting && !authMutation) void serviceAccess.check();
       }, 60_000);
-      threadsTimer.unref();
+      accessTimer.unref();
       powerMonitor.on('resume', () => {
-        if (!updateQuitting) void threads.tick().catch(() => {});
+        if (!updateQuitting && !authMutation) void serviceAccess.check();
       });
-      void threads.tick(true).catch(() => {});
+      // Desktop token refresh and statistics scheduling are intentionally stopped.
       app.on('activate', () => {
         if (!window) createWindow();
       });
@@ -1123,7 +1391,12 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       app.quit();
     });
   app.on('before-quit', (event) => {
-    if (threads.active) {
+    if (managedAccountOperations > 0) {
+      event.preventDefault();
+      explainManagedAccountWork();
+      return;
+    }
+    if (threads.active || mobilePublications?.active) {
       event.preventDefault();
       explainActiveThreads();
       return;

@@ -1,0 +1,25 @@
+.post-modal.account-management-modal {
+  position: relative;
+  width: min(1120px, calc(100vw - 64px));
+  max-height: calc(100vh - 64px);
+  background: #fff;
+}
+.account-management-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 2;
+  width: 38px;
+  min-height: 38px;
+}
+.account-management-content {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 24px;
+  overscroll-behavior: contain;
+}
+@media (max-width: 640px) {
+  .post-modal.account-management-modal {
+    width: calc(100vw - 24px);
+  }
+}

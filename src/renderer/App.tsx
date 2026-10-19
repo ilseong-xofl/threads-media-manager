@@ -36,14 +36,31 @@ import { matchesDateRange } from './date-range';
 import { parseAICaptionResponse } from './ai-caption-response';
 import './registration.css';
 import { SettingsModal } from './SettingsModal';
+import { AccountManagementModal } from './AccountManagementModal';
+import { AppAccountMenu } from './AppAccountMenu';
 import './settings.css';
 import { useThreadsApi } from './use-threads-api';
 import { latestPublication } from './ThreadsPublicationPanel';
 import { createUpdateBlockReporter, updateBlockedByUi } from './update-blocker';
+import { createDownloadPolling, downloadPollingDelay } from './download-polling';
 
 const captionCacheKey = (root: string, postKey: string) => JSON.stringify([root, postKey]);
 
-export function App() {
+export function App({
+  serviceAvailable = true,
+  displayName = '',
+  accountBusy = false,
+  onChangePassword,
+  onSignOut,
+}: {
+  serviceAvailable?: boolean;
+  displayName?: string;
+  accountBusy?: boolean;
+  onChangePassword(): void;
+  onSignOut(): void;
+}) {
+  const serviceAvailableRef = useRef(serviceAvailable);
+  serviceAvailableRef.current = serviceAvailable;
   const [view, setView] = useState<CollectionView>({ snapshot: null, error: null });
   const [busy, setBusy] = useState(true);
   const [account, setAccount] = useState('');
@@ -56,6 +73,7 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [positions, setPositions] = useState<Record<string, number>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountsOpen, setAccountsOpen] = useState(false);
   const [localPostOpen, setLocalPostOpen] = useState(false);
   const [maintaining, setMaintaining] = useState(false);
   const [startingDownload, setStartingDownload] = useState(false);
@@ -75,6 +93,7 @@ export function App() {
     mode: 'view' | 'edit';
   } | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [sendingMobile, setSendingMobile] = useState(false);
   const [generatingCaption, setGeneratingCaption] = useState(false);
   const [aiContentEnabled, setAIContentEnabled] = useState(false);
   const [contentPostKey, setContentPostKey] = useState<string | null>(null);
@@ -91,8 +110,10 @@ export function App() {
   const threads = useThreadsApi(
     settingsOpen || !!registration || libraryTab === 'registered',
     view.snapshot?.libraryId ?? view.snapshot?.root ?? '',
+    serviceAvailable,
   );
   const localMutation =
+    sendingMobile ||
     threads.working ||
     maintaining ||
     savingEdit ||
@@ -105,18 +126,24 @@ export function App() {
   const downloadPending = useRef(false);
   const revision = useRef(-1);
   const downloading = activeDownload(download) || startingDownload;
+  const downloadingRef = useRef(downloading);
+  downloadingRef.current = downloading;
+  const downloadPolling = useRef<ReturnType<typeof createDownloadPolling> | null>(null);
   const updateReporter = useRef<ReturnType<typeof createUpdateBlockReporter> | null>(null);
-  const updateBlocked = updateBlockedByUi({
-    busy,
-    downloading,
-    exporting,
-    localMutation,
-    selected,
-    registration: registration ?? (localPostOpen ? {} : null),
-    settingsOpen,
-    contentPostKey,
-    confirmDownload,
-  });
+  const updateBlocked =
+    !serviceAvailable ||
+    updateBlockedByUi({
+      busy,
+      downloading,
+      exporting,
+      localMutation,
+      selected,
+      registration: registration ?? (localPostOpen ? {} : null),
+      settingsOpen,
+      accountsOpen,
+      contentPostKey,
+      confirmDownload,
+    });
   useLayoutEffect(() => {
     const reporter = createUpdateBlockReporter((blocked) =>
       window.threadsMedia.reportUpdateBlocked(blocked),
@@ -280,33 +307,33 @@ export function App() {
       const root = await window.threadsMedia.libraryRoot();
       return root ? current : window.threadsMedia.chooseFolder();
     });
+  }, []);
+  useEffect(() => {
     let disposed = false;
-    let pending = false;
-    const poll = async () => {
-      if (pending) return;
-      pending = true;
-      try {
+    const poller = createDownloadPolling({
+      enabled: () => serviceAvailableRef.current,
+      delay: () => downloadPollingDelay(downloadingRef.current),
+      poll: async () => {
         const state = await window.threadsMedia.downloadStatus();
-        if (disposed) return;
+        if (disposed || !serviceAvailableRef.current) return;
         setDownload(state);
         if (revision.current !== state.revision) {
           revision.current = state.revision;
           const updated = await window.threadsMedia.current();
-          if (!disposed) setView(updated);
+          if (!disposed && serviceAvailableRef.current) setView(updated);
         }
-      } finally {
-        pending = false;
-      }
-    };
-    const timer = setInterval(() => {
-      void poll().catch(() => {});
-    }, 300);
-    void poll().catch(() => {});
+      },
+    });
+    downloadPolling.current = poller;
     return () => {
       disposed = true;
-      clearInterval(timer);
+      poller.stop();
+      downloadPolling.current = null;
     };
   }, []);
+  useEffect(() => {
+    downloadPolling.current?.wake();
+  }, [serviceAvailable, downloading]);
 
   async function downloadAction(action: () => Promise<DownloadView>) {
     try {
@@ -710,15 +737,21 @@ export function App() {
                       ? `다운로드 (${pendingPosts})`
                       : '다운로드'}
             </button>
-            <button
-              className="settings-button"
-              aria-label="설정"
-              title="설정"
-              onClick={() => setSettingsOpen(true)}
-              disabled={busy || downloading || !!exporting || localMutation}
-            >
-              <Icon name="settings" />
-            </button>
+            <AppAccountMenu
+              displayName={displayName}
+              disabled={
+                !serviceAvailable ||
+                accountBusy ||
+                busy ||
+                downloading ||
+                !!exporting ||
+                localMutation
+              }
+              onAccounts={() => setAccountsOpen(true)}
+              onSettings={() => setSettingsOpen(true)}
+              onChangePassword={onChangePassword}
+              onSignOut={onSignOut}
+            />
           </div>
         </div>
       </header>
@@ -1138,6 +1171,9 @@ export function App() {
           }}
           exporting={exporting === registrationPost.key}
           threads={threads}
+          mobileEnabled={serviceAvailable}
+          mobileScope={snapshot?.libraryId ?? snapshot?.root ?? ''}
+          onMobileWorking={setSendingMobile}
           onSave={savePostDraft}
           onGenerate={generateCaption}
           onCancelGeneration={() => window.threadsMedia.cancelCaption()}
@@ -1157,6 +1193,7 @@ export function App() {
         <SettingsModal
           threads={threads}
           enabled={
+            serviceAvailable &&
             !busy &&
             !downloading &&
             !exporting &&
@@ -1170,6 +1207,12 @@ export function App() {
             setRegistration(null);
             captionSuggestions.current.clear();
           }}
+        />
+      )}
+      {accountsOpen && (
+        <AccountManagementModal
+          enabled={serviceAvailable && !busy && !downloading && !exporting && !localMutation}
+          onClose={() => setAccountsOpen(false)}
         />
       )}
       <DownloadOverlay view={download} starting={startingDownload} />

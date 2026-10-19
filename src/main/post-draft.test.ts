@@ -63,6 +63,23 @@ function view(saved?: PostDraft): CollectionView {
   };
 }
 describe('post registration IPC', () => {
+  it('does not launch a local save when the mobile publication guard requires recall', async () => {
+    const launch = vi.fn(() => ({ result: Promise.resolve(draft()), cancel: vi.fn() }));
+    const beforeSave = vi.fn(async () => {
+      throw new Error('pending publication');
+    });
+    const controller = new PostDraftController(
+      async () => view(draft()),
+      launch,
+      () => false,
+      beforeSave,
+    );
+    expect((await controller.save('/collection', { ...input(), expectedRevision: 1 })).status).toBe(
+      'error',
+    );
+    expect(beforeSave).toHaveBeenCalledOnce();
+    expect(launch).not.toHaveBeenCalled();
+  });
   it('preserves media order and user caption whitespace', () => {
     expect(parsePostDraftInput({ ...input(), caption: '  새 캡션  ' })).toEqual({
       ...input(),

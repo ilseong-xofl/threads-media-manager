@@ -26,11 +26,12 @@ export function postDraftDeleteConfirmation(
     title: '등록한 게시글 삭제',
     message: '작성한 게시글을 삭제할까요?',
     detail:
-      origin === 'local'
+      '아직 게시를 시작하지 않은 모바일 게시 대기도 함께 취소합니다. 이미 시작하거나 완료한 게시 이력은 유지됩니다.\n\n' +
+      (origin === 'local'
         ? '직접 작성한 게시글의 캡션·댓글과 앱에 복사해 보관한 이미지·영상·편집본을 삭제합니다. 처음 선택한 내 컴퓨터의 원본 파일은 그대로 보존됩니다. 삭제한 앱 보관 파일은 복구할 수 없습니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'
         : sourceDeleted
           ? '수집 탭에서 이미 삭제한 게시글입니다. 등록한 캡션·댓글 정보와 선택하지 않은 항목을 포함한 모든 이미지·영상·편집본 파일을 함께 삭제합니다. 삭제한 파일은 복구할 수 없습니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'
-          : '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 수집 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.',
+          : '작성한 캡션과 미디어 선택·순서가 삭제됩니다. 수집 게시글과 이미지·영상·편집본 파일은 그대로 보존됩니다.\nThreads에 게시된 게시글과 댓글은 유지됩니다.'),
     buttons: ['취소', '삭제'],
     defaultId: 0,
     cancelId: 0,
@@ -124,6 +125,14 @@ export class PostDraftDeleteController {
     ) => Promise<boolean>,
     private launch: LaunchPostDraftDelete,
     private busy: () => boolean = () => false,
+    private beforeDelete?: (
+      view: CollectionView,
+      post: import('../shared/contracts').Post,
+    ) => Promise<void>,
+    private afterDelete?: (
+      view: CollectionView,
+      post: import('../shared/contracts').Post,
+    ) => Promise<void>,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -173,6 +182,8 @@ export class PostDraftDeleteController {
       );
       this.confirmation = null;
       if (!confirmed || this.cancelled) return { status: 'cancelled' };
+      if (this.beforeDelete) await this.beforeDelete(before, post);
+      if (this.cancelled) return { status: 'cancelled' };
       this.job = this.launch({
         root,
         ...input,
@@ -182,6 +193,9 @@ export class PostDraftDeleteController {
       started = true;
       await this.job.result;
       this.job = null;
+      // The worker has committed. Receipt cleanup failure must not invite a
+      // second deletion or hide that success; an old receipt remains safe.
+      if (this.afterDelete) await this.afterDelete(before, post).catch(() => {});
       let view: CollectionView;
       try {
         view = await this.refresh(root);

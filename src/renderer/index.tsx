@@ -1,9 +1,9 @@
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
+import { AuthenticationGate } from './AuthenticationGate';
 import { ToastProvider } from './toast';
 import './styles.css';
 createRoot(document.getElementById('root')!).render(
   <ToastProvider>
-    <App />
+    <AuthenticationGate />
   </ToastProvider>,
 );

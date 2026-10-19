@@ -342,7 +342,7 @@ export function LocalPostModal({
           <p className="registration-hint" role="status">
             {working === 'saving'
               ? '파일을 확인하고 게시글을 저장하고 있습니다.'
-              : '등록 후 API 업로드 버튼으로 게시할 수 있습니다.'}
+              : '등록한 글은 이 PC에 저장됩니다. 모바일 게시 연결 기능은 준비 중입니다.'}
           </p>
           <div className="registration-actions">
             <button type="button" onClick={requestClose} disabled={!!working}>

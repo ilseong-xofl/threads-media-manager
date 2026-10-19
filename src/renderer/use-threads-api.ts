@@ -11,7 +11,9 @@ export interface ThreadsUi {
   run(action: () => Promise<ThreadsResult>): Promise<boolean>;
 }
 
-export function useThreadsApi(watch: boolean, contextKey = ''): ThreadsUi {
+export function useThreadsApi(watch: boolean, contextKey = '', enabled = true): ThreadsUi {
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const notify = useToast();
   const [saved, setSaved] = useState<{ scope: string; state: ThreadsState } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,7 +27,7 @@ export function useThreadsApi(watch: boolean, contextKey = ''): ThreadsUi {
   const scope = useRef(contextKey);
   scope.current = contextKey;
   const refresh = useCallback(async (force = false) => {
-    if (reading.current && !force) return;
+    if (!enabledRef.current || (reading.current && !force)) return;
     const request = ++generation.current;
     const requestedScope = scope.current;
     reading.current = request;
@@ -64,11 +66,11 @@ export function useThreadsApi(watch: boolean, contextKey = ''): ThreadsUi {
     : null;
   const working = pending || !!state?.busy || !!state?.syncing;
   useEffect(() => {
-    if (!watch && !working) return;
+    if (!enabled || state?.desktopRequestsDisabled || (!watch && !working)) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
     return () => window.clearInterval(timer);
-  }, [watch, working, refresh]);
+  }, [watch, working, refresh, enabled, state?.desktopRequestsDisabled]);
   const run = useCallback(
     async (action: () => Promise<ThreadsResult>): Promise<boolean> => {
       if (active.current) return false;

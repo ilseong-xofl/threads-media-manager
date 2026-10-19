@@ -39,6 +39,10 @@ import {
   publicationBlocksUpload,
   ThreadsPublicationPanel,
 } from './ThreadsPublicationPanel';
+import { MobilePublicationPanel, MobilePublicationSendDialog } from './MobilePublicationPanel';
+import { useMobilePublications } from './use-mobile-publications';
+import { useManagedThreads } from './use-managed-threads';
+import { mobileAccountChoices, mobilePublicationLocksEditing } from './mobile-publication-model';
 
 export interface PostRegistrationModalProps {
   post: Post;
@@ -57,6 +61,9 @@ export interface PostRegistrationModalProps {
   onExport(): void;
   exporting?: boolean;
   threads?: ThreadsUi;
+  mobileEnabled?: boolean;
+  mobileScope?: string;
+  onMobileWorking?(working: boolean): void;
 }
 
 function MediaPreview({ item, thumbnail = false }: { item?: Attachment; thumbnail?: boolean }) {
@@ -125,6 +132,9 @@ function RegistrationDialog({
   onExport,
   exporting = false,
   threads,
+  mobileEnabled = true,
+  mobileScope = '',
+  onMobileWorking,
 }: PostRegistrationModalProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -162,6 +172,19 @@ function RegistrationDialog({
   const [discard, setDiscard] = useState(false);
   const [commentEditing, setCommentEditing] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
+  const [sendMobileOpen, setSendMobileOpen] = useState(false);
+  const mobileMode = threads?.state?.desktopRequestsDisabled !== false;
+  const mobile = useMobilePublications(
+    post.key,
+    mobileScope,
+    mobileEnabled && mobileMode && !!draft,
+    onMobileWorking,
+  );
+  const managedAccounts = useManagedThreads(mobileEnabled && mobileMode && !!draft);
+  const mobileEditLocked =
+    !!draft &&
+    mobileMode &&
+    (!mobile.loaded || mobilePublicationLocksEditing(mobile.publications, mobile.pending));
   const [uploadKind, setUploadKind] = useState<'post' | 'reply' | null>(null);
   const uploadPending = useRef(false);
   const progress = threads?.state?.publishProgress;
@@ -187,17 +210,19 @@ function RegistrationDialog({
     true,
   );
   const dirty = (editing && registrationChanged(baseline, caption, mediaIds)) || commentEditing;
-  const busy = saving || generating || commentSaving || uploading || !!threads?.working;
+  const busy =
+    saving || generating || commentSaving || uploading || !!threads?.working || mobile.working;
   const publishedPost = latestPublication(threads?.state ?? null, post.key, 'post');
   const publishedReply = latestPublication(threads?.state ?? null, post.key, 'reply');
   const connectedAccount = threads?.state?.account;
   const apiReady =
+    !threads?.state?.desktopRequestsDisabled &&
     !threads?.loading &&
     !!connectedAccount &&
     !connectedAccount.requiresReconnect &&
     Date.parse(connectedAccount.expiresAt) > Date.now();
   const exportIssue = postDraftExportIssue(post);
-  const selectionDisabled = disabled || busy;
+  const selectionDisabled = disabled || busy || mobileEditLocked;
 
   useEffect(() => {
     mounted.current = true;
@@ -256,6 +281,8 @@ function RegistrationDialog({
       commentSavingRef.current ||
       uploadPending.current ||
       uploading ||
+      mobile.working ||
+      sendMobileOpen ||
       threads?.working
     )
       return;
@@ -282,7 +309,7 @@ function RegistrationDialog({
     updateSelection(makeNext(), focusId);
   }
   function startEditing() {
-    if (disabled || busy || commentEditing) return;
+    if (disabled || busy || commentEditing || mobileEditLocked) return;
     const next = {
       caption: draft?.caption ?? '',
       mediaIds: [...(draft?.mediaIds ?? [])],
@@ -294,7 +321,7 @@ function RegistrationDialog({
     setEditing(true);
   }
   async function save() {
-    if (disabled || savingRef.current || generationRef.current) return;
+    if (disabled || savingRef.current || generationRef.current || mobileEditLocked) return;
     try {
       const input = registrationInput(post, caption, mediaIds, revision);
       savingRef.current = true;
@@ -310,7 +337,14 @@ function RegistrationDialog({
     }
   }
   async function saveComment(input: SavePostCommentInput) {
-    if (disabled || busy || commentSavingRef.current || commentProblem || !draft)
+    if (
+      disabled ||
+      busy ||
+      commentSavingRef.current ||
+      commentProblem ||
+      !draft ||
+      mobileEditLocked
+    )
       throw new Error(commentProblem || '다른 작업이 끝난 뒤 저장하세요.');
     commentSavingRef.current = true;
     setCommentSaving(true);
@@ -323,7 +357,14 @@ function RegistrationDialog({
     }
   }
   async function generate() {
-    if (disabled || savingRef.current || generationRef.current || !selectedImageIds.length) return;
+    if (
+      disabled ||
+      savingRef.current ||
+      generationRef.current ||
+      !selectedImageIds.length ||
+      mobileEditLocked
+    )
+      return;
     setCandidates(null);
     try {
       const input = captionGenerationInput(post, mediaIds, language, revision);
@@ -352,7 +393,14 @@ function RegistrationDialog({
     }
   }
   async function publish(kind: 'post' | 'reply') {
-    if (!threads || !draft || uploadPending.current || busy) return;
+    if (
+      !threads ||
+      threads.state?.desktopRequestsDisabled ||
+      !draft ||
+      uploadPending.current ||
+      busy
+    )
+      return;
     if (kind === 'reply' && !post.comment) return;
     uploadPending.current = true;
     setUploadKind(kind);
@@ -791,7 +839,7 @@ function RegistrationDialog({
               post={post}
               editing={commentEditing}
               onEditingChange={setCommentEditing}
-              disabled={disabled || busy || !!commentProblem}
+              disabled={disabled || busy || !!commentProblem || mobileEditLocked}
               saving={commentSaving}
               problem={commentProblem}
               onSave={saveComment}
@@ -803,9 +851,24 @@ function RegistrationDialog({
                 publicationBlocksUpload(publishedReply)
               }
               published={isPublishedReply(publishedReply, publishedPost)}
+              mobilePublication={mobileMode}
             />
           )}
-          {!editing && draft && threads && (
+          {!editing && draft && mobileMode && (
+            <>
+              <MobilePublicationPanel
+                mobile={mobile}
+                accounts={managedAccounts.accounts}
+                disabled={disabled || commentEditing}
+              />
+              {mobileEditLocked && mobile.loaded && (
+                <p className="mobile-publication-edit-hint">
+                  내용을 수정하려면 먼저 게시 대기를 회수하거나 보류된 전송을 취소해 주세요.
+                </p>
+              )}
+            </>
+          )}
+          {!editing && draft && threads && (!mobileMode || publishedPost || publishedReply) && (
             <ThreadsPublicationPanel
               postKey={post.key}
               threads={threads}
@@ -842,6 +905,7 @@ function RegistrationDialog({
                   disabled={
                     disabled ||
                     busy ||
+                    mobileEditLocked ||
                     !mediaIds.length ||
                     unavailable > 0 ||
                     (!!revision && !registrationChanged(baseline, caption, mediaIds))
@@ -853,7 +917,7 @@ function RegistrationDialog({
                 <button
                   type="button"
                   className="primary"
-                  disabled={disabled || busy || commentEditing}
+                  disabled={disabled || busy || commentEditing || mobileEditLocked}
                   onClick={startEditing}
                 >
                   <Icon name="edit" />
@@ -875,31 +939,87 @@ function RegistrationDialog({
                 <Icon name={exporting ? 'refresh' : 'download'} />
                 {exporting ? '다운로드 중…' : '다운로드'}
               </button>
-              <button
-                type="button"
-                disabled={
-                  disabled ||
-                  busy ||
-                  commentEditing ||
-                  !!exportIssue ||
-                  !apiReady ||
-                  !threads?.state?.storageConfigured ||
-                  publicationBlocksUpload(publishedPost)
-                }
-                title={
-                  publishedPost?.status === 'published'
-                    ? '이미 게시한 글입니다.'
-                    : '등록한 게시글을 Threads에 업로드합니다.'
-                }
-                onClick={() => void publish('post')}
-              >
-                <Icon name="upload" />
-                {publishedPost?.status === 'published' ? '등록 완료' : 'API 업로드'}
-              </button>
+              {mobileMode ? (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={
+                    disabled ||
+                    busy ||
+                    commentEditing ||
+                    !!exportIssue ||
+                    mobileEditLocked ||
+                    mobile.busy ||
+                    managedAccounts.busy ||
+                    !managedAccounts.loaded ||
+                    !mobileAccountChoices(managedAccounts.accounts).length
+                  }
+                  title={
+                    !mobile.loaded
+                      ? '모바일 게시 상태를 확인하고 있습니다.'
+                      : mobileEditLocked
+                        ? '다시 보내려면 먼저 게시 대기를 회수하거나 보류된 전송을 취소하세요.'
+                        : !mobileAccountChoices(managedAccounts.accounts).length
+                          ? '계정 관리에서 계정을 등록하고 서버와 동기화하세요.'
+                          : '선택한 계정의 모바일 게시 대기로 보냅니다.'
+                  }
+                  onClick={() => setSendMobileOpen(true)}
+                >
+                  <Icon name="upload" /> 모바일로 보내기
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={
+                    disabled ||
+                    busy ||
+                    commentEditing ||
+                    !!exportIssue ||
+                    !apiReady ||
+                    !threads?.state?.storageConfigured ||
+                    publicationBlocksUpload(publishedPost)
+                  }
+                  title={
+                    publishedPost?.status === 'published'
+                      ? '이미 게시한 글입니다.'
+                      : '등록한 게시글을 Threads에 업로드합니다.'
+                  }
+                  onClick={() => void publish('post')}
+                >
+                  <Icon name="upload" />
+                  {publishedPost?.status === 'published'
+                    ? '등록 완료'
+                    : threads?.state?.desktopRequestsDisabled
+                      ? '모바일 게시 준비 중'
+                      : 'API 업로드'}
+                </button>
+              )}
             </div>
           )}
         </footer>
       </div>
+      {sendMobileOpen && draft && (
+        <MobilePublicationSendDialog
+          accounts={managedAccounts.accounts}
+          busy={mobile.working}
+          mediaCount={draft.mediaIds.length}
+          includesComment={!!post.comment}
+          hasHistory={mobile.publications.length > 0 || !!publishedPost}
+          onClose={() => setSendMobileOpen(false)}
+          onSend={async (accountId) => {
+            const ok = await mobile.send({
+              postKey: post.key,
+              expectedRevision: draft.revision,
+              expectedDraftCreatedAt: draft.createdAt,
+              expectedCommentUpdatedAt: post.comment?.updatedAt ?? null,
+              accountId,
+            });
+            // An interrupted send has its own explicit retry/cancel controls in the parent.
+            if (!ok && mobile.getSnapshot().pending.length) setSendMobileOpen(false);
+            return ok;
+          }}
+        />
+      )}
       {uploading && (
         <ThreadsUploadOverlay
           progress={

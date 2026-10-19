@@ -1,0 +1,61 @@
+.service-auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #f5f6f8;
+}
+.service-auth-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 36px;
+  border: 1px solid #e0e3e8;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 12px 40px #2535530c;
+}
+.service-auth-brand {
+  color: #d85b22;
+  font-weight: 700;
+  margin-bottom: 28px;
+}
+.service-auth-card h1 {
+  font-size: 24px;
+  margin: 0 0 14px;
+}
+.service-auth-card p {
+  line-height: 1.6;
+}
+.service-auth-card form,
+.service-auth-card label {
+  display: grid;
+  gap: 10px;
+}
+.service-auth-card form {
+  gap: 18px;
+  margin: 24px 0;
+}
+.service-auth-card input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #cdd3dc;
+  border-radius: 8px;
+}
+.service-auth-card button {
+  margin: 4px 8px 4px 0;
+}
+.service-auth-lock {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #f5f6f8;
+}
+.service-auth-lock::backdrop {
+  background: #f5f6f8;
+}

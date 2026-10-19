@@ -89,7 +89,7 @@ function PublicationStatus({
       {item.publishedAt && (
         <p className="threads-publication-time">
           <span>{displayDate(item.publishedAt)} 게시</span>
-          {item.kind === 'post' && (
+          {item.kind === 'post' && !threads.state?.desktopRequestsDisabled && (
             <span>(매일 오전 {THREADS_INSIGHTS_HOUR}시에 자동 갱신됩니다.)</span>
           )}
         </p>
@@ -97,7 +97,7 @@ function PublicationStatus({
       {item.status === 'published' && item.kind === 'post' && item.metricsUpdatedAt && (
         <ThreadsMetrics publication={item} />
       )}
-      {recoverable && (
+      {recoverable && !threads.state?.desktopRequestsDisabled && (
         <div className="threads-recovery">
           <p>
             게시 결과를 확인한 뒤 계속할 수 있습니다. Threads에서 이미 게시됐다면 해당 게시글의 API
@@ -177,9 +177,12 @@ export function ThreadsPublicationPanel({
       aria-labelledby="threads-publication-title"
     >
       <h3 id="threads-publication-title" className="section-divider">
-        API 업로드
+        {threads.state?.desktopRequestsDisabled ? '기존 PC 게시 이력' : 'API 업로드'}
       </h3>
-      {!post && (
+      {threads.state?.desktopRequestsDisabled && (
+        <p>이전에 PC에서 게시한 원글·댓글 이력을 보관합니다.</p>
+      )}
+      {!post && !threads.state?.desktopRequestsDisabled && (
         <div className="threads-section-heading">
           {threads.loading ? (
             <p role="status">연결 상태 확인 중…</p>

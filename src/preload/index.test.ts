@@ -1,14 +1,44 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
+import { AUTH_STATE_CHANGED } from '../shared/service-auth';
 
-const electron = vi.hoisted(() => ({ expose: vi.fn(), invoke: vi.fn(), extract: vi.fn() }));
+const electron = vi.hoisted(() => ({
+  expose: vi.fn(),
+  invoke: vi.fn(),
+  extract: vi.fn(),
+  on: vi.fn(),
+  removeListener: vi.fn(),
+}));
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: electron.expose },
-  ipcRenderer: { invoke: electron.invoke },
+  ipcRenderer: {
+    invoke: electron.invoke,
+    on: electron.on,
+    removeListener: electron.removeListener,
+  },
   webUtils: { getPathForFile: electron.extract },
 }));
 import './index';
 const api = electron.expose.mock.calls[0][1] as ThreadsMediaApi;
+it('exposes only fixed publication actions, never direct URL or file-path upload calls', async () => {
+  const send = {
+    postKey: 'post',
+    expectedRevision: 1,
+    expectedDraftCreatedAt: '2026-10-19T00:00:00Z',
+    expectedCommentUpdatedAt: null,
+    accountId: 'account',
+  };
+  await api.sendMobilePublication(send);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.sendMobilePublication, send);
+  await api.getMobilePublications({ postKey: 'post' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.mobilePublications, { postKey: 'post' });
+  await api.cancelPendingMobilePublication({ requestId: 'request' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.cancelPendingMobilePublication, {
+    requestId: 'request',
+  });
+  expect(Object.keys(api)).not.toContain('publicationRequest');
+  expect(Object.keys(api)).not.toContain('uploadPublicationFile');
+});
 beforeEach(() => {
   electron.invoke
     .mockReset()
@@ -60,4 +90,27 @@ describe('dropped File preload boundary', () => {
     expect(electron.extract).not.toHaveBeenCalled();
     expect(electron.invoke).not.toHaveBeenCalled();
   });
+});
+
+it('exposes only named auth calls and strips Electron event objects from notifications', async () => {
+  await api.signIn('employee', 'password-123');
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.signIn, 'employee', 'password-123');
+  await api.changePassword('password-123', 'new-password');
+  expect(electron.invoke).toHaveBeenLastCalledWith(
+    IPC.changePassword,
+    'password-123',
+    'new-password',
+  );
+  const listener = vi.fn();
+  const remove = api.onAuthStateChanged(listener);
+  const callback = electron.on.mock.calls.at(-1)![1];
+  callback({ sender: 'privileged' }, { status: 'signed-out' });
+  expect(listener).toHaveBeenCalledExactlyOnceWith({ status: 'signed-out' });
+  remove();
+  expect(electron.removeListener).toHaveBeenCalledWith(AUTH_STATE_CHANGED, callback);
+  expect(Object.keys(api)).not.toContain('invoke');
+  expect(Object.keys(api)).not.toContain('readToken');
+  expect(Object.keys(api)).not.toContain('getCredential');
+  expect(Object.keys(api)).not.toContain('managedThreadsRequest');
+  expect(Object.keys(api)).not.toContain('fetch');
 });

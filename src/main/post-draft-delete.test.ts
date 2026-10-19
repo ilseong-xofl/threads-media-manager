@@ -101,6 +101,47 @@ function setup(initial = view()) {
 }
 
 describe('registered post deletion', () => {
+  it('cancelling the local confirmation never cancels server publications', async () => {
+    const remote = vi.fn(async () => {});
+    const launch = vi.fn(() => ({ result: Promise.resolve(), cancel: vi.fn() }));
+    const controller = new PostDraftDeleteController(
+      async () => view(),
+      async () => false,
+      launch,
+      () => false,
+      remote,
+    );
+    expect((await controller.delete(root, input)).status).toBe('cancelled');
+    expect(remote).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+  it('keeps local data when the server has not confirmed cancellation, and clears a receipt only after worker success', async () => {
+    const remote = vi.fn<() => Promise<void>>(async () => {
+      throw new ViewError('SERVICE_UNAVAILABLE', 'offline');
+    });
+    const launch = vi.fn(() => ({ result: Promise.resolve(), cancel: vi.fn() }));
+    const committed = vi.fn(async () => {});
+    const controller = new PostDraftDeleteController(
+      async () => view(),
+      async () => true,
+      launch,
+      () => false,
+      remote,
+      committed,
+    );
+    expect((await controller.delete(root, input)).status).toBe('error');
+    expect(launch).not.toHaveBeenCalled();
+    expect(committed).not.toHaveBeenCalled();
+    remote.mockImplementation(async () => {});
+    const pending = deferred<void>();
+    launch.mockReturnValueOnce({ result: pending.promise, cancel: vi.fn() });
+    const saving = controller.delete(root, input);
+    await vi.waitFor(() => expect(launch).toHaveBeenCalledOnce());
+    expect(committed).not.toHaveBeenCalled();
+    pending.resolve();
+    await saving;
+    expect(committed).toHaveBeenCalledOnce();
+  });
   it('deletes references despite missing source media and keeps the original post and attachments', async () => {
     const { controller, confirm, launch } = setup();
     const result = await controller.delete(root, input);

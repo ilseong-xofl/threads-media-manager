@@ -1,6 +1,32 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { AUTH_STATE_CHANGED, type AppAuthState } from '../shared/service-auth';
 import { IPC, type ThreadsMediaApi } from '../shared/contracts';
 const api: ThreadsMediaApi = {
+  getAuthState: () => ipcRenderer.invoke(IPC.getAuthState),
+  getManagedThreadsAccounts: () => ipcRenderer.invoke(IPC.managedThreadsAccounts),
+  deleteManagedThreadsAccount: (input) =>
+    ipcRenderer.invoke(IPC.deleteManagedThreadsAccount, input),
+  registerManagedThreadsAccount: (input) =>
+    ipcRenderer.invoke(IPC.registerManagedThreadsAccount, input),
+  replaceManagedThreadsToken: (input) => ipcRenderer.invoke(IPC.replaceManagedThreadsToken, input),
+  retryManagedThreadsAccount: (input) => ipcRenderer.invoke(IPC.retryManagedThreadsAccount, input),
+  discardPendingManagedThreadsAccount: (input) =>
+    ipcRenderer.invoke(IPC.discardPendingManagedThreadsAccount, input),
+  getMobilePublications: (input) => ipcRenderer.invoke(IPC.mobilePublications, input),
+  sendMobilePublication: (input) => ipcRenderer.invoke(IPC.sendMobilePublication, input),
+  retryMobilePublication: (input) => ipcRenderer.invoke(IPC.retryMobilePublication, input),
+  cancelPendingMobilePublication: (input) =>
+    ipcRenderer.invoke(IPC.cancelPendingMobilePublication, input),
+  recallMobilePublication: (input) => ipcRenderer.invoke(IPC.recallMobilePublication, input),
+  signIn: (accountId, password) => ipcRenderer.invoke(IPC.signIn, accountId, password),
+  signOut: () => ipcRenderer.invoke(IPC.signOut),
+  changePassword: (currentPassword, newPassword) =>
+    ipcRenderer.invoke(IPC.changePassword, currentPassword, newPassword),
+  onAuthStateChanged: (listener) => {
+    const callback = (_event: unknown, state: AppAuthState) => listener(state);
+    ipcRenderer.on(AUTH_STATE_CHANGED, callback);
+    return () => ipcRenderer.removeListener(AUTH_STATE_CHANGED, callback);
+  },
   reportUpdateBlocked: (blocked) => ipcRenderer.invoke(IPC.reportUpdateBlocked, blocked),
   chatGptState: () => ipcRenderer.invoke(IPC.chatGptState),
   loginChatGpt: () => ipcRenderer.invoke(IPC.loginChatGpt),

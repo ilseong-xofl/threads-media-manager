@@ -15,6 +15,7 @@ export function PostCommentSection({
   onPublish,
   publishDisabled = true,
   published = false,
+  mobilePublication = false,
 }: {
   post: Post;
   editing: boolean;
@@ -26,6 +27,7 @@ export function PostCommentSection({
   onPublish?(): void;
   publishDisabled?: boolean;
   published?: boolean;
+  mobilePublication?: boolean;
 }) {
   const [caption, setCaption] = useState('');
   const [link, setLink] = useState('');
@@ -135,25 +137,32 @@ export function PostCommentSection({
                 <Icon name="edit" />
                 수정
               </button>
-              <button
-                type="button"
-                disabled={disabled || publishDisabled || !onPublish}
-                onClick={onPublish}
-                aria-label="댓글 API 업로드"
-                title={
-                  published
-                    ? '이미 게시한 댓글입니다.'
-                    : '게시한 Threads 글에 등록한 댓글을 올립니다.'
-                }
-              >
-                <Icon name="upload" />
-                {published ? '댓글 완료' : 'API 업로드'}
-              </button>
+              {!mobilePublication && (
+                <button
+                  type="button"
+                  disabled={disabled || publishDisabled || !onPublish}
+                  onClick={onPublish}
+                  aria-label="댓글 API 업로드"
+                  title={
+                    published
+                      ? '이미 게시한 댓글입니다.'
+                      : '게시한 Threads 글에 등록한 댓글을 올립니다.'
+                  }
+                >
+                  <Icon name="upload" />
+                  {published ? '댓글 완료' : 'API 업로드'}
+                </button>
+              )}
             </div>
           </div>
           {post.comment.caption && <p className="caption">{post.comment.caption}</p>}
           {post.comment.link && (
             <PostLink postKey={post.key} kind="comment" url={post.comment.link} />
+          )}
+          {mobilePublication && (
+            <p className="comment-hint">
+              댓글은 게시본에 함께 보내며, 휴대폰에서 원글 게시 후 별도로 게시합니다.
+            </p>
           )}
         </div>
       ) : !problem ? (

@@ -6,8 +6,6 @@ import type {
 } from '../shared/contracts';
 import { Icon } from './Icon';
 import { ChatGptSettings } from './ChatGptSettings';
-import { ThreadsAccountSettings } from './ThreadsAccountSettings';
-import { ThreadsWorkOverlay } from './ThreadsUploadOverlay';
 import type { ThreadsUi } from './use-threads-api';
 import { useToast } from './toast';
 
@@ -27,12 +25,10 @@ export function SettingsModal({
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const pending = useRef(false);
-  const insightsPending = useRef(false);
-  const [insightsWorking, setInsightsWorking] = useState(false);
   const [root, setRoot] = useState<string | null>(null);
   const [rootLoading, setRootLoading] = useState(true);
   const [working, setWorking] = useState<LibraryMaintenanceOperation | null>(null);
-  const apiWorking = !!threads?.working || insightsWorking;
+  const apiWorking = !!threads?.working;
   const setNotice = useToast();
   useEffect(() => {
     const element = dialog.current;
@@ -64,29 +60,14 @@ export function SettingsModal({
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
   }, [setNotice]);
-  function onSyncing(value: boolean) {
-    insightsPending.current = value;
-    setInsightsWorking(value);
-  }
   function requestClose() {
-    if (!pending.current && !insightsPending.current && !apiWorking) onClose();
+    if (!pending.current && !apiWorking) onClose();
   }
-  useEffect(() => {
-    if (!insightsWorking) return;
-    return () => close.current?.focus({ preventScroll: true });
-  }, [insightsWorking]);
   async function run(
     operation: LibraryMaintenanceOperation,
     action: () => Promise<LibraryMaintenanceResult>,
   ) {
-    if (
-      pending.current ||
-      insightsPending.current ||
-      apiWorking ||
-      !enabled ||
-      (!root && operation !== 'reconnect')
-    )
-      return;
+    if (pending.current || apiWorking || !enabled || (!root && operation !== 'reconnect')) return;
     pending.current = true;
     setWorking(operation);
     onWorking(true);
@@ -133,7 +114,7 @@ export function SettingsModal({
         requestClose();
       }}
     >
-      <div className="modal-header" inert={insightsWorking}>
+      <div className="modal-header">
         <h2 id="settings-title">설정</h2>
         <button
           ref={close}
@@ -145,15 +126,8 @@ export function SettingsModal({
           <Icon name="close" />
         </button>
       </div>
-      <div className="settings-body" inert={insightsWorking}>
+      <div className="settings-body">
         <ChatGptSettings enabled={enabled && !working && !apiWorking} />
-        {threads && (
-          <ThreadsAccountSettings
-            threads={threads}
-            enabled={enabled && !working}
-            onSyncing={onSyncing}
-          />
-        )}
         <section className="settings-section">
           <h3>라이브러리</h3>
           <p className="settings-root">
@@ -179,7 +153,10 @@ export function SettingsModal({
             DB 백업 후 앱을 종료하고 작업 폴더 전체와 백업 파일을 새 컴퓨터로 옮기세요. 새
             컴퓨터에서 옮긴 폴더를 선택하고 DB를 복원하면 기존 자료를 그대로 사용할 수 있습니다.
             이미지·영상과 수집 Excel은 작업 폴더에, 게시 완료 이력은 백업 시 작업 폴더에 함께
-            보관됩니다. Threads 토큰과 파일 서버 연결코드는 새 컴퓨터에서 다시 입력하세요.
+            보관됩니다.{' '}
+            {threads?.state?.desktopRequestsDisabled
+              ? '서버에 저장한 Threads 계정과 토큰은 새 컴퓨터에서 같은 직원 계정으로 로그인한 뒤 동기화하세요. 서버에 저장하지 못한 보류 입력은 이전 컴퓨터에서 먼저 처리하세요.'
+              : 'Threads 토큰과 파일 서버 연결코드는 새 컴퓨터에서 다시 입력하세요.'}
           </p>
           <div className="settings-row">
             <div>
@@ -212,9 +189,6 @@ export function SettingsModal({
           </div>
         </section>
       </div>
-      {insightsWorking && (
-        <ThreadsWorkOverlay label="Threads 통계 조회 진행" title="통계 조회 중" />
-      )}
     </dialog>
   );
 }

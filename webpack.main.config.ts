@@ -7,6 +7,7 @@ export const mainConfig: Configuration = {
   plugins: [
     ...createPlugins(),
     new DefinePlugin({
+      TMM_SERVICE_URL: JSON.stringify(process.env.THREADS_ADMIN_API_URL ?? ''),
       TMM_GITHUB_REPOSITORY: JSON.stringify(process.env.GITHUB_REPOSITORY ?? ''),
     }),
   ],

@@ -1,0 +1,64 @@
+.app-account-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.app-account-divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 4px;
+  background: #e0e4ed;
+}
+.app-account-nickname {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #465163;
+  font-size: 13px;
+  font-weight: 650;
+}
+.app-account-trigger[aria-expanded='true'] {
+  background: #eeeefb;
+  border-color: #cfd0ee;
+  color: var(--accent);
+}
+.app-account-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 20;
+  width: 192px;
+  padding: 6px;
+  border: 1px solid #e2e5ed;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 12px 34px #26324b24;
+}
+.app-account-dropdown button {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 13px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.app-account-dropdown .app-account-signout {
+  margin-top: 5px;
+  border-top: 1px solid #edf0f5;
+  border-radius: 0 0 8px 8px;
+  color: #a45050;
+}
+@media (max-width: 900px) {
+  .app-account-menu {
+    gap: 8px;
+  }
+  .app-account-nickname {
+    max-width: 88px;
+  }
+}

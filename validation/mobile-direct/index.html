@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://graph.threads.com; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <title>모바일 직접 호출 검증 · Threads</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.mjs"></script>
+  </head>
+  <body>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <main>
+      <header>
+        <span class="eyebrow">THREADS · MOBILE DIRECT PROBE</span>
+        <h1>휴대폰에서 직접,<br />한 단계씩 확인합니다.</h1>
+        <p class="lead">
+          계정 확인부터 원글과 댓글 게시까지. 모든 Meta 요청은 이 브라우저에서 직접 실행됩니다.
+        </p>
+        <div class="route" aria-label="요청 경로">
+          <span>이 휴대폰</span><span aria-hidden="true">→</span><strong>graph.threads.com</strong>
+        </div>
+        <p class="fine">
+          운영 서비스가 아닌 검증 도구입니다. 로그인·DB 동기화·S3 업로드는 이번 검증에 포함하지
+          않습니다.
+        </p>
+      </header>
+
+      <section aria-labelledby="environment-heading">
+        <div class="section-title">
+          <span class="step">01</span>
+          <h2 id="environment-heading">실행 환경</h2>
+          <span id="environment-badge" class="badge">확인 중</span>
+        </div>
+        <p id="environment-detail" class="help"></p>
+        <label class="check"
+          ><input id="cellular" type="checkbox" /><span
+            >이 계정 전용 안드로이드 휴대폰이며, 모바일 데이터로 접속했습니다.</span
+          ></label
+        >
+        <p class="fine">
+          웹에서 통신망이나 물리 기기를 확정할 수는 없습니다. 이 확인과 브라우저 환경 검사는 실수
+          방지용입니다. 한 탭에서만 진행하세요.
+        </p>
+      </section>
+
+      <section aria-labelledby="account-heading">
+        <div class="section-title">
+          <span class="step">02</span>
+          <h2 id="account-heading">계정과 토큰</h2>
+        </div>
+        <div class="fields two">
+          <label
+            >Meta App ID<input
+              id="app-id"
+              inputmode="numeric"
+              autocomplete="off"
+              placeholder="연결할 Meta 앱 ID"
+          /></label>
+          <label
+            >Threads 사용자 이름<input
+              id="username"
+              autocomplete="off"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="@를 제외한 사용자 이름"
+          /></label>
+        </div>
+        <label
+          >장기 액세스 토큰<input
+            id="token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="이 휴대폰에서 직접 입력"
+        /></label>
+        <p class="help">
+          토큰을 서버나 기기 저장소에 저장하지 않습니다. 페이지를 다시 열면 입력해야 합니다. App
+          Secret은 입력하지 않습니다.
+        </p>
+        <label class="check"
+          ><input id="app-confirmed" type="checkbox" /><span
+            >개발자센터에서 이 앱에 해당 계정이 Threads 테스터로 연결되어 있고, 입력할 토큰이 그
+            앱에서 발급된 것을 확인했습니다.</span
+          ></label
+        >
+        <div class="actions">
+          <button id="verify" class="primary" data-live>계정·토큰 확인</button
+          ><button id="clear-token" class="quiet">입력한 토큰 지우기</button>
+        </div>
+        <div id="account-summary" class="summary" aria-live="polite">
+          아직 확인한 계정이 없습니다.
+        </div>
+        <div class="actions">
+          <button id="refresh" data-live>토큰 갱신 테스트</button
+          ><button id="copy-token" class="quiet">갱신된 토큰 복사</button>
+        </div>
+        <p class="fine">
+          갱신은 조건을 충족하는 유효한 장기 토큰으로 별도 실행합니다. 갱신된 토큰은 필요한 경우
+          직접 복사해 안전하게 보관하세요. 운영 서비스의 서버 저장은 아직 구현하지 않았습니다.
+        </p>
+      </section>
+
+      <section aria-labelledby="root-heading">
+        <div class="section-title">
+          <span class="step">03</span>
+          <h2 id="root-heading">테스트 원글</h2>
+          <span id="root-badge" class="badge">준비 전</span>
+        </div>
+        <label
+          >게시할 본문<textarea
+            id="caption"
+            rows="4"
+            maxlength="10000"
+            placeholder="실제 계정에 게시할 테스트 본문"
+          ></textarea>
+        </label>
+        <div class="field-heading">
+          <span>미디어</span><button id="add-media" class="quiet small">미디어 추가</button>
+        </div>
+        <p class="help">
+          이미지·영상의 HTTPS 주소를 입력하세요. Meta가 직접 파일을 가져갑니다. 여러 개를 추가하면
+          입력 순서대로 캐러셀을 만듭니다. 미디어가 없으면 텍스트 원글입니다.
+        </p>
+        <div id="media-list"></div>
+        <template id="media-template">
+          <div class="media-row">
+            <label class="media-type-label"
+              ><span class="sr-only">미디어 종류</span
+              ><select>
+                <option value="IMAGE">이미지</option>
+                <option value="VIDEO">영상</option>
+              </select></label
+            >
+            <label class="media-url-label"
+              ><span class="sr-only">미디어 HTTPS 주소</span
+              ><input type="url" autocomplete="off" spellcheck="false" placeholder="https://…"
+            /></label>
+            <button class="quiet remove-media" aria-label="이 미디어 제거">제거</button>
+          </div>
+        </template>
+        <label class="check"
+          ><input id="approve-root" type="checkbox" /><span
+            >확인된 계정에 위 내용으로 실제 테스트 게시를 진행합니다.</span
+          ></label
+        >
+        <div class="actions">
+          <button id="prepare-root" data-live>컨테이너 준비·이어가기</button
+          ><button id="check-root" class="quiet" data-live>처리 상태 확인</button>
+        </div>
+        <div id="root-summary" class="summary" aria-live="polite">
+          본문과 미디어를 준비한 뒤 컨테이너를 생성하세요.
+        </div>
+        <button id="publish-root" class="primary full" data-live>원글 게시</button>
+      </section>
+
+      <section aria-labelledby="reply-heading">
+        <div class="section-title">
+          <span class="step">04</span>
+          <h2 id="reply-heading">별도 댓글</h2>
+          <span id="reply-badge" class="badge">원글 게시 후</span>
+        </div>
+        <label
+          >댓글 본문<textarea
+            id="reply-text"
+            rows="3"
+            maxlength="10000"
+            placeholder="이 검증에서 게시한 원글에 달 댓글"
+          ></textarea>
+        </label>
+        <label class="check"
+          ><input id="approve-reply" type="checkbox" /><span
+            >게시된 원글에 위 댓글을 별도로 게시합니다.</span
+          ></label
+        >
+        <div class="actions">
+          <button id="prepare-reply" data-live>댓글 컨테이너 준비</button
+          ><button id="check-reply" class="quiet" data-live>처리 상태 확인</button>
+        </div>
+        <div id="reply-summary" class="summary" aria-live="polite">
+          원글의 게시 ID가 확인돼야 댓글을 시작할 수 있습니다.
+        </div>
+        <button id="publish-reply" class="primary full" data-live>댓글 게시</button>
+      </section>
+
+      <section aria-labelledby="recovery-heading">
+        <div class="section-title">
+          <span class="step">05</span>
+          <h2 id="recovery-heading">중단 후 확인</h2>
+        </div>
+        <p class="help">
+          응답을 받지 못한 요청은 자동으로 다시 보내지 않습니다. 같은 계정·토큰을 다시 확인한 뒤
+          처리 상태를 조회하세요. 실제 게시물을 확인했다면 숫자 게시 ID로 검증할 수 있습니다.
+        </p>
+        <div class="fields two">
+          <label
+            >확인할 대상<select id="reconcile-kind">
+              <option value="root">원글</option>
+              <option value="reply">댓글</option>
+            </select></label
+          ><label
+            >확인한 게시 ID<input
+              id="reconcile-id"
+              inputmode="numeric"
+              autocomplete="off"
+              placeholder="숫자 ID · URL 아님"
+          /></label>
+        </div>
+        <button id="reconcile" data-live>게시물 확인·결과 연결</button>
+        <p class="fine">
+          텍스트 원글·댓글은 계정·본문·게시 시각·댓글의 원글 관계를 검증합니다. 미디어 원글은 원본
+          파일의 일치를 입증할 수 없어 이 도구에서 결과 불명을 해제하지 않습니다. 기록을 내려받고
+          시험을 중단하세요. 주소의 짧은 코드와 숫자 API ID는 다릅니다.
+        </p>
+      </section>
+
+      <section aria-labelledby="result-heading">
+        <div class="section-title">
+          <span class="step">06</span>
+          <h2 id="result-heading">검증 기록</h2>
+        </div>
+        <p class="help">
+          토큰·본문·미디어 URL을 제외한 단계·시간·결과 ID를 이 브라우저에 저장합니다. 사이트
+          데이터를 지우거나 다른 브라우저를 사용하면 기록을 복구할 수 없습니다.
+        </p>
+        <div class="actions">
+          <button id="export-report">검증 기록 내려받기</button
+          ><button id="new-test" class="quiet">다음 테스트 준비</button>
+        </div>
+        <p class="fine">
+          결과 불명 작업이 있으면 다음 테스트로 넘어가지 않습니다. 기록에는 계정과 게시 ID가 포함될
+          수 있으므로 공유 전에 확인하세요.
+        </p>
+        <ol id="events" class="events" aria-live="polite">
+          <li>아직 실행한 검증이 없습니다.</li>
+        </ol>
+      </section>
+      <footer>실제 휴대폰 검증 전 · 자동 게시·서버 대행·통계 조회 없음</footer>
+    </main>
+  </body>
+</html>
