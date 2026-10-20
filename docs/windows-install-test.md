@@ -10,7 +10,7 @@
 
 ## 1. 앱 설치
 
-1. [Windows 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.5/ThreadsMediaManager-win32-x64-Setup.exe)를 누릅니다.
+1. [Windows 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.6/ThreadsMediaManager-win32-x64-Setup.exe)를 누릅니다.
 2. 받은 파일을 실행해 설치하고 **Threads Media Manager**를 엽니다.
 
 ## 2. 폴더 지정과 로그인
