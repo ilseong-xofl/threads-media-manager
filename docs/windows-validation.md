@@ -17,7 +17,7 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 - [0.1.6 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.6)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.6/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. 서비스 로그인과 휴대폰 게시 연동이 들어간 첫 Windows 버전이다. 테스트 단계라 접속 서버는 개발 서버 `https://threads-admin-dev.ilscp.net`이다(사용자 결정, 테스트 후 운영 주소로 바꿔 다시 릴리스). 업데이트 후에는 서비스 계정 로그인이 필요하고 PC 직접 게시는 중단된다.
 - 앱 소스·태그는 `e5d898e146f39ed3f62718826cdac07f7f40a197`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/39354627699)에서 TypeScript 양쪽 **60개 파일 / 1,404개**, Python Mac **568개 통과**, Windows **568개 통과·OS별 4개 제외**, 린트·타입·포맷 검사를 통과했다.
-- 빌드에 넣은 서비스 주소가 앱 번들에 있음을 확인해 `verification.json`의 `release.serviceUrl`에 기록했다. 패키지 앱 실행은 서비스 로그인 화면·preload·인증 IPC(CI 러너에서 개발 서버 응답 `signed-out`)와 로그인 전 라이브러리 IPC 거절을 통과했다. 사용자 PC의 Setup 설치·버전 간 업데이트와 자료 보존은 별도 실기 확인 항목이다.
+- 빌드에 넣은 서비스 주소가 앱 번들에 있음을 확인해 `verification.json`의 `release.serviceUrl`에 기록했다. 패키지 앱 실행은 서비스 로그인 화면·preload·인증 IPC(CI 러너에서 개발 서버 응답 `signed-out`)와 로그인 전 라이브러리 IPC 거절을 통과했다. 사용자가 Windows 업데이트 적용을 확인했고 1차 테스트로 테스터에게 배포했다(2026-10-20 사용자 보고). 자료 보존 등 세부 실기 결과는 테스트 중 확인한다.
 - [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/39356273371)은 동일 CI의 검증된 파일 5개를 재빌드 없이 공개했다. Setup/nupkg HEAD 200과 크기 일치, Electron feed의 **0.1.5 → 0.1.6 안내 200** 및 최신 **0.1.6 조회 204**를 확인했다.
 - 설치 파일 SHA-256: `219eb9e81a09e7db434a168c1d57ea5be33ce253ebe493d334a6465a82c5e234`. Mac에는 Windows 설치 파일이나 nupkg를 내려받지 않았다.
 
