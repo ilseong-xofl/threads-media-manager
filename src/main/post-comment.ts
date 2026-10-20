@@ -159,10 +159,12 @@ export class PostCommentController {
     private refresh: (root: string) => Promise<CollectionView>,
     private launch: LaunchPostComment,
     private busy: () => boolean = () => false,
+    /** Runs before the local save; a sent copy takes the reply first and reports a notice. */
     private beforeSave?: (
       view: CollectionView,
       post: import('../shared/contracts').Post,
-    ) => Promise<void>,
+      input: SavePostCommentInput,
+    ) => Promise<string | void>,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -214,7 +216,7 @@ export class PostCommentController {
         );
       if (!validPostDraft(post.draft))
         throw new ViewError('comment_draft_missing', '게시글을 등록한 뒤 댓글 정보를 저장하세요.');
-      if (this.beforeSave) await this.beforeSave(before, post);
+      const notice = this.beforeSave ? await this.beforeSave(before, post, input) : undefined;
       if (this.cancelled) throw new ViewError('comment_cancelled', '댓글 저장을 중지했습니다.');
       this.job = this.launch({ root, ...input });
       const comment = await this.job.result;
@@ -255,7 +257,7 @@ export class PostCommentController {
           },
         };
       }
-      return { status: 'saved', comment, view };
+      return { status: 'saved', comment, view, ...(notice ? { notice } : {}) };
     } catch (error) {
       return {
         status: 'error',

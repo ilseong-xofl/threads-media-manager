@@ -1,7 +1,9 @@
 import type { Attachment, Post } from '../shared/contracts';
 import type { ThreadsPublication } from '../shared/threads-api';
+import type { MobilePublicationStatus } from '../shared/mobile-publications';
 import {
   isPublishedPost,
+  MobilePublishedBadges,
   ThreadsPublishedBadge,
   ThreadsReplyPublishedBadge,
 } from './ThreadsPublishedBadge';
@@ -15,6 +17,7 @@ export function RegisteredPostCard({
   post,
   publication,
   replyPublication,
+  mobileStatus,
   ordinal,
   onChange,
   onOpen,
@@ -26,6 +29,7 @@ export function RegisteredPostCard({
   post: Post;
   publication?: ThreadsPublication;
   replyPublication?: ThreadsPublication;
+  mobileStatus?: MobilePublicationStatus;
   ordinal?: number;
   onChange(ordinal: number): void;
   onOpen(): void;
@@ -115,11 +119,17 @@ export function RegisteredPostCard({
         >
           <Icon name="trash" />
         </button>
-        {isPublishedPost(publication) && (
+        {isPublishedPost(publication) ? (
           <span className="post-published-marker">
             <ThreadsPublishedBadge publication={publication} />
             <ThreadsReplyPublishedBadge reply={replyPublication} publication={publication} />
           </span>
+        ) : (
+          mobileStatus && (
+            <span className="post-published-marker">
+              <MobilePublishedBadges status={mobileStatus} />
+            </span>
+          )
         )}
         <button
           className={`post-export-button ${exporting ? 'is-exporting' : ''}`}

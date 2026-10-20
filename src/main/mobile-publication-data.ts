@@ -2,6 +2,7 @@ import type {
   MobilePublication,
   MobilePublicationMedia,
   MobilePublicationSource,
+  MobilePublicationStatus,
 } from '../shared/mobile-publications';
 import { isObject, validId, validRevision } from './managed-threads-store';
 import { ServiceApiError } from './service-api';
@@ -128,6 +129,21 @@ export function parsePublications(v: unknown): MobilePublication[] {
   )
     return fail();
   return rows;
+}
+export function parseStatuses(v: unknown): MobilePublicationStatus[] {
+  if (!isObject(v) || !Array.isArray(v.statuses) || v.statuses.length > 10000) return fail();
+  return v.statuses.map((s: unknown) =>
+    isObject(s) &&
+    postKey(s.postKey) &&
+    timestamp(s.draftCreatedAt) &&
+    typeof s.commentPublished === 'boolean'
+      ? {
+          postKey: s.postKey,
+          draftCreatedAt: s.draftCreatedAt,
+          commentPublished: s.commentPublished,
+        }
+      : fail(),
+  );
 }
 export function parsePublicationResponse(v: unknown): MobilePublication {
   return isObject(v) ? parsePublication(v.publication) : fail();

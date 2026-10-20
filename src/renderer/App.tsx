@@ -19,6 +19,7 @@ import type {
   AIContentDraft,
   CreateLocalPostInput,
 } from '../shared/contracts';
+import type { MobilePublicationStatus } from '../shared/mobile-publications';
 import { displayDate, filterPosts, isSavedPost, pendingPostCount, postMedia } from './view-model';
 import { Icon } from './Icon';
 import { PostCard } from './PostCard';
@@ -112,6 +113,31 @@ export function App({
     view.snapshot?.libraryId ?? view.snapshot?.root ?? '',
     serviceAvailable,
   );
+  // Phone publishing completes on the service; read it when the registered list is shown or refreshed.
+  const [mobileStatuses, setMobileStatuses] = useState<{
+    libraryId: string;
+    statuses: MobilePublicationStatus[];
+  } | null>(null);
+  const [statusRequest, setStatusRequest] = useState(0);
+  const statusLibrary =
+    libraryTab === 'registered' && !registration && serviceAvailable
+      ? (view.snapshot?.libraryId ?? '')
+      : '';
+  useEffect(() => {
+    if (!statusLibrary) return;
+    let disposed = false;
+    window.threadsMedia.getMobilePublicationStatuses().then(
+      (result) => {
+        // A failed read keeps the last badges rather than flickering them away.
+        if (!disposed && result.status === 'ok')
+          setMobileStatuses({ libraryId: statusLibrary, statuses: result.statuses });
+      },
+      () => {},
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [statusLibrary, statusRequest]);
   const localMutation =
     sendingMobile ||
     threads.working ||
@@ -395,7 +421,7 @@ export function App({
       setView(result.view);
       setActionNotice({
         error: !!result.view.error,
-        message: result.view.error?.message ?? '댓글 정보를 저장했습니다.',
+        message: result.view.error?.message ?? result.notice ?? '댓글 정보를 저장했습니다.',
       });
     } finally {
       commentPending.current = false;
@@ -699,7 +725,10 @@ export function App({
           <div className="actions">
             <button
               className="refresh-button"
-              onClick={() => void act(() => window.threadsMedia.refresh())}
+              onClick={() => {
+                setStatusRequest((n) => n + 1);
+                void act(() => window.threadsMedia.refresh());
+              }}
               disabled={
                 busy || downloading || !!exporting || localMutation || (!snapshot && !view.error)
               }
@@ -918,6 +947,14 @@ export function App({
                     post={post}
                     publication={latestPublication(threads.state, post.key, 'post')}
                     replyPublication={latestPublication(threads.state, post.key, 'reply')}
+                    mobileStatus={
+                      mobileStatuses?.libraryId === view.snapshot?.libraryId
+                        ? mobileStatuses?.statuses.find(
+                            (s) =>
+                              s.postKey === post.key && s.draftCreatedAt === post.draft?.createdAt,
+                          )
+                        : undefined
+                    }
                     ordinal={positions[`draft:${post.key}`]}
                     onChange={(ordinal) => changePosition(`draft:${post.key}`, ordinal)}
                     onOpen={() => setRegistration({ postKey: post.key, mode: 'view' })}

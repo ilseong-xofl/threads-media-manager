@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import type { CollectionView, Post } from '../shared/contracts';
 import type {
   MobilePublication,
+  MobilePublicationStatusesResult,
   MobilePublicationsResult,
   SendMobilePublicationInput,
 } from '../shared/mobile-publications';
@@ -19,6 +20,7 @@ import {
 import {
   parsePublicationResponse,
   parsePublications,
+  parseStatuses,
   postKey,
   timestamp,
   uuid,
@@ -53,6 +55,8 @@ interface Options {
   service: string;
   userData: string;
   refresh(): Promise<CollectionView>;
+  /** The loaded library, read without refreshing it. */
+  libraryId(): string | null;
   localBusy(): boolean;
   prepareMedia(root: string, ids: string[], directory: string): Promise<ThreadsUploadFile[]>;
   upload?: typeof uploadPublicationFile;
@@ -220,6 +224,18 @@ export class MobilePublicationsController {
       this.running = false;
     }
   }
+  /** Read-only badge data for the registered list; it touches no journal, so no work lock. */
+  async statuses(): Promise<MobilePublicationStatusesResult> {
+    try {
+      const libraryId = this.options.libraryId();
+      if (!libraryId) return { status: 'ok', statuses: [], problem: null };
+      const context = await this.options.client.getBusinessContext();
+      const raw = await this.request(context, 'statuses', undefined, { libraryId });
+      return { status: 'ok', statuses: parseStatuses(raw), problem: null };
+    } catch (error) {
+      return { status: 'error', statuses: [], problem: safeProblem(error) };
+    }
+  }
   get(input: unknown) {
     return this.run(async (context) => {
       if (!isObject(input) || !exactKeys(input, ['postKey']) || !postKey(input.postKey))
@@ -244,7 +260,7 @@ export class MobilePublicationsController {
     if (
       !sameSource(this.currentSource(snapshot.libraryId!, post), entry.source) ||
       post.draft!.caption !== entry.caption ||
-      JSON.stringify(this.comment(post)) !== JSON.stringify(entry.comment)
+      JSON.stringify(this.comment(post.comment)) !== JSON.stringify(entry.comment)
     )
       fail(
         'mobile_publication_changed',
@@ -273,7 +289,7 @@ export class MobilePublicationsController {
     if (
       !sameSource(this.currentSource(latest.libraryId!, current), entry.source) ||
       current.draft!.caption !== entry.caption ||
-      JSON.stringify(this.comment(current)) !== JSON.stringify(entry.comment)
+      JSON.stringify(this.comment(current.comment)) !== JSON.stringify(entry.comment)
     )
       fail(
         'mobile_publication_changed',
@@ -281,16 +297,14 @@ export class MobilePublicationsController {
       );
     return files;
   }
-  private comment(post: Post): PublicationRequest['comment'] {
-    if (
-      !post.comment ||
-      ![post.comment.caption, post.comment.link].filter(Boolean).join('\n').trim()
-    )
-      return null;
-    const text = [post.comment.caption, post.comment.link].filter(Boolean).join('\n');
+  private comment(
+    comment: { caption: string; link: string } | null | undefined,
+  ): PublicationRequest['comment'] {
+    if (!comment || ![comment.caption, comment.link].filter(Boolean).join('\n').trim()) return null;
+    const text = [comment.caption, comment.link].filter(Boolean).join('\n');
     if ([...text].length > 500)
       fail('mobile_publication_text', '댓글과 링크는 합쳐서 500자 이내로 작성하세요.');
-    return { caption: post.comment.caption, link: post.comment.link };
+    return { caption: comment.caption, link: comment.link };
   }
   send(input: unknown) {
     return this.run(async (context) => {
@@ -368,7 +382,8 @@ export class MobilePublicationsController {
         if (
           !sameSource(this.currentSource(current.libraryId!, refreshed), source) ||
           refreshed.draft!.caption !== post.draft!.caption ||
-          JSON.stringify(this.comment(refreshed)) !== JSON.stringify(this.comment(post))
+          JSON.stringify(this.comment(refreshed.comment)) !==
+            JSON.stringify(this.comment(post.comment))
         )
           fail('mobile_publication_changed', '준비 중 글이 변경되었습니다. 다시 확인하세요.');
         const request: PublicationRequest = {
@@ -378,7 +393,7 @@ export class MobilePublicationsController {
           expectedOwnershipVersion: account.ownershipVersion ?? 1,
           source,
           caption: post.draft!.caption,
-          comment: this.comment(post),
+          comment: this.comment(post.comment),
           media,
         };
         const entry = { service: this.options.service, ownerId: context.ownerId, request };
@@ -525,7 +540,12 @@ export class MobilePublicationsController {
     return this.run(async (context) => {
       if (
         !isObject(input) ||
-        !exactKeys(input, ['publicationId', 'expectedVersion']) ||
+        !exactKeys(input, [
+          'publicationId',
+          'expectedVersion',
+          ...(input.abandonUnresolved === undefined ? [] : ['abandonUnresolved']),
+        ]) ||
+        (input.abandonUnresolved !== undefined && input.abandonUnresolved !== true) ||
         !uuid(input.publicationId) ||
         !validRevision(input.expectedVersion)
       )
@@ -539,6 +559,7 @@ export class MobilePublicationsController {
       const publication = parsePublicationResponse(
         await this.request(context, 'recall', input.publicationId, {
           expectedVersion: input.expectedVersion,
+          ...(input.abandonUnresolved ? { abandonUnresolved: true } : {}),
         }),
       );
       if (publication.id !== before.id || publication.status !== 'cancelled')
@@ -574,6 +595,54 @@ export class MobilePublicationsController {
           'mobile_publication_recall_required',
           '모바일 게시 대기 글을 먼저 회수한 뒤 수정하세요.',
         );
+    } finally {
+      this.running = false;
+    }
+  }
+  /**
+   * Called inside the local comment save lock, before its worker starts. A sent copy takes
+   * the reply first, so a refused or failed update leaves the local comment unchanged.
+   */
+  async syncComment(
+    libraryId: string,
+    key: string,
+    comment: { caption: string; link: string },
+  ): Promise<string | undefined> {
+    if (this.running) fail('mobile_publication_busy', '게시 대기 전송이 끝난 뒤 수정하세요.');
+    this.running = true;
+    try {
+      const context = await this.options.client.getBusinessContext();
+      const journal = await this.journal();
+      if (
+        journal.pending.some(
+          (e) =>
+            this.scoped(e, context) &&
+            e.request.source.libraryId === libraryId &&
+            e.request.source.postKey === key,
+        )
+      )
+        fail('mobile_publication_pending', '보류된 전송을 재시도하거나 취소한 뒤 수정하세요.');
+      const rows = await this.list(context, libraryId, key);
+      if (rows.some((p) => p.status === 'uploading'))
+        fail(
+          'mobile_publication_recall_required',
+          '파일 전송이 끝나지 않은 등록본이 있습니다. 전송을 마치거나 회수한 뒤 수정하세요.',
+        );
+      // The service lists the newest copy first; only one the phone can still post takes the reply.
+      const sent = rows.find((p) => ['ready', 'started', 'published'].includes(p.status));
+      // Account deletion cancels an unposted reply; nothing can post it, so it stays local.
+      if (!sent || sent.commentStatus === 'cancelled') return undefined;
+      if (!['not_required', 'queued', 'failed'].includes(sent.commentStatus))
+        fail('COMMENT_LOCKED', '휴대폰에서 이미 등록했거나 등록 중인 댓글은 수정할 수 없습니다.');
+      parsePublicationResponse(
+        await this.request(context, 'comment', sent.id, {
+          expectedVersion: sent.version,
+          comment: this.comment(comment),
+        }),
+      );
+      return sent.sentAt && Date.parse(sent.sentAt) <= Date.now() - 7 * 24 * 3600 * 1000
+        ? '댓글을 저장했습니다. 휴대폰 목록 기간(전송 후 7일)이 지나 휴대폰에서는 보이지 않습니다.'
+        : '댓글을 저장하고 휴대폰으로 보낸 등록본에도 반영했습니다.';
     } finally {
       this.running = false;
     }

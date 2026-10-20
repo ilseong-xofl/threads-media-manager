@@ -42,7 +42,11 @@ import {
 import { MobilePublicationPanel, MobilePublicationSendDialog } from './MobilePublicationPanel';
 import { useMobilePublications } from './use-mobile-publications';
 import { useManagedThreads } from './use-managed-threads';
-import { mobileAccountChoices, mobilePublicationLocksEditing } from './mobile-publication-model';
+import {
+  mobileAccountChoices,
+  mobilePublicationLocksComment,
+  mobilePublicationLocksEditing,
+} from './mobile-publication-model';
 
 export interface PostRegistrationModalProps {
   post: Post;
@@ -185,6 +189,11 @@ function RegistrationDialog({
     !!draft &&
     mobileMode &&
     (!mobile.loaded || mobilePublicationLocksEditing(mobile.publications, mobile.pending));
+  // The reply stays editable while the phone waits; saving also updates the sent copy.
+  const mobileCommentLocked =
+    !!draft &&
+    mobileMode &&
+    (!mobile.loaded || mobilePublicationLocksComment(mobile.publications, mobile.pending));
   const [uploadKind, setUploadKind] = useState<'post' | 'reply' | null>(null);
   const uploadPending = useRef(false);
   const progress = threads?.state?.publishProgress;
@@ -343,13 +352,14 @@ function RegistrationDialog({
       commentSavingRef.current ||
       commentProblem ||
       !draft ||
-      mobileEditLocked
+      mobileCommentLocked
     )
       throw new Error(commentProblem || '다른 작업이 끝난 뒤 저장하세요.');
     commentSavingRef.current = true;
     setCommentSaving(true);
     try {
       await onSaveComment(input);
+      if (mobileMode) void mobile.synchronize();
       if (mounted.current) setCommentEditing(false);
     } finally {
       commentSavingRef.current = false;
@@ -839,7 +849,7 @@ function RegistrationDialog({
               post={post}
               editing={commentEditing}
               onEditingChange={setCommentEditing}
-              disabled={disabled || busy || !!commentProblem || mobileEditLocked}
+              disabled={disabled || busy || !!commentProblem || mobileCommentLocked}
               saving={commentSaving}
               problem={commentProblem}
               onSave={saveComment}
@@ -863,7 +873,13 @@ function RegistrationDialog({
               />
               {mobileEditLocked && mobile.loaded && (
                 <p className="mobile-publication-edit-hint">
-                  내용을 수정하려면 먼저 게시 대기를 회수하거나 보류된 전송을 취소해 주세요.
+                  본문·미디어를 수정하려면 먼저 게시 대기를 회수하거나 보류된 전송을 취소해 주세요.
+                  {!mobileCommentLocked && ' 댓글은 수정하면 휴대폰 등록본에도 함께 반영됩니다.'}
+                </p>
+              )}
+              {!mobileEditLocked && mobileCommentLocked && mobile.loaded && (
+                <p className="mobile-publication-edit-hint">
+                  휴대폰에서 이미 등록했거나 등록 중인 댓글은 수정할 수 없습니다.
                 </p>
               )}
             </>

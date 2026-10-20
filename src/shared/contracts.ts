@@ -1,7 +1,10 @@
 import type { AppAuthState } from './service-auth';
 import type { ThreadsApiMethods } from './threads-api';
 import type { ManagedThreadsMethods } from './managed-threads';
-import type { MobilePublicationMethods } from './mobile-publications';
+import type {
+  MobilePublicationMethods,
+  MobilePublicationStatusesResult,
+} from './mobile-publications';
 export const MEDIA_SCHEME = 'threads-media';
 export const IMPORT_MEDIA_SCHEME = 'threads-import';
 export const IPC = {
@@ -13,9 +16,11 @@ export const IPC = {
   deleteManagedThreadsAccount: 'tmm:managed-threads:delete',
   registerManagedThreadsAccount: 'tmm:managed-threads:register',
   replaceManagedThreadsToken: 'tmm:managed-threads:replace',
+  updateManagedThreadsAccount: 'tmm:managed-threads:update',
   retryManagedThreadsAccount: 'tmm:managed-threads:retry',
   discardPendingManagedThreadsAccount: 'tmm:managed-threads:discard-pending',
   mobilePublications: 'tmm:mobile-publications:list',
+  mobilePublicationStatuses: 'tmm:mobile-publications:statuses',
   sendMobilePublication: 'tmm:mobile-publications:send',
   retryMobilePublication: 'tmm:mobile-publications:retry',
   cancelPendingMobilePublication: 'tmm:mobile-publications:cancel-pending',
@@ -67,7 +72,6 @@ export const IPC = {
   publishThreadsComment: 'tmm:threads:publish-comment',
   syncThreadsInsights: 'tmm:threads:sync',
   reconcileThreadsPublication: 'tmm:threads:reconcile',
-  openThreadsPublication: 'tmm:threads:open-publication',
 } as const;
 export interface Problem {
   code: string;
@@ -203,7 +207,7 @@ export interface SavePostCommentInput {
   link: string;
 }
 export type PostCommentResult =
-  | { status: 'saved'; comment: PostComment; view: CollectionView }
+  | { status: 'saved'; comment: PostComment; view: CollectionView; notice?: string }
   | { status: 'error'; problem: Problem };
 export interface OpenPostLinkInput {
   postKey: string;
@@ -236,6 +240,7 @@ export type ChatGptResult =
 
 export interface ThreadsMediaApi
   extends ThreadsApiMethods, ManagedThreadsMethods, MobilePublicationMethods {
+  getMobilePublicationStatuses(): Promise<MobilePublicationStatusesResult>;
   getAuthState(): Promise<AppAuthState>;
   signIn(accountId: string, password: string): Promise<AppAuthState>;
   signOut(): Promise<AppAuthState>;

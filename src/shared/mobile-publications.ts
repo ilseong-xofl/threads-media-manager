@@ -40,6 +40,17 @@ export interface MobilePublicationsResult {
   pending: PendingMobilePublication[];
   problem: { code: string; message: string } | null;
 }
+/** A registered draft whose root reached Threads from a phone; drives the card badges. */
+export interface MobilePublicationStatus {
+  postKey: string;
+  draftCreatedAt: string;
+  commentPublished: boolean;
+}
+export interface MobilePublicationStatusesResult {
+  status: 'ok' | 'error';
+  statuses: MobilePublicationStatus[];
+  problem: { code: string; message: string } | null;
+}
 export interface SendMobilePublicationInput {
   postKey: string;
   expectedRevision: number;
@@ -50,6 +61,7 @@ export interface SendMobilePublicationInput {
 export interface RecallMobilePublicationInput {
   publicationId: string;
   expectedVersion: number;
+  abandonUnresolved?: true;
 }
 export interface MobilePublicationMethods {
   getMobilePublications(input: { postKey: string }): Promise<MobilePublicationsResult>;

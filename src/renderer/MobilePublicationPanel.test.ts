@@ -7,7 +7,9 @@ import { MobilePublicationPanel, MobilePublicationSendDialog } from './MobilePub
 import {
   mobileAccountChoices,
   mobilePublicationAccountLabel,
+  mobilePublicationCanAbandon,
   mobilePublicationCanRecall,
+  mobilePublicationLocksComment,
   mobilePublicationLocksEditing,
 } from './mobile-publication-model';
 import type { MobilePublicationsUi } from './use-mobile-publications';
@@ -191,6 +193,70 @@ describe('mobile publication presentation', () => {
     expect(html).toContain('게시 결과 확인 필요');
     expect(html).not.toContain('게시 대기 회수');
     expect(html).not.toContain('원글 게시 완료');
+    expect(html).toContain('등록 작업 삭제');
+  });
+
+  it('offers task deletion for stuck work and unfinished replies, preserving completed history', () => {
+    expect(
+      mobilePublicationCanAbandon({ ...publication, status: 'started', rootStatus: 'sending' }),
+    ).toBe(true);
+    expect(
+      mobilePublicationCanAbandon({
+        ...publication,
+        status: 'published',
+        commentStatus: 'unknown',
+      }),
+    ).toBe(true);
+    expect(
+      mobilePublicationCanAbandon({
+        ...publication,
+        status: 'published',
+        commentStatus: 'published',
+      }),
+    ).toBe(false);
+    const html = renderPanel(
+      mobile([{ ...publication, status: 'cancelled', rootStatus: 'unknown' }]),
+    );
+    expect(html).toContain('등록 작업 삭제됨 · 원격 결과 미확인');
+    expect(html).not.toContain('휴대폰에서 게시 시작');
+    expect(html).not.toContain('게시 대기 회수');
+    expect(html).not.toMatch(/<button[^>]*>등록 작업 삭제<\/button>/);
+  });
+
+  it('keeps the reply editable while the phone waits, until the phone starts posting it', () => {
+    expect(mobilePublicationLocksComment([], [])).toBe(false);
+    expect(mobilePublicationLocksComment([publication], [])).toBe(false);
+    expect(
+      mobilePublicationLocksComment(
+        [{ ...publication, status: 'published', commentStatus: 'not_required' }],
+        [],
+      ),
+    ).toBe(false);
+    expect(mobilePublicationLocksComment([{ ...publication, status: 'uploading' }], [])).toBe(true);
+    expect(
+      mobilePublicationLocksComment(
+        [],
+        [{ requestId: 'pending', accountId: row.account!.id, source: publication.source }],
+      ),
+    ).toBe(true);
+    for (const commentStatus of ['sending', 'unknown', 'published'])
+      expect(
+        mobilePublicationLocksComment([{ ...publication, status: 'published', commentStatus }], []),
+      ).toBe(true);
+    // Account deletion cancels an unposted reply; the PC keeps editing it locally.
+    expect(
+      mobilePublicationLocksComment(
+        [{ ...publication, status: 'published', commentStatus: 'cancelled' }],
+        [],
+      ),
+    ).toBe(false);
+    // A recalled copy no longer takes the reply, so it does not lock the PC either.
+    expect(
+      mobilePublicationLocksComment(
+        [{ ...publication, status: 'cancelled', commentStatus: 'cancelled' }],
+        [],
+      ),
+    ).toBe(false);
   });
 
   it('locks editing only for unsent/ready work, and preserves started or uncertain snapshots without recall', () => {

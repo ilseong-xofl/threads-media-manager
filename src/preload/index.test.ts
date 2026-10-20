@@ -32,12 +32,19 @@ it('exposes only fixed publication actions, never direct URL or file-path upload
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.sendMobilePublication, send);
   await api.getMobilePublications({ postKey: 'post' });
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.mobilePublications, { postKey: 'post' });
+  await api.getMobilePublicationStatuses();
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.mobilePublicationStatuses);
   await api.cancelPendingMobilePublication({ requestId: 'request' });
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.cancelPendingMobilePublication, {
     requestId: 'request',
   });
   expect(Object.keys(api)).not.toContain('publicationRequest');
   expect(Object.keys(api)).not.toContain('uploadPublicationFile');
+});
+it('renames an account only through its fixed channel', async () => {
+  const input = { accountId: 'account', label: '이름', appName: '앱' };
+  await api.updateManagedThreadsAccount(input);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.updateManagedThreadsAccount, input);
 });
 beforeEach(() => {
   electron.invoke
@@ -113,4 +120,5 @@ it('exposes only named auth calls and strips Electron event objects from notific
   expect(Object.keys(api)).not.toContain('getCredential');
   expect(Object.keys(api)).not.toContain('managedThreadsRequest');
   expect(Object.keys(api)).not.toContain('fetch');
+  expect(Object.keys(api)).not.toContain('openThreadsPublication');
 });

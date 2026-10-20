@@ -503,6 +503,49 @@ export class ManagedThreadsManager {
       await this.send(context, records, current!);
     });
   }
+  /**
+   * Names are display labels only. A rename is idempotent, so it needs no pending record: a lost
+   * response shows the new names on the next list sync. Token state stays untouched.
+   */
+  update(input: unknown): Promise<ManagedThreadsResult> {
+    return this.run(async (context, records) => {
+      const data = objectInput(input, ['accountId', 'label', 'appName']);
+      if (!validId(data.accountId) || !validLabel(data.label) || !validLabel(data.appName))
+        fail('VALIDATION_FAILED');
+      const record = records.find((r) => r.account?.id === data.accountId);
+      if (!record || record.missing) fail('NOT_FOUND');
+      const target = record!;
+      if (target.pendingDeletion) fail('DELETION_PENDING');
+      const value = await this.client.managedThreadsRequest(
+        context,
+        'profile',
+        target.account!.id,
+        {
+          label: (data.label as string).trim(),
+          appName: (data.appName as string).trim(),
+          expectedLifecycleVersion: target.account!.lifecycleVersion ?? 1,
+          expectedOwnershipVersion: target.account!.ownershipVersion ?? 1,
+        },
+      );
+      if (!isObject(value)) fail('INVALID_RESPONSE');
+      const account = accountFrom((value as Record<string, unknown>).account, context.ownerId);
+      if (
+        account.id !== target.account!.id ||
+        account.registrationId !== target.registrationId ||
+        account.tokenRevision !== target.account!.tokenRevision
+      )
+        fail('INVALID_RESPONSE');
+      target.account = account;
+      target.label = account.label;
+      target.appName = account.appName;
+      try {
+        await this.save(context, records);
+      } catch (error) {
+        if (error instanceof ServiceApiError) throw error;
+        fail('LOCAL_SYNC_PENDING');
+      }
+    });
+  }
   retry(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
       const data = objectInput(input, ['localId']);
@@ -551,6 +594,7 @@ export class ManagedThreadsManager {
       try {
         result = await this.client.managedThreadsRequest(context, 'delete', current.account!.id, {
           expectedRevision: intent.expectedRevision,
+          abandonUnresolved: true,
           expectedOwnershipVersion: ownershipVersion,
           expectedLifecycleVersion: lifecycleVersion,
         });

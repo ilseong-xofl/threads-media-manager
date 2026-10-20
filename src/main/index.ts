@@ -205,9 +205,12 @@ const comments: PostCommentController = new PostCommentController(
     draftDeletions.active ||
     captions.active ||
     content.active,
-  (view, post) =>
+  (view, post, input) =>
     guardPublicationWrite(() =>
-      mobilePublications.requireEditable(view.snapshot!.libraryId!, post.key),
+      mobilePublications.syncComment(view.snapshot!.libraryId!, post.key, {
+        caption: input.caption,
+        link: input.link,
+      }),
     ),
 );
 const drafts: PostDraftController = new PostDraftController(
@@ -535,6 +538,7 @@ const mobilePublications: MobilePublicationsController = new MobilePublicationsC
   service: serviceOrigin ?? 'unconfigured',
   userData: app.getPath('userData'),
   refresh: () => controller.refresh(),
+  libraryId: () => controller.view.snapshot?.libraryId ?? null,
   localBusy: () =>
     maintenance.active ||
     mobilePublications?.active ||
@@ -560,9 +564,9 @@ const mobilePublications: MobilePublicationsController = new MobilePublicationsC
       return image.toPNG();
     }),
 });
-async function guardPublicationWrite(action: () => Promise<void>): Promise<void> {
+async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
   try {
-    await action();
+    return await action();
   } catch (error) {
     if (error instanceof ServiceApiError) {
       if (['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(error.code))
@@ -898,7 +902,8 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           if (mobilePublicationBlocks(channel, mobilePublications.active))
             throw new Error('게시 대기 전송이 끝난 뒤 작업하세요.');
           if (channel.startsWith('tmm:mobile-publications:')) {
-            if (args.length !== 1) throw new Error('Unexpected arguments');
+            if (args.length !== (channel === IPC.mobilePublicationStatuses ? 0 : 1))
+              throw new Error('Unexpected arguments');
             const result =
               channel === IPC.mobilePublications
                 ? await mobilePublications.get(args[0])
@@ -908,7 +913,9 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                     ? await mobilePublications.retry(args[0])
                     : channel === IPC.cancelPendingMobilePublication
                       ? await mobilePublications.cancelPending(args[0])
-                      : await mobilePublications.recall(args[0]);
+                      : channel === IPC.mobilePublicationStatuses
+                        ? await mobilePublications.statuses()
+                        : await mobilePublications.recall(args[0]);
             if (authMutation || requestAuthGeneration !== authGeneration)
               throw new Error('로그인이 변경되었습니다. 다시 확인하세요.');
             if (
@@ -936,15 +943,10 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               IPC.publishThreadsPost,
               IPC.publishThreadsComment,
               IPC.reconcileThreadsPublication,
-              IPC.openThreadsPublication,
             ].some((value) => value === channel);
             if (args.length !== (hasInput ? 1 : 0)) throw new Error('Unexpected arguments');
             if (channel === IPC.threadsState)
               return { ...(await threads.state()), desktopRequestsDisabled: true };
-            if (channel === IPC.openThreadsPublication)
-              return threads.openPublication(args[0], (url) =>
-                shell.openExternal(url, { activate: true }),
-              );
             // All mutations are paused until the mobile/S3 account workflow is connected.
             return {
               status: 'error',

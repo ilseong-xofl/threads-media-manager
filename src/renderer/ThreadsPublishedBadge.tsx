@@ -1,4 +1,5 @@
 import type { ThreadsPublication } from '../shared/threads-api';
+import type { MobilePublicationStatus } from '../shared/mobile-publications';
 
 export function isPublishedPost(
   publication: ThreadsPublication | undefined,
@@ -49,5 +50,24 @@ export function ThreadsReplyPublishedBadge({
     >
       댓글 완료
     </span>
+  );
+}
+
+/** Phone publishing records completion on the service; the card shows the same badges. */
+export function MobilePublishedBadges({ status }: { status: MobilePublicationStatus }) {
+  return (
+    <>
+      <span className="threads-published-badge" title="휴대폰에서 등록한 Threads 게시 이력">
+        등록 완료
+      </span>
+      {status.commentPublished && (
+        <span
+          className="threads-published-badge threads-reply-published-badge"
+          title="휴대폰에서 등록한 Threads 댓글 이력"
+        >
+          댓글 완료
+        </span>
+      )}
+    </>
   );
 }

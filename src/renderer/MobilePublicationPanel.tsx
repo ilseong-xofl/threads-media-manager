@@ -8,6 +8,7 @@ import type { MobilePublicationsUi } from './use-mobile-publications';
 import {
   mobileAccountChoices,
   mobilePublicationAccountLabel,
+  mobilePublicationCanAbandon,
   mobilePublicationCanRecall,
   mobilePublicationStatus,
 } from './mobile-publication-model';
@@ -26,6 +27,7 @@ export function MobilePublicationPanel({
   const [recalling, setRecalling] = useState<MobilePublication | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const blocked = disabled || mobile.busy;
+  const abandoning = recalling !== null && mobilePublicationCanAbandon(recalling);
   return (
     <section
       className="registration-section mobile-publications"
@@ -91,6 +93,16 @@ export function MobilePublicationPanel({
               게시 대기 회수
             </button>
           )}
+          {mobilePublicationCanAbandon(item) && (
+            <button
+              type="button"
+              className="managed-threads-danger"
+              disabled={blocked}
+              onClick={() => setRecalling(item)}
+            >
+              등록 작업 삭제
+            </button>
+          )}
         </article>
       ))}
       {mobile.loaded && !mobile.pending.length && !mobile.publications.length && (
@@ -98,37 +110,57 @@ export function MobilePublicationPanel({
       )}
       {recalling && (
         <ManagedThreadsActionDialog
-          title="게시 대기를 회수할까요?"
+          title={abandoning ? '등록 작업을 삭제할까요?' : '게시 대기를 회수할까요?'}
           busy={mobile.working}
           onClose={() => setRecalling(null)}
           confirmation
         >
           <div className="mobile-publication-dialog-body">
             <p>
-              <strong>{mobilePublicationAccountLabel(recalling.accountId, accounts)}</strong>의 게시
-              대기에서 제외합니다.
+              <strong>{mobilePublicationAccountLabel(recalling.accountId, accounts)}</strong>
+              {abandoning
+                ? '의 등록 작업을 종료하고 모바일 목록에서 제외합니다.'
+                : '의 게시 대기에서 제외합니다.'}
             </p>
-            <p>
-              회수가 완료되면 로컬에서 내용을 수정하고 다시 보낼 수 있습니다. 휴대폰에서 이미 게시를
-              시작했다면 회수할 수 없습니다.
-            </p>
+            {abandoning ? (
+              <>
+                <p>
+                  진행 중·결과 불명 원글과 미완료 댓글의 추가 실행을 막습니다. 로컬 등록 글·미디어와
+                  기존 실행 이력은 보존합니다.
+                </p>
+                <p>
+                  이미 Meta로 전송한 요청은 취소할 수 없습니다. 실제 등록 여부가 미확인일 수
+                  있으므로 다시 보내기 전에 Threads 앱에서 확인해 주세요.
+                </p>
+                <p>실제 Threads 게시글을 삭제하는 기능은 아닙니다.</p>
+              </>
+            ) : (
+              <p>
+                회수가 완료되면 로컬에서 내용을 수정하고 다시 보낼 수 있습니다. 휴대폰에서 이미
+                게시를 시작했다면 회수할 수 없습니다.
+              </p>
+            )}
             <div className="mobile-publication-dialog-actions">
               <button type="button" disabled={mobile.working} onClick={() => setRecalling(null)}>
                 취소
               </button>
               <button
                 type="button"
-                className="primary"
+                className={abandoning ? 'managed-threads-danger-primary' : 'primary'}
                 disabled={mobile.working}
                 onClick={() =>
                   void mobile
-                    .recall({ publicationId: recalling.id, expectedVersion: recalling.version })
+                    .recall({
+                      publicationId: recalling.id,
+                      expectedVersion: recalling.version,
+                      ...(abandoning ? { abandonUnresolved: true as const } : {}),
+                    })
                     .then((ok) => {
                       if (ok) setRecalling(null);
                     })
                 }
               >
-                {mobile.working ? '회수 중…' : '회수'}
+                {mobile.working ? '처리 중…' : abandoning ? '등록 작업 삭제 확인' : '회수'}
               </button>
             </div>
           </div>

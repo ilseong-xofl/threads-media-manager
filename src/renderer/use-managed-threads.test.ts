@@ -31,6 +31,7 @@ function setup() {
     getManagedThreadsAccounts: vi.fn().mockResolvedValue(ok()),
     registerManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     replaceManagedThreadsToken: vi.fn().mockResolvedValue(ok()),
+    updateManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     deleteManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     retryManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     discardPendingManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),

@@ -6,6 +6,7 @@ interface ManagedAccountActions {
   deleteAccount(input: unknown): Promise<ManagedThreadsResult>;
   register(input: unknown): Promise<ManagedThreadsResult>;
   replace(input: unknown): Promise<ManagedThreadsResult>;
+  update(input: unknown): Promise<ManagedThreadsResult>;
   retry(input: unknown): Promise<ManagedThreadsResult>;
   discardPending(input: unknown): Promise<ManagedThreadsResult>;
 }
@@ -28,6 +29,8 @@ export function handleManagedThreadsRequest(
       return manager.register(args[0]);
     case IPC.replaceManagedThreadsToken:
       return manager.replace(args[0]);
+    case IPC.updateManagedThreadsAccount:
+      return manager.update(args[0]);
     case IPC.retryManagedThreadsAccount:
       return manager.retry(args[0]);
     case IPC.discardPendingManagedThreadsAccount:

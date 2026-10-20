@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ThreadsPublication, ThreadsState } from '../shared/threads-api';
 import type { Post } from '../shared/contracts';
+import type { MobilePublicationStatus } from '../shared/mobile-publications';
 import {
   isPublishedPost,
   isPublishedReply,
@@ -399,12 +400,17 @@ function registeredPost(): Post {
   };
 }
 
-function renderRegisteredCard(item?: ThreadsPublication, reply?: ThreadsPublication) {
+function renderRegisteredCard(
+  item?: ThreadsPublication,
+  reply?: ThreadsPublication,
+  mobileStatus?: MobilePublicationStatus,
+) {
   return renderToStaticMarkup(
     createElement(RegisteredPostCard, {
       post: registeredPost(),
       publication: item,
       replyPublication: reply,
+      mobileStatus,
       onChange: () => undefined,
       onOpen: () => undefined,
       onDelete: () => undefined,
@@ -546,6 +552,23 @@ it('marks a successfully published post beside download even after its local dra
   expect(card).toContain('>등록 완료</span>');
   expect(card).toContain('@publisher 계정의 Threads 게시 이력');
   expect(card.indexOf('post-published-marker')).toBeLessThan(card.indexOf('post-export-button'));
+});
+
+it('restores the card badges from phone publishing recorded on the service', () => {
+  const status = {
+    postKey: registeredPost().key,
+    draftCreatedAt: registeredPost().draft!.createdAt,
+    commentPublished: false,
+  };
+  const root = renderRegisteredCard(undefined, undefined, status);
+  expect(root).toContain('class="post-published-marker"><span class="threads-published-badge"');
+  expect(root).toContain('>등록 완료</span>');
+  expect(root).not.toContain('댓글 완료');
+  expect(root.indexOf('post-published-marker')).toBeLessThan(root.indexOf('post-export-button'));
+  const both = renderRegisteredCard(undefined, undefined, { ...status, commentPublished: true });
+  expect(both).toContain('>등록 완료</span>');
+  expect(both).toContain('threads-reply-published-badge');
+  expect(both).toContain('>댓글 완료</span>');
 });
 
 it('shows the same historical badge in the detail heading even when credentials need reconnecting', () => {
@@ -769,16 +792,17 @@ it('describes text reply progress without claiming to upload or process attachme
   expect(detail).toMatch(/class="registration-form" inert=""/);
 });
 
-it('makes completed post and reply IDs buttons for opening the actual publication', () => {
+it('shows completed post and reply IDs as plain text without a Threads link', () => {
   const html = renderToStaticMarkup(
     createElement(ThreadsPublicationPanel, {
       postKey: 'source:post',
       threads: ui(state({ publications: [publication(), publishedReply()] })),
     }),
   );
-  expect(html.match(/class="threads-publication-link"/g)).toHaveLength(2);
-  expect(html).toMatch(/aria-label="게시글 456 기본 브라우저에서 열기"[^>]*>456<\/button>/);
-  expect(html).toMatch(/aria-label="댓글 789 기본 브라우저에서 열기"[^>]*>789<\/button>/);
+  expect(html).toContain('게시 ID: 456');
+  expect(html).toContain('게시 ID: 789');
+  expect(html).not.toContain('threads-publication-link');
+  expect(html).not.toContain('기본 브라우저에서 열기');
   expect(html).not.toContain('href=');
 });
 
@@ -805,27 +829,6 @@ it.each([null, ''])('omits a publication link when the remote ID is %s', (remote
   );
   expect(html).not.toContain('게시 ID:');
   expect(html).not.toContain('threads-publication-link');
-});
-
-it('disables publication links during other work or when the account requires reconnecting', () => {
-  for (const condition of ['disabled', 'loading', 'working', 'expired', 'reconnect']) {
-    const value = state({ publications: [publication(), publishedReply()] });
-    if (condition === 'expired') value.account!.expiresAt = '2020-01-01T00:00:00Z';
-    if (condition === 'reconnect') value.account!.requiresReconnect = true;
-    const threads = {
-      ...ui(value),
-      loading: condition === 'loading',
-      working: condition === 'working',
-    };
-    const html = renderToStaticMarkup(
-      createElement(ThreadsPublicationPanel, {
-        postKey: 'source:post',
-        threads,
-        disabled: condition === 'disabled',
-      }),
-    );
-    expect(html.match(/class="threads-publication-link" disabled=""/g)).toHaveLength(2);
-  }
 });
 
 it('shows paused desktop actions while preserving old publication details', () => {

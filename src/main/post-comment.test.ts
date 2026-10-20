@@ -46,6 +46,22 @@ it('checks the central publication guard before changing a saved comment', async
   });
   expect(launch).not.toHaveBeenCalled();
 });
+it('hands the new reply to the guard first and reports its notice after the local save', async () => {
+  const launch = vi.fn(() => ({ result: Promise.resolve(comment()), cancel: vi.fn() }));
+  const guard = vi.fn(async () => '휴대폰 등록본에도 반영했습니다.');
+  const controller = new PostCommentController(
+    async () => view(),
+    launch,
+    () => false,
+    guard,
+  );
+  expect(await controller.save(root, input())).toMatchObject({
+    status: 'saved',
+    notice: '휴대폰 등록본에도 반영했습니다.',
+  });
+  expect(guard.mock.calls[0]).toContainEqual(input());
+  expect(guard.mock.invocationCallOrder[0]).toBeLessThan(launch.mock.invocationCallOrder[0]);
+});
 const postKey = 'demo:PostA';
 const input = () => ({
   postKey,

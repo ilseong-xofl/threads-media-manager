@@ -78,6 +78,14 @@ async function setup() {
       if (loseResponse) throw new Error('lost delete response');
       return json({ deletedAccount: tombstone });
     }
+    if (path.endsWith('/profile') && init?.method === 'POST') {
+      writes.push('PROFILE');
+      const row = server.get(path.split('/')[5]);
+      if (!row || row.account.ownerId !== user) return json({}, 404);
+      const body = JSON.parse(init.body as string);
+      row.account = { ...row.account, label: body.label, appName: body.appName };
+      return json({ account: row.account });
+    }
     if (init?.method === 'POST' || init?.method === 'PUT') {
       writes.push(init.method);
       if (rejectMutation)
@@ -197,6 +205,40 @@ const legacyRemote = (token: string): { account: ManagedThreadsAccount; token: s
 });
 
 describe('managed Threads synchronization', () => {
+  it('renames an account on the server and this PC copy without touching its token state', async () => {
+    const f = await setup();
+    await f.manager.register(input('123'));
+    const [{ account, token }] = [...f.server.values()];
+    const [before] = await f.store.read(scope, 'a');
+    f.writes.length = 0;
+    const result = await f.manager.update({
+      accountId: account.id,
+      label: ' 새 계정 ',
+      appName: '새 앱',
+    });
+    expect(result.status).toBe('ok');
+    expect(result.accounts[0]).toMatchObject({
+      label: '새 계정',
+      appName: '새 앱',
+      localState: 'synced',
+      account: { label: '새 계정', appName: '새 앱', tokenRevision: 1 },
+    });
+    expect(f.writes).toEqual(['PROFILE']);
+    expect(f.server.get(account.id)!.token).toBe(token);
+    const [saved] = await f.store.read(scope, 'a');
+    expect(saved).toMatchObject({ label: '새 계정', appName: '새 앱' });
+    expect(saved.syncedToken).toBe(before.syncedToken);
+    expect(saved.syncedRevision).toBe(before.syncedRevision);
+    for (const bad of [
+      { accountId: account.id, label: ' ', appName: '앱' },
+      { accountId: account.id, label: '이름', appName: '앱', token: 'x' },
+    ])
+      expect((await f.manager.update(bad)).problem?.code).toBe('VALIDATION_FAILED');
+    expect(
+      (await f.manager.update({ accountId: 'other', label: '이름', appName: '앱' })).problem?.code,
+    ).toBe('NOT_FOUND');
+    expect(f.writes).toEqual(['PROFILE']);
+  });
   it('registers multiple accounts, exposes metadata only and separates another logged-in owner', async () => {
     const { manager, client, store } = await setup();
     expect((await manager.register(input())).status).toBe('ok');

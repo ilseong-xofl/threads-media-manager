@@ -9,6 +9,7 @@ import {
   ManagedThreadsDeleteConfirmation,
   managedThreadsActionAvailability,
   managedThreadsInputProblem,
+  managedThreadsNameProblem,
 } from './ManagedThreadsAccountSettings';
 import { useManagedThreads } from './use-managed-threads';
 
@@ -50,6 +51,7 @@ function mock(rows: ManagedThreadsAccountRow[] = [], busy = false, loaded = true
     synchronize: vi.fn(),
     register: vi.fn(),
     replace: vi.fn(),
+    update: vi.fn(),
     remove: vi.fn(),
     retry: vi.fn(),
     discard: vi.fn(),
@@ -170,6 +172,29 @@ it('keeps local-save recovery distinct from deletion of a registered account', (
   });
 });
 
+it('edits the two display names before the token actions, independent of a pending token', () => {
+  mock([row]);
+  const html = render();
+  expect(html.indexOf('>정보 수정</button>')).toBeGreaterThan(-1);
+  expect(html.indexOf('>정보 수정</button>')).toBeLessThan(html.indexOf('>토큰 교체</button>'));
+  expect(managedThreadsActionAvailability(row).edit).toBe(true);
+  expect(
+    managedThreadsActionAvailability({ ...row, pendingAction: 'replace', localState: 'pending' })
+      .edit,
+  ).toBe(true);
+  for (const blocked of [
+    { ...row, account: null, pendingAction: 'create' as const },
+    { ...row, pendingDeletion: true },
+    { ...row, localState: 'missing' as const },
+  ])
+    expect(managedThreadsActionAvailability(blocked).edit).toBe(false);
+  expect(managedThreadsNameProblem({ appName: ' 새 앱 ', label: '새 계정' })).toBeNull();
+  expect(managedThreadsNameProblem({ appName: ' ', label: '새 계정' })).toContain('Meta 앱 이름');
+  expect(managedThreadsNameProblem({ appName: '앱', label: '가'.repeat(81) })).toContain(
+    'Threads 계정 이름',
+  );
+});
+
 it('does not offer re-upload for conflicted changes or missing server accounts', () => {
   const conflicted = { ...row, localState: 'conflict' as const, pendingAction: 'replace' as const };
   mock([conflicted]);
@@ -224,7 +249,7 @@ it('locks actions while disconnected or busy without showing secret values', () 
   mock([row], true);
   const busy = render();
   expect(busy).toContain('동기화 중…');
-  expect((busy.match(/<button[^>]*disabled=""/g) ?? []).length).toBe(6);
+  expect((busy.match(/<button[^>]*disabled=""/g) ?? []).length).toBe(7);
   expect(busy).toContain('type="radio"');
   expect(busy).toContain('disabled=""');
 });
@@ -254,8 +279,9 @@ it('shows account-specific deletion consequences in a separate confirmation with
   expect(html).toContain('뷰티 마케팅 앱');
   expect(html).toContain('뷰티 계정');
   expect(html).toContain('실제 Threads 계정·게시글과 기존 완료 이력은 삭제하지 않습니다.');
-  expect(html).toContain('아직 시작하지 않은 게시 대기 글·미게시 댓글은 취소');
-  expect(html).toContain('전송 중·결과 불명 작업이 있으면 삭제할 수 없습니다.');
+  expect(html).toContain('게시 대기·미게시 댓글과');
+  expect(html).toContain('진행 중·결과 불명 등록 작업을 종료합니다.');
+  expect(html).toContain('이미 Meta로 전송한 요청은 취소할 수 없으며');
   expect(html).toContain('휴대폰을 다시 연결');
   expect(html).toContain('계정 삭제 확인');
   expect(html).not.toContain('type="password"');

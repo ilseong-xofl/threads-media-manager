@@ -22,6 +22,8 @@ function mobileStatus(row: ManagedThreadsAccountRow) {
 
 export function managedThreadsActionAvailability(row: ManagedThreadsAccountRow | null) {
   return {
+    // Names are independent of the token, so a pending token replacement does not block them.
+    edit: !!row?.account && !row.pendingDeletion && row.localState !== 'missing',
     replace:
       !!row?.account && !row.pendingAction && !row.pendingDeletion && row.localState !== 'missing',
     retry: !!row?.pendingAction && !row.pendingDeletion && row.localState === 'pending',
@@ -171,16 +173,25 @@ export function ManagedThreadsAccountTable({
   );
 }
 
+export function managedThreadsNameProblem(input: {
+  appName: string;
+  label: string;
+}): string | null {
+  if (!input.appName.trim() || input.appName.trim().length > 80) {
+    return 'Meta 앱 이름을 1~80자로 입력하세요.';
+  }
+  if (!input.label.trim() || input.label.trim().length > 80) {
+    return 'Threads 계정 이름을 1~80자로 입력하세요.';
+  }
+  return null;
+}
+
 export function managedThreadsInputProblem(
   input: { appName: string; label: string; token: string },
   registering: boolean,
 ): string | null {
-  if (registering && (!input.appName.trim() || input.appName.trim().length > 80)) {
-    return 'Meta 앱 이름을 1~80자로 입력하세요.';
-  }
-  if (registering && (!input.label.trim() || input.label.trim().length > 80)) {
-    return 'Threads 계정 이름을 1~80자로 입력하세요.';
-  }
+  const nameProblem = registering ? managedThreadsNameProblem(input) : null;
+  if (nameProblem) return nameProblem;
   if (!/^[\x21-\x7e]{1,8192}$/.test(input.token.trim())) {
     return registering
       ? 'Meta에서 발급받은 장기 토큰을 입력하세요. 토큰 중간에 공백이나 줄바꿈이 없는지 확인해 주세요.'
@@ -195,6 +206,7 @@ export function ManagedThreadsAccountFields({
   label,
   token,
   registering,
+  editingNames = false,
   disabled,
   onAppNameChange,
   onLabelChange,
@@ -205,6 +217,8 @@ export function ManagedThreadsAccountFields({
   label: string;
   token: string;
   registering: boolean;
+  /** Names only, for editing an existing account; the token field is omitted. */
+  editingNames?: boolean;
   disabled: boolean;
   onAppNameChange(value: string): void;
   onLabelChange(value: string): void;
@@ -212,7 +226,7 @@ export function ManagedThreadsAccountFields({
 }) {
   return (
     <>
-      {registering && (
+      {(registering || editingNames) && (
         <>
           <label htmlFor={`${id}-app-name`}>Meta 앱 이름</label>
           <input
@@ -236,18 +250,22 @@ export function ManagedThreadsAccountFields({
           />
         </>
       )}
-      <label htmlFor={`${id}-token`}>{registering ? '장기 토큰' : '새 장기 토큰'}</label>
-      <input
-        id={`${id}-token`}
-        type="password"
-        value={token}
-        onChange={(event) => onTokenChange(event.target.value)}
-        disabled={disabled}
-        maxLength={8192}
-        autoComplete="off"
-        spellCheck={false}
-        placeholder="Meta에서 발급받은 장기 토큰"
-      />
+      {!editingNames && (
+        <>
+          <label htmlFor={`${id}-token`}>{registering ? '장기 토큰' : '새 장기 토큰'}</label>
+          <input
+            id={`${id}-token`}
+            type="password"
+            value={token}
+            onChange={(event) => onTokenChange(event.target.value)}
+            disabled={disabled}
+            maxLength={8192}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Meta에서 발급받은 장기 토큰"
+          />
+        </>
+      )}
     </>
   );
 }
@@ -286,9 +304,10 @@ export function ManagedThreadsDeleteConfirmation({
           </p>
         )}
         <p>이 서비스의 계정 연결과 저장한 토큰을 삭제하고, 연결된 휴대폰을 해제합니다.</p>
+        <p>게시 대기·미게시 댓글과 진행 중·결과 불명 등록 작업을 종료합니다.</p>
         <p>
-          아직 시작하지 않은 게시 대기 글·미게시 댓글은 취소하며, 전송 중·결과 불명 작업이 있으면
-          삭제할 수 없습니다.
+          이미 Meta로 전송한 요청은 취소할 수 없으며 실제 등록 여부는 미확인일 수 있습니다. 받은
+          결과와 이력은 보존합니다.
         </p>
         <p>실제 Threads 계정·게시글과 기존 완료 이력은 삭제하지 않습니다.</p>
         <p>다시 사용하려면 장기 토큰을 새로 등록하고 휴대폰을 다시 연결해야 합니다.</p>
@@ -327,6 +346,7 @@ export function ManagedThreadsAccountSettings({
   const [appName, setAppName] = useState('');
   const [token, setToken] = useState('');
   const [replacing, setReplacing] = useState<ManagedThreadsAccountRow | null>(null);
+  const [renaming, setRenaming] = useState<ManagedThreadsAccountRow | null>(null);
   const [discarding, setDiscarding] = useState<ManagedThreadsAccountRow | null>(null);
   const [deleting, setDeleting] = useState<ManagedThreadsAccountRow | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -336,7 +356,7 @@ export function ManagedThreadsAccountSettings({
   const visibleAccounts = enabled ? accounts.accounts : [];
   const selected = visibleAccounts.find((row) => row.localId === selectedId) ?? null;
   const available = managedThreadsActionAvailability(selected);
-  const actionDialogOpen = editing || !!discarding || !!deleting;
+  const actionDialogOpen = editing || !!renaming || !!discarding || !!deleting;
   const actionDisabled = disabled || actionDialogOpen;
   const headingId = titleId ?? `${id}-title`;
   useEffect(() => {
@@ -346,6 +366,7 @@ export function ManagedThreadsAccountSettings({
     setAppName('');
     setRegistering(false);
     setReplacing(null);
+    setRenaming(null);
     setDiscarding(null);
     setDeleting(null);
     setSelectedId(null);
@@ -356,6 +377,22 @@ export function ManagedThreadsAccountSettings({
     setAppName('');
     setRegistering(false);
     setReplacing(null);
+    setRenaming(null);
+  }
+  // Separate from save(): the shared name fields must never reach a token mutation.
+  async function rename() {
+    if (disabled || !renaming?.account) return;
+    const problem = managedThreadsNameProblem({ appName, label });
+    if (problem) {
+      notify({ message: problem, error: true });
+      return;
+    }
+    const ok = await accounts.update({
+      accountId: renaming.account.id,
+      appName: appName.trim(),
+      label: label.trim(),
+    });
+    if (ok) closeForm();
   }
   async function save() {
     if (disabled) return;
@@ -419,10 +456,25 @@ export function ManagedThreadsAccountSettings({
         </div>
       </div>
       <p className="managed-threads-intro">
-        계정을 선택하면 토큰 교체·삭제와 보류된 작업을 관리할 수 있습니다.
+        계정을 선택하면 정보 수정·토큰 교체·삭제와 보류된 작업을 관리할 수 있습니다.
       </p>
       <div className="managed-threads-selected-actions" role="group" aria-label="선택 계정 작업">
         <span className="managed-threads-actions-label">선택 계정</span>
+        <button
+          type="button"
+          disabled={actionDisabled || !available.edit}
+          onClick={(event) => {
+            if (selected) {
+              actionOpener.current = event.currentTarget;
+              closeForm();
+              setAppName(selected.appName);
+              setLabel(selected.label);
+              setRenaming(selected);
+            }
+          }}
+        >
+          정보 수정
+        </button>
         <button
           type="button"
           disabled={actionDisabled || !available.replace}
@@ -542,6 +594,46 @@ export function ManagedThreadsAccountSettings({
               </button>
               <button type="submit" className="primary" disabled={disabled}>
                 {accounts.busy ? '저장 중…' : '암호화하여 저장'}
+              </button>
+            </div>
+          </form>
+        </ManagedThreadsActionDialog>
+      )}
+      {enabled && renaming && (
+        <ManagedThreadsActionDialog
+          title="계정 정보 수정"
+          busy={accounts.busy}
+          onClose={closeForm}
+          returnFocusTo={actionOpener.current}
+        >
+          <form
+            className="threads-form managed-threads-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void rename();
+            }}
+          >
+            <ManagedThreadsAccountFields
+              id={id}
+              appName={appName}
+              label={label}
+              token=""
+              registering={false}
+              editingNames
+              disabled={disabled}
+              onAppNameChange={setAppName}
+              onLabelChange={setLabel}
+              onTokenChange={() => {}}
+            />
+            <p>
+              이름은 계정을 구분하는 표시용입니다. 토큰과 휴대폰 연결·확인 상태는 바뀌지 않습니다.
+            </p>
+            <div className="threads-actions managed-threads-dialog-actions">
+              <button type="button" disabled={disabled} onClick={closeForm}>
+                취소
+              </button>
+              <button type="submit" className="primary" disabled={disabled}>
+                {accounts.busy ? '저장 중…' : '저장'}
               </button>
             </div>
           </form>

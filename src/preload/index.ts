@@ -9,10 +9,13 @@ const api: ThreadsMediaApi = {
   registerManagedThreadsAccount: (input) =>
     ipcRenderer.invoke(IPC.registerManagedThreadsAccount, input),
   replaceManagedThreadsToken: (input) => ipcRenderer.invoke(IPC.replaceManagedThreadsToken, input),
+  updateManagedThreadsAccount: (input) =>
+    ipcRenderer.invoke(IPC.updateManagedThreadsAccount, input),
   retryManagedThreadsAccount: (input) => ipcRenderer.invoke(IPC.retryManagedThreadsAccount, input),
   discardPendingManagedThreadsAccount: (input) =>
     ipcRenderer.invoke(IPC.discardPendingManagedThreadsAccount, input),
   getMobilePublications: (input) => ipcRenderer.invoke(IPC.mobilePublications, input),
+  getMobilePublicationStatuses: () => ipcRenderer.invoke(IPC.mobilePublicationStatuses),
   sendMobilePublication: (input) => ipcRenderer.invoke(IPC.sendMobilePublication, input),
   retryMobilePublication: (input) => ipcRenderer.invoke(IPC.retryMobilePublication, input),
   cancelPendingMobilePublication: (input) =>
@@ -33,7 +36,6 @@ const api: ThreadsMediaApi = {
   cancelChatGptLogin: () => ipcRenderer.invoke(IPC.cancelChatGptLogin),
   logoutChatGpt: () => ipcRenderer.invoke(IPC.logoutChatGpt),
   threadsState: () => ipcRenderer.invoke(IPC.threadsState),
-  openThreadsPublication: (input) => ipcRenderer.invoke(IPC.openThreadsPublication, input),
   connectThreads: (input) => ipcRenderer.invoke(IPC.connectThreads, input),
   disconnectThreads: () => ipcRenderer.invoke(IPC.disconnectThreads),
   connectFileServer: (input) => ipcRenderer.invoke(IPC.connectFileServer, input),

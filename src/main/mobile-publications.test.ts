@@ -119,6 +119,16 @@ async function setup() {
     publicationRequest: vi.fn(async (_context, op, id, raw) => {
       const body = raw as Record<string, unknown>;
       if (op === 'list') return { publications: structuredClone(rows) };
+      if (op === 'statuses')
+        return {
+          statuses: rows
+            .filter((p) => p.rootStatus === 'published')
+            .map((p) => ({
+              postKey: p.source.postKey,
+              draftCreatedAt: p.source.draftCreatedAt,
+              commentPublished: p.commentStatus === 'published',
+            })),
+        };
       if (op === 'create') {
         const request = raw as PublicationRequest;
         const existing = rows.find((p) => p.requestId === request.requestId);
@@ -144,6 +154,14 @@ async function setup() {
       }
       const p = rows.find((p) => p.id === id);
       if (op === 'get') return { publication: structuredClone(p) };
+      if (op === 'comment') {
+        if (body.expectedVersion !== p!.version)
+          throw new ServiceApiError('changed', 'PUBLICATION_CHANGED', 409);
+        p!.comment = structuredClone(body.comment) as MobilePublication['comment'];
+        p!.commentStatus = 'queued';
+        p!.version += 1;
+        return { publication: structuredClone(p) };
+      }
       if (op === 'upload-urls')
         return {
           uploads: p!.media.map((m) => ({
@@ -234,6 +252,7 @@ async function setup() {
     service: 'https://service.example',
     userData: root,
     refresh,
+    libraryId: () => view.snapshot?.libraryId ?? null,
     localBusy: () => false,
     prepareMedia: prepare,
     upload,
@@ -265,6 +284,71 @@ async function setup() {
   };
 }
 describe('desktop publication control plane and durable intent', () => {
+  it('syncs a saved reply into the copy the phone can still post, before the local save', async () => {
+    const f = await setup();
+    const reply = { caption: '나중에 쓴 댓글', link: '' };
+    expect(await f.controller.syncComment('library-a', key, reply)).toBeUndefined();
+    await f.controller.send(f.input);
+    const before = f.rows[0].version;
+    vi.mocked(f.client.publicationRequest).mockClear();
+    expect(await f.controller.syncComment('library-a', key, reply)).toBe(
+      '댓글을 저장하고 휴대폰으로 보낸 등록본에도 반영했습니다.',
+    );
+    expect(vi.mocked(f.client.publicationRequest).mock.calls.map((c) => c.slice(1))).toEqual([
+      ['list', undefined, { libraryId: 'library-a', postKey: key }],
+      ['comment', f.rows[0].id, { expectedVersion: before, comment: reply }],
+    ]);
+    expect(f.rows[0]).toMatchObject({ comment: reply, commentStatus: 'queued' });
+    f.rows[0].sentAt = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    expect(await f.controller.syncComment('library-a', key, reply)).toContain(
+      '휴대폰 목록 기간(전송 후 7일)이 지나',
+    );
+    await expect(
+      f.controller.syncComment('library-a', key, { caption: '가'.repeat(501), link: '' }),
+    ).rejects.toMatchObject({ code: 'mobile_publication_text' });
+    for (const commentStatus of ['sending', 'unknown', 'published']) {
+      f.rows[0].commentStatus = commentStatus;
+      vi.mocked(f.client.publicationRequest).mockClear();
+      await expect(f.controller.syncComment('library-a', key, reply)).rejects.toMatchObject({
+        code: 'COMMENT_LOCKED',
+      });
+      expect(vi.mocked(f.client.publicationRequest).mock.calls.map((c) => c[1])).toEqual(['list']);
+    }
+    f.rows[0].commentStatus = 'cancelled';
+    vi.mocked(f.client.publicationRequest).mockClear();
+    expect(await f.controller.syncComment('library-a', key, reply)).toBeUndefined();
+    expect(vi.mocked(f.client.publicationRequest).mock.calls.map((c) => c[1])).toEqual(['list']);
+    f.rows[0].status = 'cancelled';
+    expect(await f.controller.syncComment('library-a', key, reply)).toBeUndefined();
+    f.rows[0].status = 'uploading';
+    await expect(f.controller.syncComment('library-a', key, reply)).rejects.toMatchObject({
+      code: 'mobile_publication_recall_required',
+    });
+    expect(f.controller.active).toBe(false);
+  });
+  it('reads published badges for the loaded library without refreshing it or taking the work lock', async () => {
+    const f = await setup();
+    await f.controller.send(f.input);
+    Object.assign(f.rows[0], { rootStatus: 'published', commentStatus: 'published' });
+    f.refresh.mockClear();
+    vi.mocked(f.client.publicationRequest).mockClear();
+    expect(await f.controller.statuses()).toEqual({
+      status: 'ok',
+      statuses: [{ postKey: key, draftCreatedAt: createdAt, commentPublished: true }],
+      problem: null,
+    });
+    expect(vi.mocked(f.client.publicationRequest).mock.calls).toEqual([
+      [{ ownerId: 'employee-a' }, 'statuses', undefined, { libraryId: 'library-a' }],
+    ]);
+    expect(f.refresh).not.toHaveBeenCalled();
+    expect(f.controller.active).toBe(false);
+    vi.mocked(f.client.publicationRequest).mockResolvedValueOnce({ statuses: [{ postKey: key }] });
+    expect(await f.controller.statuses()).toMatchObject({
+      status: 'error',
+      statuses: [],
+      problem: { code: 'INVALID_RESPONSE' },
+    });
+  });
   it('sends only an immutable manifest with the actual prepared hash and original microsecond source date', async () => {
     const f = await setup();
     const r = await f.controller.send(f.input);
@@ -401,6 +485,37 @@ describe('desktop publication control plane and durable intent', () => {
     expect((await f.controller.retry({ requestId: randomUUID() })).status).toBe('error');
     expect(f.client.managedThreadsRequest).not.toHaveBeenCalled();
     expect(f.upload).not.toHaveBeenCalled();
+  });
+  it('passes explicit task closure to the API and retains its unknown result in history', async () => {
+    const f = await setup();
+    await f.controller.send(f.input);
+    f.rows[0].status = 'started';
+    f.rows[0].rootStatus = 'unknown';
+    const item = f.rows[0];
+    const closed = await f.controller.recall({
+      publicationId: item.id,
+      expectedVersion: item.version,
+      abandonUnresolved: true,
+    });
+    expect(closed.status).toBe('ok');
+    expect(closed.publications[0]).toMatchObject({ status: 'cancelled', rootStatus: 'unknown' });
+    expect(f.client.publicationRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      'recall',
+      item.id,
+      expect.objectContaining({ abandonUnresolved: true }),
+    );
+    const calls = vi.mocked(f.client.publicationRequest).mock.calls.length;
+    expect(
+      (
+        await f.controller.recall({
+          publicationId: item.id,
+          expectedVersion: item.version,
+          abandonUnresolved: 'true',
+        })
+      ).status,
+    ).toBe('error');
+    expect(vi.mocked(f.client.publicationRequest).mock.calls.length).toBe(calls);
   });
   it('requires recall before draft/comment edits, but preserves completed snapshots while editing a new local revision', async () => {
     const f = await setup();

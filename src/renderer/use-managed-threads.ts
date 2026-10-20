@@ -7,6 +7,7 @@ import type {
   PendingManagedThreadsAccountInput,
   RegisterManagedThreadsAccountInput,
   ReplaceManagedThreadsTokenInput,
+  UpdateManagedThreadsAccountInput,
 } from '../shared/managed-threads';
 import { useToast } from './toast';
 
@@ -115,6 +116,12 @@ export function createManagedThreadsController(
         '새 토큰을 암호화하여 저장했습니다. 휴대폰에서 다시 확인해 주세요.',
       );
     },
+    update(input: UpdateManagedThreadsAccountInput) {
+      return run(
+        () => api.updateManagedThreadsAccount(input),
+        '계정 정보를 수정했습니다. 토큰과 휴대폰 연결은 그대로입니다.',
+      );
+    },
     remove(input: DeleteManagedThreadsAccountInput) {
       return run(
         () => api.deleteManagedThreadsAccount(input),
@@ -148,6 +155,8 @@ export function useManagedThreads(enabled: boolean, onSyncing?: (working: boolea
           window.threadsMedia.registerManagedThreadsAccount(input),
         replaceManagedThreadsToken: (input) =>
           window.threadsMedia.replaceManagedThreadsToken(input),
+        updateManagedThreadsAccount: (input) =>
+          window.threadsMedia.updateManagedThreadsAccount(input),
         deleteManagedThreadsAccount: (input) =>
           window.threadsMedia.deleteManagedThreadsAccount(input),
         retryManagedThreadsAccount: (input) =>

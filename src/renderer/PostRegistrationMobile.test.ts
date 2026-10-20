@@ -126,6 +126,7 @@ function mock(
     synchronize: vi.fn(),
     register: vi.fn(),
     replace: vi.fn(),
+    update: vi.fn(),
     remove: vi.fn(),
     retry: vi.fn(),
     discard: vi.fn(),
@@ -204,14 +205,25 @@ it('keeps ZIP download and local delete while replacing desktop publish with mob
   expect(html).not.toContain('기존 PC 게시 이력');
 });
 
-it('blocks editing and comments until recall, but keeps local delete available for its cancellation flow', () => {
+it('blocks body editing until recall but keeps the reply editable, and keeps local delete available', () => {
   mock([publication]);
   const html = render();
   expect(html).toContain('먼저 게시 대기를 회수');
+  expect(html).toContain('댓글은 수정하면 휴대폰 등록본에도 함께 반영됩니다.');
   expect(html).toContain('class="primary" disabled=""><svg');
-  expect(html).toContain('disabled="" aria-label="댓글 정보 수정"');
+  expect(html).toContain('aria-label="댓글 정보 수정"');
+  expect(html).not.toContain('disabled="" aria-label="댓글 정보 수정"');
   expect(html).not.toContain('class="registration-delete-button" disabled=""');
   expect(html).toContain('게시 대기 회수');
+});
+
+it('locks the reply once the phone has posted it', () => {
+  mock([
+    { ...publication, status: 'published', rootStatus: 'published', commentStatus: 'published' },
+  ]);
+  const html = render();
+  expect(html).toContain('disabled="" aria-label="댓글 정보 수정"');
+  expect(html).toContain('휴대폰에서 이미 등록했거나 등록 중인 댓글은 수정할 수 없습니다.');
 });
 
 it('preserves legacy success history separately without enabling desktop publication', () => {

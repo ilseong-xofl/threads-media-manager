@@ -205,7 +205,7 @@ export class ServiceApiClient {
   /** Only the fixed account endpoints are available; no arbitrary URL or Meta transport. */
   async managedThreadsRequest(
     context: ServiceBusinessContext,
-    operation: 'list' | 'create' | 'credential' | 'replace' | 'delete',
+    operation: 'list' | 'create' | 'credential' | 'replace' | 'delete' | 'profile',
     accountId?: string,
     body?: unknown,
   ): Promise<unknown> {
@@ -215,7 +215,7 @@ export class ServiceApiClient {
       throw new ServiceApiError('로그인이 변경되었습니다.', 'AUTH_CHANGED', 401);
     this.assertBusinessContext(context);
     const noId = ['list', 'create'];
-    const withId = ['credential', 'replace', 'delete'];
+    const withId = ['credential', 'replace', 'delete', 'profile'];
     if (
       (!noId.includes(operation) && !withId.includes(operation)) ||
       (withId.includes(operation) && !/^[A-Za-z0-9_-]{1,80}$/.test(accountId ?? '')) ||
@@ -224,13 +224,15 @@ export class ServiceApiClient {
       throw new ServiceApiError('요청 정보를 확인해 주세요.', 'VALIDATION_FAILED', 400);
     const path =
       '/api/v1/threads/accounts' +
-      (accountId ? `/${accountId}${operation === 'delete' ? '' : '/credential'}` : '');
+      (accountId
+        ? `/${accountId}${operation === 'delete' ? '' : operation === 'profile' ? '/profile' : '/credential'}`
+        : '');
     const method =
       operation === 'replace'
         ? 'PUT'
         : operation === 'delete'
           ? 'DELETE'
-          : operation === 'create'
+          : operation === 'create' || operation === 'profile'
             ? 'POST'
             : 'GET';
     const response = await this.request(path, method, saved.token, body);
@@ -299,7 +301,9 @@ export class ServiceApiClient {
       | 'recall'
       | 'source-state'
       | 'source-deletions'
-      | 'cancel-request',
+      | 'cancel-request'
+      | 'statuses'
+      | 'comment',
     id?: string,
     body?: unknown,
   ): Promise<unknown> {
@@ -325,13 +329,27 @@ export class ServiceApiClient {
       path += `${operation === 'source-state' ? '/source-state' : ''}?${new URLSearchParams({ libraryId: body.libraryId, postKey: body.postKey })}`;
       body = undefined;
       method = 'GET';
+    } else if (operation === 'statuses') {
+      if (
+        id !== undefined ||
+        !object(body) ||
+        typeof body.libraryId !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,80}$/.test(body.libraryId) ||
+        Object.keys(body).length !== 1
+      )
+        throw new ServiceApiError('라이브러리 정보를 확인하세요.', 'VALIDATION_FAILED', 400);
+      path += `/statuses?${new URLSearchParams({ libraryId: body.libraryId })}`;
+      body = undefined;
+      method = 'GET';
     } else if (operation === 'create' || operation === 'source-deletions') {
       if (id !== undefined)
         throw new ServiceApiError('요청을 확인하세요.', 'VALIDATION_FAILED', 400);
       if (operation === 'source-deletions') path += '/source-deletions';
     } else {
       if (
-        !['get', 'upload-urls', 'complete', 'recall', 'cancel-request'].includes(operation) ||
+        !['get', 'upload-urls', 'complete', 'recall', 'cancel-request', 'comment'].includes(
+          operation,
+        ) ||
         !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id ?? '')
       )
         throw new ServiceApiError('전송 정보를 확인하세요.', 'VALIDATION_FAILED', 400);

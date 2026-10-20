@@ -61,6 +61,28 @@ describe('service login boundary reused from local-video-manager', () => {
       'https://admin.example.test/api/v1/publications?libraryId=library-a&postKey=%5B%22sample%22%2C%22one%22%5D',
     );
     expect(fetcher.mock.lastCall![1]?.body).toBeUndefined();
+    fetcher.mockResolvedValueOnce(json({ statuses: [] }));
+    await client.publicationRequest(context, 'statuses', undefined, { libraryId: 'library-a' });
+    expect(String(fetcher.mock.lastCall![0])).toBe(
+      'https://admin.example.test/api/v1/publications/statuses?libraryId=library-a',
+    );
+    await expect(
+      client.publicationRequest(context, 'statuses', undefined, {
+        libraryId: 'library-a',
+        postKey: 'extra',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const reply = { expectedVersion: 2, comment: { caption: '댓글', link: '' } };
+    fetcher.mockResolvedValueOnce(json({ publication: {} }));
+    await client.publicationRequest(context, 'comment', id, reply);
+    expect(String(fetcher.mock.lastCall![0])).toBe(
+      `https://admin.example.test/api/v1/publications/${id}/comment`,
+    );
+    expect(fetcher.mock.lastCall![1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify(reply),
+    });
     await expect(
       client.publicationRequest(context, 'get', 'https://graph.threads.com/'),
     ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });

@@ -52,6 +52,12 @@ export interface ReplaceManagedThreadsTokenInput {
   expectedRevision: number;
   token: string;
 }
+/** Display names only; the token and the phone check are unchanged. */
+export interface UpdateManagedThreadsAccountInput {
+  accountId: string;
+  label: string;
+  appName: string;
+}
 export interface DeleteManagedThreadsAccountInput {
   accountId: string;
   expectedRevision: number;
@@ -69,6 +75,9 @@ export interface ManagedThreadsMethods {
     input: RegisterManagedThreadsAccountInput,
   ): Promise<ManagedThreadsResult>;
   replaceManagedThreadsToken(input: ReplaceManagedThreadsTokenInput): Promise<ManagedThreadsResult>;
+  updateManagedThreadsAccount(
+    input: UpdateManagedThreadsAccountInput,
+  ): Promise<ManagedThreadsResult>;
   retryManagedThreadsAccount(
     input: PendingManagedThreadsAccountInput,
   ): Promise<ManagedThreadsResult>;

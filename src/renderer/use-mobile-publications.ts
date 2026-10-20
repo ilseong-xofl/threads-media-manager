@@ -118,7 +118,9 @@ export function createMobilePublicationsController(
     recall(input: RecallMobilePublicationInput) {
       return run(
         () => api.recallMobilePublication(input),
-        '게시 대기를 회수했습니다. 로컬에서 수정한 뒤 다시 보낼 수 있습니다.',
+        input.abandonUnresolved
+          ? '등록 작업을 삭제했습니다. 실제 Threads 등록 여부는 변경하지 않았으며 이력은 보존했습니다.'
+          : '게시 대기를 회수했습니다. 로컬에서 수정한 뒤 다시 보낼 수 있습니다.',
         true,
       );
     },
