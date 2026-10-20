@@ -15,11 +15,11 @@
 - **미검증·후속:**
   - 영상: 처리가 60초보다 길 수 있고, '처리 중' 거절 코드가 아직 관측되지 않았다. 자동 재시도 규칙은 그 코드를 본 뒤 정한다.
   - 댓글 실게시: 2026-10-20 PC 개발 예외에서 확인했다(PC에서 저장한 댓글 동기화 → 모바일 웹 등록 → Threads 실제 댓글). Android 실기는 미검증이다.
-  - Android HTTPS 개발 도메인: 배포된 `.4` 이미지에는 이 변경이 없다.
+  - Android 실기: 2026-10-20 `v0.1.0-dev.20261020.1`을 개발 서버에 배포한 뒤 Android Chrome에서 이미지 원글 등록을 확인했다(사용자 보고). Android의 댓글·영상은 미검증이다. 영상은 지금 60초 대기를 유지하고, 테스트 사용자가 영상 오류를 보고하면 영상이 있을 때 대기를 늘린다(사용자 결정).
   - 코드 리뷰 지적 14건은 반영했다(관리자/API `docs/mobile-publishing.md`의 2026-10-20 코드 리뷰 반영 항목). 관리자/API 19개 파일 / 185개, 모바일 82개 테스트 통과. `tests/http-integration.mjs`의 본문 없는 DELETE와 모바일 `App.tsx` 화면 흐름은 자동 검증하지 못했다.
   - 이어서 모바일 등록 완료 탭은 전송 후 7일 동안 원글 완료 글을 댓글 상태와 관계없이 표시하고(댓글이 등록되면 `댓글 완료` 뱃지), Electron 등록 카드의 `등록 완료`·`댓글 완료` 뱃지를 서버 `GET /api/v1/publications/statuses`(초안별 집계)로 복원했다. 관리자/API 186개 테스트 통과.
   - 이어서 PC에서 댓글을 저장하면 보낸 등록본에도 자동 반영한다(서버 먼저, 휴대폰이 그 댓글 게시를 시작하면 잠금). 계약은 Electron `docs/mobile-publication-delivery.md`의 2026-10-20 댓글 동기화 항목. 관리자/API를 먼저 배포해야 한다.
-  - Windows 0.1.6 릴리스는 보류(사용자 결정). 서비스 로그인이 들어간 첫 Windows 버전이라, 접속 서버(운영/개발)와 사용자 서비스 계정을 정한 뒤 저장소 변수 `THREADS_ADMIN_API_URL`을 설정하고 CI를 다시 통과시켜야 한다. 서버 주소가 없는 빌드는 `release-windows.yml`이 게시를 거절한다(Electron `docs/windows-release.md`의 서비스 주소 항목). 업데이트 후에는 PC 직접 게시가 중단되고 휴대폰 게시만 쓴다.
+  - Windows 0.1.6: 서비스 로그인이 들어간 첫 Windows 버전이다. 테스트 단계라 접속 서버는 개발 서버로 정했고(사용자 결정, 테스트 완료 후 운영 주소로 바꿔 운영 배포), 저장소 변수 `THREADS_ADMIN_API_URL`을 `https://threads-admin-dev.ilscp.net`으로 설정했다. 서버 주소가 없는 빌드는 `release-windows.yml`이 게시를 거절한다(Electron `docs/windows-release.md`의 서비스 주소 항목). 업데이트 후에는 PC 직접 게시가 중단되고 휴대폰 게시만 쓴다.
   - 문제가 생기면 Android 앱의 네이티브 통신 전환을 검토한다.
 - 이 변경은 아직 커밋하지 않았다.
 
@@ -292,8 +292,8 @@ DB 통합 검사는 전용 loopback PostgreSQL 11.22와 합성 설정을 사용�
 | 개발 도메인 | `https://threads-admin-dev.ilscp.net` | `https://threads-mobile-dev.ilscp.net` |
 | 사용자 서버 폴더 | `/docker/threads-admin-api-dev` | `/docker/threads-mobile-web-dev` |
 | 호스트 → 컨테이너 포트 | 3006 → 4191 | 3007 → 4196 |
-| 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261019.4` | `ilseong/threads-mobile-web:v0.1.0-dev.20261019.4` |
-| 사용자 확인 | `.4` 개발 서버 배포 통보 | `.3` 반영 후 직원 로그인 완료, `.4` 배포 완료 통보 없음 |
+| 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261020.1` | `ilseong/threads-mobile-web:v0.1.0-dev.20261020.1` |
+| 사용자 확인 | 2026-10-20 `.20261020.1` 개발 서버 배포 완료 통보 | 2026-10-20 `.20261020.1` 개발 서버 배포 완료 통보 |
 
 운영 도메인은 `threads-admin.ilscp.net`, `threads-mobile.ilscp.net`으로 정했다. 운영 포트 3008/3009는 예제이며 운영 완료 상태가 아니다. Nginx Proxy Manager는 **개발 인스턴스와 다른 서버**다. 개발 접속 timeout은 사용자가 막힌 3006/3007 포트를 열어 해결했다. 동일 서버/localhost proxy로 가정하지 않는다.
 
@@ -315,7 +315,7 @@ docker compose down
 
 `deploy.sh`는 pull → .env 이미지 태그 저장 → up → 내부 health 확인이다. 자동 migration·down·prune·rollback을 하지 않는다. 이전 `scripts/compose.sh dev VERSION ...` 전용 운영 절차는 필수 요구가 아니다. `.env.dev`에서 표준 `.env`로 전환하는 스크립트는 이미 구현되어 있다.
 
-**`.4` 이미지에는 2026-10-19 후속 수정(작업 삭제 등)까지 포함된다. 2026-10-20 변경(상태·링크 조회 제거, 게시 실행권 조건, Electron 링크 제거)은 아직 이미지로 만들지 않았다.** 소스 push만으로 개발 사이트가 최신 코드가 되지 않는다. `.env.dev.example`의 모바일 이미지 기본 태그도 `.2`이므로 신규 설치 때 마지막 사용 버전과 혼동하지 않는다. 실제 서버 `.env`를 예제로 덮어쓰지 않는다.
+**2026-10-20 변경(상태·링크 조회 제거, 게시 실행권 조건, 리뷰 반영, 완료 탭·뱃지, 댓글 동기화, 계정 정보 수정)은 `v0.1.0-dev.20261020.1`로 업로드·배포했다(관리자/API `sha256:c6e4f4d6e4903405f21db9ffdd865b3b522bf8143e34759df59807071635dfdd`, 모바일 `sha256:37cdaaa01993a3c2d23ec53759fd0c9b58cb219d8ab1229a62893694b46086bd`, 둘 다 linux/amd64). DB migration은 없다.** 소스 push만으로 개발 사이트가 최신 코드가 되지 않는다. `.env.dev.example`의 모바일 이미지 기본 태그도 `.2`이므로 신규 설치 때 마지막 사용 버전과 혼동하지 않는다. 실제 서버 `.env`를 예제로 덮어쓰지 않는다.
 
 ## 10. 추가 문서·증거와 인수인계 완료 기준
 

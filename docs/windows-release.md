@@ -30,7 +30,7 @@ Release에는 다음을 함께 올린다.
 
 ## 서비스 주소 (2026-10-20)
 
-서비스 로그인이 들어간 첫 Windows 버전(0.1.6 예정)부터 설치 앱은 서비스에 로그인해야 열리고, 서비스에 닿지 못하면 앱 전체가 잠긴다. CI는 저장소 변수 `THREADS_ADMIN_API_URL`(HTTPS origin)을 빌드에 넣고, 실제 앱 번들에 들어갔는지 확인해 `verification.json`의 `release.serviceUrl`에 기록한다. 변수가 없으면 CI는 통과하지만 `release-windows.yml`이 게시를 거절한다. 접속 서버(운영/개발)와 사용자 서비스 계정을 정한 뒤 변수를 설정하고 CI를 다시 통과시켜 릴리스한다.
+서비스 로그인이 들어간 첫 Windows 버전(0.1.6 예정)부터 설치 앱은 서비스에 로그인해야 열리고, 서비스에 닿지 못하면 앱 전체가 잠긴다. CI는 저장소 변수 `THREADS_ADMIN_API_URL`(HTTPS origin)을 빌드에 넣고, 실제 앱 번들에 들어갔는지 확인해 `verification.json`의 `release.serviceUrl`에 기록한다. 변수가 없으면 CI는 통과하지만 `release-windows.yml`이 게시를 거절한다. 접속 서버(운영/개발)와 사용자 서비스 계정을 정한 뒤 변수를 설정하고 CI를 다시 통과시켜 릴리스한다. 2026-10-20 테스트 단계로 개발 서버 `https://threads-admin-dev.ilscp.net`을 설정했다. 테스트가 끝나면 운영 주소로 바꿔 새 버전으로 빌드·릴리스한다.
 
 패키지 화면 검사는 첫 화면인 서비스 로그인·잠금 화면, preload, 인증 IPC 응답, 로그인 전 라이브러리 IPC 거절을 확인한다. CI에는 서비스 계정이 없으므로 로그인하거나 화면을 조작하지 않는다.
 
