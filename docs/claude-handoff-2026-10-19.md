@@ -13,6 +13,7 @@
 | 모바일 웹 | `ilseong/threads-mobile-web:v0.1.0-dev.20261020.1`, 소스 `3096b30` | 개발 서버 배포, Android 실기에서 이미지 원글·댓글 등록 확인 |
 
 - 이미지 소스 이후 두 저장소의 커밋은 문서만 바꿨다.
+- 테스트 중 갱신(2026-10-20): 관리자/API만 `ilseong/threads-admin-api:v0.1.0-dev.20261020.2`(소스 `69e1e9f`)로 올렸다. 계정 연결 탭 제거·사용자별 계정 상세, 사용자 삭제(퇴사), 사용 중지 로그인 문구가 바뀌었다. 사용자가 개발 DB에 `0007_user_deletion`을 적용한 뒤 배포했다. Electron·모바일은 기준점 그대로다.
 - 영상 실기는 테스터가 진행한다. 사용자가 오류 내역을 모아 전달하면, 영상이 있을 때 대기를 늘리는 방식으로 대응한다(사전 결정).
 - 테스트가 끝나면 운영 주소로 바꿔 운영 배포와 Windows 릴리스를 다시 진행한다.
 
@@ -306,8 +307,8 @@ DB 통합 검사는 전용 loopback PostgreSQL 11.22와 합성 설정을 사용�
 | 개발 도메인 | `https://threads-admin-dev.ilscp.net` | `https://threads-mobile-dev.ilscp.net` |
 | 사용자 서버 폴더 | `/docker/threads-admin-api-dev` | `/docker/threads-mobile-web-dev` |
 | 호스트 → 컨테이너 포트 | 3006 → 4191 | 3007 → 4196 |
-| 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261020.1` | `ilseong/threads-mobile-web:v0.1.0-dev.20261020.1` |
-| 사용자 확인 | 2026-10-20 `.20261020.1` 개발 서버 배포 완료 통보 | 2026-10-20 `.20261020.1` 개발 서버 배포 완료 통보 |
+| 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261020.2` | `ilseong/threads-mobile-web:v0.1.0-dev.20261020.1` |
+| 사용자 확인 | 2026-10-20 `.20261020.2` 개발 서버 배포 완료 통보 | 2026-10-20 `.20261020.1` 개발 서버 배포 완료 통보 |
 
 운영 도메인은 `threads-admin.ilscp.net`, `threads-mobile.ilscp.net`으로 정했다. 운영 포트 3008/3009는 예제이며 운영 완료 상태가 아니다. Nginx Proxy Manager는 **개발 인스턴스와 다른 서버**다. 개발 접속 timeout은 사용자가 막힌 3006/3007 포트를 열어 해결했다. 동일 서버/localhost proxy로 가정하지 않는다.
 
@@ -330,6 +331,8 @@ docker compose down
 `deploy.sh`는 pull → .env 이미지 태그 저장 → up → 내부 health 확인이다. 자동 migration·down·prune·rollback을 하지 않는다. 이전 `scripts/compose.sh dev VERSION ...` 전용 운영 절차는 필수 요구가 아니다. `.env.dev`에서 표준 `.env`로 전환하는 스크립트는 이미 구현되어 있다.
 
 **2026-10-20 변경(상태·링크 조회 제거, 게시 실행권 조건, 리뷰 반영, 완료 탭·뱃지, 댓글 동기화, 계정 정보 수정)은 `v0.1.0-dev.20261020.1`로 업로드·배포했다(관리자/API `sha256:c6e4f4d6e4903405f21db9ffdd865b3b522bf8143e34759df59807071635dfdd`, 모바일 `sha256:37cdaaa01993a3c2d23ec53759fd0c9b58cb219d8ab1229a62893694b46086bd`, 둘 다 linux/amd64). DB migration은 없다.** 소스 push만으로 개발 사이트가 최신 코드가 되지 않는다. `.env.dev.example`의 모바일 이미지 기본 태그도 `.2`이므로 신규 설치 때 마지막 사용 버전과 혼동하지 않는다. 실제 서버 `.env`를 예제로 덮어쓰지 않는다.
+
+**2026-10-20 관리자/API `v0.1.0-dev.20261020.2`(소스 `69e1e9f`, `sha256:e8b58fd8710380ed2be897faa8099f892a6804e54a2a06c88d63f070e230064c`, linux/amd64): 계정 연결 탭 제거·사용자별 계정 상세, 사용자 삭제(퇴사)와 `0007_user_deletion`(user.deleted_at 추가), 사용 중지 로그인 문구. 사용자가 개발 DB `threads_admin_dev`에 0007을 적용(적용 8개/대기 0개)한 뒤 배포했고, 배포 후 로그인 화면 200·health ok를 확인했다.** 사용 중지 문구("사용이 중지된 계정입니다.", `BANNED_USER`)는 서버만 바뀌었다. PC 앱과 휴대폰 화면 표시는 다음 클라이언트 배포 때 함께 반영한다(사용자 결정). 운영 DB는 아직 만들지 않았으며, 테스트가 끝나면 만든 뒤 모든 migration을 한 번에 적용한다.
 
 ## 10. 추가 문서·증거와 인수인계 완료 기준
 
