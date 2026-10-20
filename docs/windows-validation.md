@@ -1,6 +1,6 @@
 # Windows 자동 검증과 설치 후보
 
-GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.6`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
+GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 2022 x64를 각각 검사한다. 설치 후보는 GitHub Actions artifact로 14일 보관한다. 현재 버전은 `0.1.7`이며 자동 업데이트 코드를 포함한다. 후보 artifact와 공개 Release 게시는 구분하며 [Release 계약](windows-release.md)을 따른다.
 
 ## 자동으로 확인하는 범위
 
@@ -12,6 +12,25 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
+
+## 2026-10-20 0.1.7 공개 완료
+
+- [0.1.7 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.7)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.7/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. WebP 첨부가 있는 글을 `모바일로 보내기`로 보낼 때 항상 실패하던 문제를 고친 버전이다. WebP 변환을 앱에 포함된 Pillow로 옮겼다([전송 계약](mobile-publication-delivery.md)). 접속 서버는 0.1.6과 같은 개발 서버 `https://threads-admin-dev.ilscp.net`이다.
+- 앱 소스와 태그는 `9dc7023e4a842a3b5037393898ef3b1a566e03f4`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/39392278781)에서 다음을 통과했다.
+  - TypeScript: 양쪽 **61개 파일 / 1,411개**
+  - Python: Mac **575개**, Windows **575개 중 OS별 4개 제외**. Windows에서는 번들 Python·Pillow로 WebP 변환 테스트를 실행했다.
+  - 린트·타입·포맷 검사
+- 빌드에 넣은 서비스 주소가 앱 번들에 들어 있음을 확인해 `verification.json`의 `release.serviceUrl`에 기록했다. 패키지 앱 실행 검사는 다음을 통과했다.
+  - 서비스 로그인 화면
+  - preload
+  - 인증 IPC(CI 러너에서 개발 서버 응답 `signed-out`)
+  - 로그인 전 라이브러리 IPC 거절
+
+  사용자 PC에서의 Setup 설치, 버전 간 업데이트, WebP 글 실제 전송은 별도 실기 확인 항목이다.
+- [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/39394218978)은 같은 CI에서 검증된 파일 5개를 재빌드 없이 공개했다(17:34 KST).
+  - Setup/nupkg: HEAD 200, 크기 일치
+  - Electron feed: **0.1.6 → 0.1.7 안내 200**, 최신 **0.1.7 조회 204**
+- 설치 파일 SHA-256: `567299fa3b8a905534cbe6fb290f042154acacd41a10099e8170c8e120cd406e`. Mac에는 Windows 설치 파일이나 nupkg를 내려받지 않았다.
 
 ## 2026-10-20 0.1.6 공개 완료
 
