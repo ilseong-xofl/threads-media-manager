@@ -261,32 +261,32 @@ try {
         return rect.width > 0 && rect.height > 0 && style.display !== 'none' &&
           style.visibility === 'visible' && Number(style.opacity) > 0;
       };
+      // A fresh app opens on the service sign-in or lock screen; the library mounts after sign-in.
       const root = document.querySelector('#root');
-      const heading = root?.querySelector('header h1');
-      const settings = root?.querySelector('button.settings-button[aria-label="설정"]');
-      return visible(root) && visible(heading) && visible(settings) &&
-        heading.textContent.trim() === 'Threads Media Manager' && root.childElementCount > 0;
+      const card = root?.querySelector('section.service-auth-card[aria-label="서비스 로그인"]');
+      const brand = card?.querySelector('.service-auth-brand');
+      const heading = card?.querySelector('h1');
+      return visible(card) && visible(heading) && root.childElementCount > 0 &&
+        brand?.textContent.trim() === 'Threads Media Manager';
     })()`);
     if (!ready) await delay(150);
   }
   stage = 'preload';
   if (
-    !(await evaluate(`['capabilities', 'current', 'chooseFolder', 'reportUpdateBlocked']
+    !(await evaluate(`['getAuthState', 'capabilities', 'current', 'chooseFolder', 'reportUpdateBlocked']
     .every((name) => typeof window.threadsMedia?.[name] === 'function')`))
   )
     throw new Error('missing_preload_api');
 
   stage = 'ipc';
-  // First launch opens the native folder picker. Do not select a folder or click
-  // disabled controls: independent read-only IPC remains usable while it is open.
-  if (
-    !(await evaluate(`(async () => {
-    const capabilities = await window.threadsMedia.capabilities();
-    const current = await window.threadsMedia.current();
-    return capabilities?.aiContent === false && current !== null &&
-      typeof current === 'object' && current.snapshot === null && current.error === null;
-  })()`))
-  )
+  // The service gate answers before sign-in, while library IPC stays locked until then.
+  // Never sign in or click: CI has no service account.
+  const auth = await evaluate(`(async () => {
+    const state = await window.threadsMedia.getAuthState();
+    const locked = await window.threadsMedia.current().then(() => false, () => true);
+    return { status: state?.status ?? null, reason: state?.reason ?? null, locked };
+  })()`);
+  if (!['signed-out', 'blocked'].includes(auth?.status) || auth.locked !== true)
     throw new Error('unexpected_ipc_state');
   if (client.rendererError) throw new Error('renderer_error');
 
@@ -296,7 +296,15 @@ try {
   if (png.length < 100 || png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a')
     throw new Error('invalid_screenshot');
   await writeFile(resolve('out/windows-ui-smoke.png'), png);
-  success = { packagedAppLaunched: true, rendererReady: true, preloadReady: true, ipcReady: true };
+  success = {
+    packagedAppLaunched: true,
+    rendererReady: true,
+    preloadReady: true,
+    ipcReady: true,
+    authStatus: auth.status,
+    authReason: auth.reason,
+    lockedBeforeSignIn: true,
+  };
 } catch {
   // Never emit raw CDP errors, paths, page contents, auth data or process output.
 } finally {

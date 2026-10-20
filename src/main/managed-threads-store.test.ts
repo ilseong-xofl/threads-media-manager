@@ -58,7 +58,7 @@ describe('encrypted managed account store', () => {
       store.write('https://prod.example', 'a', [record('prod', '4')]),
     ]);
     expect((await readFile(file)).toString()).not.toMatch(/secret|나의 계정|https|partitions/);
-    expect((await lstat(file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect((await lstat(file)).mode & 0o777).toBe(0o600);
     expect((await store.read('https://dev.example', 'a')).map((r) => r.localId)).toEqual([
       'a1',
       'a2',

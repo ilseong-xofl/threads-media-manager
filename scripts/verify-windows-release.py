@@ -80,11 +80,13 @@ def asar_read(stream, files, content_start, name, limit=32 * 1024 * 1024):
     return result
 
 
-def verify_release(output, version, repository):
+def verify_release(output, version, repository, service_url=None):
     require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version),
             "Windows public releases require a stable major.minor.patch version")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository),
             "Expected GitHub owner/repository")
+    require(service_url is None or re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/?", service_url),
+            "Service URL must be an HTTPS origin")
     output = Path(output)
     package_name = f"{APP_ID}-{version}-full.nupkg"
     required = {SETUP_NAME, "RELEASES", package_name}
@@ -136,8 +138,12 @@ def verify_release(output, version, repository):
             main = asar_read(stream, files, content_start, ".webpack/main/index.js").decode("utf-8")
             require(repository in main and "update.electronjs.org" in main,
                     "Shipped updater does not contain the intended public GitHub feed")
+            # The app locks without its service, so record the origin baked in at build time.
+            require(service_url is None or service_url in main,
+                    "Shipped app does not contain the intended service URL")
     return {"version": version, "appId": APP_ID, "platform": "win32-x64",
             "repository": repository, "feed": f"https://update.electronjs.org/{repository}/win32-x64/{version}",
+            "serviceUrl": service_url,
             "fullPackage": package_name, "feedIntegrity": "passed", "privateFileNames": "absent",
             "installerExecuted": False, "automaticUpdateTested": False}
 
@@ -147,9 +153,11 @@ def main():
     parser.add_argument("--output", default="out/make/squirrel.windows/x64")
     parser.add_argument("--package", default="package.json")
     parser.add_argument("--repository", required=True)
+    parser.add_argument("--service-url", default="")
     args = parser.parse_args()
     metadata = json.loads(Path(args.package).read_text(encoding="utf-8"))
-    print(json.dumps(verify_release(args.output, metadata["version"], args.repository)))
+    print(json.dumps(verify_release(args.output, metadata["version"], args.repository,
+                                    args.service_url or None)))
 
 
 if __name__ == "__main__":

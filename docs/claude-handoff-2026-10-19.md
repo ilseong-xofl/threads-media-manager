@@ -19,6 +19,7 @@
   - 코드 리뷰 지적 14건은 반영했다(관리자/API `docs/mobile-publishing.md`의 2026-10-20 코드 리뷰 반영 항목). 관리자/API 19개 파일 / 185개, 모바일 82개 테스트 통과. `tests/http-integration.mjs`의 본문 없는 DELETE와 모바일 `App.tsx` 화면 흐름은 자동 검증하지 못했다.
   - 이어서 모바일 등록 완료 탭은 전송 후 7일 동안 원글 완료 글을 댓글 상태와 관계없이 표시하고(댓글이 등록되면 `댓글 완료` 뱃지), Electron 등록 카드의 `등록 완료`·`댓글 완료` 뱃지를 서버 `GET /api/v1/publications/statuses`(초안별 집계)로 복원했다. 관리자/API 186개 테스트 통과.
   - 이어서 PC에서 댓글을 저장하면 보낸 등록본에도 자동 반영한다(서버 먼저, 휴대폰이 그 댓글 게시를 시작하면 잠금). 계약은 Electron `docs/mobile-publication-delivery.md`의 2026-10-20 댓글 동기화 항목. 관리자/API를 먼저 배포해야 한다.
+  - Windows 0.1.6 릴리스는 보류(사용자 결정). 서비스 로그인이 들어간 첫 Windows 버전이라, 접속 서버(운영/개발)와 사용자 서비스 계정을 정한 뒤 저장소 변수 `THREADS_ADMIN_API_URL`을 설정하고 CI를 다시 통과시켜야 한다. 서버 주소가 없는 빌드는 `release-windows.yml`이 게시를 거절한다(Electron `docs/windows-release.md`의 서비스 주소 항목). 업데이트 후에는 PC 직접 게시가 중단되고 휴대폰 게시만 쓴다.
   - 문제가 생기면 Android 앱의 네이티브 통신 전환을 검토한다.
 - 이 변경은 아직 커밋하지 않았다.
 

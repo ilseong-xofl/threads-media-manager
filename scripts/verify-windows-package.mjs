@@ -133,6 +133,9 @@ const release = JSON.parse(
       resolve('scripts/verify-windows-release.py'),
       '--repository',
       process.env.GITHUB_REPOSITORY ?? '',
+      // Empty in ordinary CI; the release workflow refuses a build without it.
+      '--service-url',
+      process.env.THREADS_ADMIN_API_URL ?? '',
     ],
     { env, encoding: 'utf8', timeout: 90_000, windowsHide: true },
   ),

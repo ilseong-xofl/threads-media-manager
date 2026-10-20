@@ -61,11 +61,16 @@ jobs:
         id: package
         if: runner.os == 'Windows'
         continue-on-error: true
+        env:
+          # The packaged app locks until it reaches this service; unset builds are not releasable.
+          THREADS_ADMIN_API_URL: ${{ vars.THREADS_ADMIN_API_URL }}
         run: pnpm make --arch=x64
       - name: Verify packaged runtime and installer outputs
         id: packaged_runtime
         if: runner.os == 'Windows' && steps.package.outcome == 'success'
         continue-on-error: true
+        env:
+          THREADS_ADMIN_API_URL: ${{ vars.THREADS_ADMIN_API_URL }}
         run: pnpm verify:windows
       - name: Save packaged Windows UI evidence
         if: runner.os == 'Windows' && always()

@@ -172,10 +172,15 @@ jobs:
           require(verification["release"]["version"] == version and
                   verification["release"]["repository"] == os.environ["GITHUB_REPOSITORY"],
                   "Candidate release metadata mismatch.")
+          # Installed apps lock until they reach the service, so never publish a build without it.
+          service_url = verification["release"].get("serviceUrl")
+          require(service_url, "Candidate has no service URL. Set the THREADS_ADMIN_API_URL "
+                  "repository variable and pass CI again before publishing.")
           spec = importlib.util.spec_from_file_location("release_check", "scripts/verify-windows-release.py")
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
-          print(json.dumps(module.verify_release(output, version, os.environ["GITHUB_REPOSITORY"])))
+          print(json.dumps(module.verify_release(output, version, os.environ["GITHUB_REPOSITORY"],
+                                                 service_url)))
       - name: Publish the existing candidate without rebuilding
         shell: python
         env:

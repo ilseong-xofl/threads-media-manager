@@ -77,6 +77,18 @@ class WindowsReleaseTests(unittest.TestCase):
         self.assertFalse(report["installerExecuted"])
         self.assertFalse(report["automaticUpdateTested"])
 
+    def test_records_the_service_url_only_when_shipped_in_the_app(self):
+        self.assertIsNone(self.verify()["serviceUrl"])
+        service = "https://threads-admin.example.test"
+        with self.assertRaisesRegex(ValueError, "intended service URL"):
+            release.verify_release(self.output, self.version, self.repository, service)
+        with self.assertRaisesRegex(ValueError, "HTTPS origin"):
+            release.verify_release(self.output, self.version, self.repository, "http://127.0.0.1:4191")
+        self.contents[".webpack/main/index.js"] += f' serviceBaseUrl("{service}")'.encode()
+        self.build()
+        report = release.verify_release(self.output, self.version, self.repository, service)
+        self.assertEqual(report["serviceUrl"], service)
+
     def test_rejects_stale_release_feed(self):
         (self.output / "RELEASES").write_text(self.feed.replace("0.1.1", "0.1.0"))
         with self.assertRaisesRegex(ValueError, "different app or version"):
