@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rename, stat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { MediaRegistry } from './media';
 import { ViewError } from './collection';
@@ -83,7 +83,7 @@ export async function prepareThreadsMedia(
   root: string,
   mediaIds: string[],
   directory: string,
-  toPng: (input: Buffer) => Buffer,
+  toPng: (source: string, destination: string) => Promise<void>,
 ): Promise<ThreadsUploadFile[]> {
   if (!mediaIds.length || mediaIds.length > 20 || new Set(mediaIds).size !== mediaIds.length)
     throw new ViewError('threads_media_limit', 'Threads에는 첨부를 1~20개 선택해 업로드하세요.');
@@ -99,12 +99,13 @@ export async function prepareThreadsMedia(
       if (!['jpg', 'jpeg', 'png', 'webp'].includes(extension) || file.size > 32 * 1024 * 1024)
         throw new ViewError('threads_image', '업로드 이미지는 JPEG·PNG·WebP 형식이어야 합니다.');
       if (extension === 'webp') {
-        const png = toPng(await readFile(path));
-        if (!png.length || png.length > 8 * 1024 * 1024)
+        const png = join(directory, `${index + 1}.png`);
+        await toPng(path, png);
+        const size = (await stat(png)).size;
+        if (!size || size > 8 * 1024 * 1024)
           throw new ViewError('threads_image', 'PNG 변환 후 이미지가 8MB를 초과합니다.');
         extension = 'png';
-        path = join(directory, `${index + 1}.png`);
-        await writeFile(path, png, { flag: 'wx', mode: 0o600 });
+        path = png;
       }
       if ((await stat(path)).size > 8 * 1024 * 1024)
         throw new ViewError('threads_image', 'Threads 업로드 이미지는 파일당 8MB 이하여야 합니다.');

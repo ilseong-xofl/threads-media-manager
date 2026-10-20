@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile, type ChildProcess } from 'node:child_process';
-import { mkdtemp, open, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { ViewError } from './collection';
 import type { MediaRegistry, LocalFile } from './media';
 import { prepareThreadsMedia } from './threads-media';
 
@@ -40,7 +41,9 @@ async function setup(entries: { extension: string; size?: number; kind?: 'image'
     return file;
   });
   const registry = { copyForUpload } as unknown as MediaRegistry;
-  const convert = vi.fn(() => Buffer.from('synthetic-png'));
+  const convert = vi.fn(async (_source: string, destination: string) =>
+    writeFile(destination, 'synthetic-png'),
+  );
   return {
     directory,
     files,
@@ -78,6 +81,7 @@ describe('Threads media preparation', () => {
     ]);
     expect(await readFile(prepared[1].path, 'utf8')).toBe('synthetic-png');
     expect(f.convert).toHaveBeenCalledTimes(1);
+    expect(f.convert).toHaveBeenCalledWith(join(f.directory, '2.webp'), join(f.directory, '2.png'));
     expect(execFile).not.toHaveBeenCalled();
   });
   it.each([
@@ -93,10 +97,20 @@ describe('Threads media preparation', () => {
     'rejects unusable conversion output of %i bytes',
     async (size) => {
       const f = await setup([{ extension: 'webp' }]);
-      f.convert.mockReturnValue(Buffer.alloc(size));
+      f.convert.mockImplementation(async (_source, destination) =>
+        writeFile(destination, Buffer.alloc(size)),
+      );
       await expect(f.run()).rejects.toMatchObject({ code: 'threads_image' });
     },
   );
+  it('keeps the specific conversion failure instead of a generic one', async () => {
+    const f = await setup([{ extension: 'webp' }]);
+    f.convert.mockRejectedValueOnce(new ViewError('convert_invalid_image', '읽을 수 없는 WebP'));
+    await expect(f.run()).rejects.toMatchObject({
+      code: 'convert_invalid_image',
+      message: '읽을 수 없는 WebP',
+    });
+  });
   it('propagates local integrity failures before conversion', async () => {
     const f = await setup([{ extension: 'webp' }]);
     f.copyForUpload.mockRejectedValueOnce(new Error('changed local bytes'));

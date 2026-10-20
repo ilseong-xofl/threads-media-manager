@@ -56,7 +56,7 @@
 
 서버는 독립 `threads-admin-api`의 `/api/v1/publications`를 사용한다. 직원 desktop 세션과 소유권을 매번 검사하고 관리자·다른 직원·mobile 세션에는 이 API의 본문·미디어·서명 URL을 제공하지 않는다. 모바일 조회는 후속 별도 계약이다.
 
-처음에는 단일 PUT으로 첨부 1~20개, JPEG/PNG 각 8MiB 이하, MP4/MOV 각 1GiB 이하를 지원한다. 기존 WebP 준비 변환을 사용하되 체크섬은 변환된 PNG 바이트에서 계산한다. multipart 부분 재개는 없고 명시적 재시도에서 파일 단위로 보낸다.
+처음에는 단일 PUT으로 첨부 1~20개, JPEG/PNG 각 8MiB 이하, MP4/MOV 각 1GiB 이하를 지원한다. WebP는 PNG로 변환해 보내며 체크섬은 변환된 PNG 바이트에서 계산한다. 2026-10-20부터 변환은 앱에 포함된 Python Pillow 작업 파일 `local-runtime/convert_upload_image.py`가 맡는다. 이전에는 Electron `nativeImage`로 변환했는데, `nativeImage`는 PNG·JPEG만 읽기 때문에 WebP 첨부 전송이 항상 실패했다(0.1.7에서 수정). 변환에 실패하면 포괄 오류 대신 구체적인 이미지 오류를 보여 준다. multipart 부분 재개는 없고 명시적 재시도에서 파일 단위로 보낸다.
 
 기존 버킷에서 `threads/dev/`와 `threads/prod/`를 분리한다. 임시 `staging/`에 Content-Type·Content-Length·SHA-256·If-None-Match를 고정한 서명 PUT을 발급하고, 서버는 HEAD 검증 후 S3 내부 복사로 `published/`에 확정한다. 완료 시도마다 새 final key를 만들고 필요한 경우 version ID로 고정해 늦은 완료가 수락된 파일을 덮어쓰지 못하게 한다. 파일 바이트는 서버를 거치지 않는다.
 

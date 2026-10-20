@@ -48,6 +48,7 @@ import {
   type ThreadsHistory,
 } from './threads-publishing';
 import { prepareThreadsMedia } from './threads-media';
+import { launchWebpToPng } from './webp-png';
 import { DownloadController, launchWorker } from './download';
 import { isLocalRequest, isTrustedFrame } from './security';
 import { PostExportController, launchExport } from './post-export';
@@ -478,6 +479,7 @@ const threadsStorage = new FileServerStorage({
   userData: app.getPath('userData'),
   encryption,
 });
+const webpToPng = launchWebpToPng(runtimeRoot);
 const threads = new ThreadsPublishingController({
   userData: app.getPath('userData'),
   accounts: threadsAccounts,
@@ -506,12 +508,7 @@ const threads = new ThreadsPublishingController({
     captions.active ||
     content.active,
   prepareMedia: (root, ids, directory) =>
-    prepareThreadsMedia(registry, root, ids, directory, (bytes) => {
-      const image = nativeImage.createFromBuffer(bytes);
-      const { width, height } = image.getSize();
-      if (image.isEmpty() || width * height > 40_000_000) throw new Error('Invalid upload image');
-      return image.toPNG();
-    }),
+    prepareThreadsMedia(registry, root, ids, directory, webpToPng),
   confirm: async (summary) => {
     if (!window || !(await serviceAccess.allowed())) return false;
     const choice = await dialog.showMessageBox(window, {
@@ -557,12 +554,7 @@ const mobilePublications: MobilePublicationsController = new MobilePublicationsC
     threads.active ||
     managedAccountMutations > 0,
   prepareMedia: (root, ids, directory) =>
-    prepareThreadsMedia(registry, root, ids, directory, (bytes) => {
-      const image = nativeImage.createFromBuffer(bytes);
-      const { width, height } = image.getSize();
-      if (image.isEmpty() || width * height > 40_000_000) throw new Error('Invalid upload image');
-      return image.toPNG();
-    }),
+    prepareThreadsMedia(registry, root, ids, directory, webpToPng),
 });
 async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
   try {
