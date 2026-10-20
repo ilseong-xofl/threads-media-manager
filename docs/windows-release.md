@@ -38,6 +38,6 @@ Release에는 다음을 함께 올린다.
 
 사용자 결정에 따라 Windows는 서명 없이 배포한다. 이 업데이트 방식은 Windows 서명을 필수로 요구하지 않지만 설치 시 경고가 나올 수 있다. 인증서가 필요한 Mac 배포는 범위에 없다.
 
-단위 테스트는 시작/플랫폼 제한·백그라운드 설정·지연/중복/나중에/재시작·작업 경합·입력 보존·오류를 확인한다. Windows CI는 패키지와 feed를 확인한다. 실제 서로 다른 공개 버전의 다운로드·지금 재시작·나중에·기존 자료/로그인 보존은 [Windows 가이드 8번](windows-install-test.md)에서 별도로 확인한다. 첫 Release만 있는 상태를 버전 간 자동 업데이트 실기 통과로 보고하지 않는다.
+단위 테스트는 시작/플랫폼 제한·백그라운드 설정·지연/중복/나중에/재시작·작업 경합·입력 보존·오류를 확인한다. Windows CI는 패키지와 feed를 확인한다. 실제 서로 다른 공개 버전의 다운로드·지금 재시작·나중에·기존 자료/로그인 보존은 [Windows 가이드의 앱 업데이트](windows-install-test.md)에서 별도로 확인한다. 첫 Release만 있는 상태를 버전 간 자동 업데이트 실기 통과로 보고하지 않는다.
 
 근거: [Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater), [공식 update-electron-app](https://github.com/electron/update-electron-app), [Squirrel.Windows maker](https://www.electronforge.io/config/makers/squirrel.windows).
