@@ -15,6 +15,7 @@
 - 이미지 소스 이후 두 저장소의 커밋은 문서만 바꿨다.
 - 테스트 중 갱신(2026-10-20): 관리자/API만 `ilseong/threads-admin-api:v0.1.0-dev.20261020.2`(소스 `69e1e9f`)로 올렸다. 계정 연결 탭 제거·사용자별 계정 상세, 사용자 삭제(퇴사), 사용 중지 로그인 문구가 바뀌었다. 사용자가 개발 DB에 `0007_user_deletion`을 적용한 뒤 배포했다. Electron·모바일은 기준점 그대로다.
 - 테스트 중 갱신(2026-10-20): Electron을 Windows 0.1.7로 올렸다(17:34 KST 공개, 태그 `v0.1.7` = `9dc7023`). WebP 첨부 전송 실패를 고친 버전이다(아래 항목). 관리자/API·모바일은 그대로다.
+- 테스트 중 갱신(2026-10-21): 휴대폰 연결·기기 제한을 없앤 관리자/API `v0.1.0-dev.20261021.1`(소스 `507d6dd`)과 모바일 `v0.1.0-dev.20261021.1`(소스 `241715b`)을 배포했다. 개발 DB에는 0008을 먼저 적용했다(아래 2026-10-21 항목). Electron은 그대로다.
 - 영상 실기는 테스터가 진행한다. 사용자가 오류 내역을 모아 전달하면, 영상이 있을 때 대기를 늘리는 방식으로 대응한다(사전 결정).
 - 테스트가 끝나면 운영 주소로 바꿔 운영 배포와 Windows 릴리스를 다시 진행한다.
 
@@ -26,7 +27,7 @@
 - **기기 제한 삭제(같은 날 추가 결정):** 모바일 웹의 Android 전용 조건도 없앴다. 이제 HTTPS로 접속해 화면을 연 브라우저면 휴대폰·PC 구분 없이 토큰 확인·갱신과 원글·댓글 등록을 직접 보낸다(로컬 http 개발 서버는 `pnpm dev:desktop-meta`로 명시할 때만). 서버에는 원래 기기 검사가 없다.
 - **Electron:** 기능 수정 없음. "토큰과 휴대폰 연결은 그대로입니다" 같은 문구 두 곳(`use-managed-threads.ts`, `ManagedThreadsAccountSettings.tsx`)은 다음 Windows 릴리스 때 고친다.
 - **검증:** 관리자/API Vitest 192개(격리 PostgreSQL 11.22), HTTP 통합 84개, 빌드·타입·린트. 모바일 84개, 정적 배포 검사 13개, 합성 미리보기와 격리 서버 화면 확인. 실제 계정·Meta·Android 실기는 하지 않았다. 상세는 각 저장소 `docs/verification.md`의 2026-10-21 항목이다.
-- **미적용:** 커밋·개발 DB 0008 적용·배포 전이다. 순서는 0008 적용 → 관리자/API → 모바일이며, 두 배포 사이에는 기존 모바일 화면이 동작하지 않는다.
+- **배포(2026-10-21):** 사용자 승인으로 로컬 CLI에서 개발 DB에 0008을 적용하고(적용 9개·대기 0개), 이미지 두 개를 Docker Hub에 올렸다. 관리자/API `sha256:cb466e44c80158780f8036860ea0727f5e1abf53f45b910891d42bb1d8a6ad59`, 모바일 `sha256:be9bf01ef3d4479c9500e2240603506123ddfd6866bf195dd24cc39b3074faf2`, 둘 다 linux/amd64다. 사용자가 관리자/API → 모바일 순서로 개발 서버에 배포했다. 배포 뒤 공개 HTTPS로 관리자 health 200, 지운 연결 경로 404, 모바일 번들의 새 코드를 확인했다. 실제 계정·Android·PC 브라우저 등록은 아직 확인하지 않았다. 이 Mac은 Docker Desktop의 현재 context가 `desktop-linux`라 빌드 스크립트를 `DOCKER_CONTEXT=default`로 실행해야 한다.
 
 ## 2026-10-20 WebP 첨부 전송 실패 수정 (Windows 0.1.7)
 
@@ -214,9 +215,9 @@ React 19.2.8 + TypeScript 5.9.3 + Vite 8.3.4 정적 클라이언트다. Next.js 
 | `0004_publication_snapshots.sql` | 불변 등록본·파일 manifest·source CAS·삭제 영수증 |
 | `0005_publication_seven_day_deadline.sql` | 기존 행 보존, 새 168시간 기한 허용 |
 | `0006_mobile_publishing.sql` | 모바일 attempt/operation·실행권·결과 저장 |
-| `0008_mobile_account_selection.sql` | 휴대폰 연결 제한 삭제: 실행 기록의 연결 ID 필수 해제(2026-10-21, 개발 DB 미적용) |
+| `0008_mobile_account_selection.sql` | 휴대폰 연결 제한 삭제: 실행 기록의 연결 ID 필수 해제(2026-10-21 개발 DB 적용) |
 
-기존 검증 기록상 개발 DB는 0006까지 7개 적용/대기 0이다. **이번 인수인계에서 외부 DB를 재조회하지 않았다.** SQL·snapshot·hash를 고치거나 reset/push하지 않는다. 서버 시작·deploy는 migration/관리자를 자동 생성하지 않는다.
+개발 DB는 2026-10-21 0008까지 9개 적용/대기 0이다. **이번 인수인계에서 외부 DB를 재조회하지 않았다.** SQL·snapshot·hash를 고치거나 reset/push하지 않는다. 서버 시작·deploy는 migration/관리자를 자동 생성하지 않는다.
 
 로컬 관리자 설정은 `.env.development.local`, 서버 배포 폴더는 `.env`다. 현재 값을 보존하고 토큰 마스터키를 임의 재생성하지 않는다.
 
@@ -328,8 +329,8 @@ DB 통합 검사는 전용 loopback PostgreSQL 11.22와 합성 설정을 사용�
 | 개발 도메인 | `https://threads-admin-dev.ilscp.net` | `https://threads-mobile-dev.ilscp.net` |
 | 사용자 서버 폴더 | `/docker/threads-admin-api-dev` | `/docker/threads-mobile-web-dev` |
 | 호스트 → 컨테이너 포트 | 3006 → 4191 | 3007 → 4196 |
-| 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261020.2` | `ilseong/threads-mobile-web:v0.1.0-dev.20261020.1` |
-| 사용자 확인 | 2026-10-20 `.20261020.2` 개발 서버 배포 완료 통보 | 2026-10-20 `.20261020.1` 개발 서버 배포 완료 통보 |
+| 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261021.1` | `ilseong/threads-mobile-web:v0.1.0-dev.20261021.1` |
+| 사용자 확인 | 2026-10-21 `.20261021.1` 개발 서버 배포 완료 통보 | 2026-10-21 `.20261021.1` 개발 서버 배포 완료 통보 |
 
 운영 도메인은 `threads-admin.ilscp.net`, `threads-mobile.ilscp.net`으로 정했다. 운영 포트 3008/3009는 예제이며 운영 완료 상태가 아니다. Nginx Proxy Manager는 **개발 인스턴스와 다른 서버**다. 개발 접속 timeout은 사용자가 막힌 3006/3007 포트를 열어 해결했다. 동일 서버/localhost proxy로 가정하지 않는다.
 
@@ -353,7 +354,9 @@ docker compose down
 
 **2026-10-20 변경(상태·링크 조회 제거, 게시 실행권 조건, 리뷰 반영, 완료 탭·뱃지, 댓글 동기화, 계정 정보 수정)은 `v0.1.0-dev.20261020.1`로 업로드·배포했다(관리자/API `sha256:c6e4f4d6e4903405f21db9ffdd865b3b522bf8143e34759df59807071635dfdd`, 모바일 `sha256:37cdaaa01993a3c2d23ec53759fd0c9b58cb219d8ab1229a62893694b46086bd`, 둘 다 linux/amd64). DB migration은 없다.** 소스 push만으로 개발 사이트가 최신 코드가 되지 않는다. `.env.dev.example`의 모바일 이미지 기본 태그도 `.2`이므로 신규 설치 때 마지막 사용 버전과 혼동하지 않는다. 실제 서버 `.env`를 예제로 덮어쓰지 않는다.
 
-**2026-10-20 관리자/API `v0.1.0-dev.20261020.2`(소스 `69e1e9f`, `sha256:e8b58fd8710380ed2be897faa8099f892a6804e54a2a06c88d63f070e230064c`, linux/amd64): 계정 연결 탭 제거·사용자별 계정 상세, 사용자 삭제(퇴사)와 `0007_user_deletion`(user.deleted_at 추가), 사용 중지 로그인 문구. 사용자가 개발 DB `threads_admin_dev`에 0007을 적용(적용 8개/대기 0개)한 뒤 배포했고, 배포 후 로그인 화면 200·health ok를 확인했다.** 사용 중지 문구("사용이 중지된 계정입니다.", `BANNED_USER`)는 서버만 바뀌었다. PC 앱과 휴대폰 화면 표시는 다음 클라이언트 배포 때 함께 반영한다(사용자 결정). 운영 DB는 아직 만들지 않았으며, 테스트가 끝나면 만든 뒤 모든 migration을 한 번에 적용한다.
+**2026-10-20 관리자/API `v0.1.0-dev.20261020.2`(소스 `69e1e9f`, `sha256:e8b58fd8710380ed2be897faa8099f892a6804e54a2a06c88d63f070e230064c`, linux/amd64): 계정 연결 탭 제거·사용자별 계정 상세, 사용자 삭제(퇴사)와 `0007_user_deletion`(user.deleted_at 추가), 사용 중지 로그인 문구. 사용자가 개발 DB `threads_admin_dev`에 0007을 적용(적용 8개/대기 0개)한 뒤 배포했고, 배포 후 로그인 화면 200·health ok를 확인했다.** 사용 중지 문구("사용이 중지된 계정입니다.", `BANNED_USER`)는 서버만 바뀌었다. PC 앱과 휴대폰 화면 표시는 2026-10-21 폐기했다(사용자 결정). 운영 DB는 아직 만들지 않았으며, 테스트가 끝나면 만든 뒤 모든 migration을 한 번에 적용한다.
+
+**2026-10-21 관리자/API·모바일 `v0.1.0-dev.20261021.1`(소스 `507d6dd`·`241715b`, linux/amd64): 휴대폰 연결·기기 제한 삭제. 개발 DB에 0008을 적용(적용 9개/대기 0개)한 뒤 사용자가 배포했다.** digest와 확인 내용은 맨 위 2026-10-21 항목에 있다.
 
 ## 10. 추가 문서·증거와 인수인계 완료 기준
 
