@@ -18,6 +18,16 @@
 - 영상 실기는 테스터가 진행한다. 사용자가 오류 내역을 모아 전달하면, 영상이 있을 때 대기를 늘리는 방식으로 대응한다(사전 결정).
 - 테스트가 끝나면 운영 주소로 바꿔 운영 배포와 Windows 릴리스를 다시 진행한다.
 
+## 2026-10-21 휴대폰 연결 제한 삭제 (코드 수정, 미배포)
+
+- **결정(사용자, 대표 지시):** "휴대폰 한 대 = Threads 계정 하나, 계정 하나 = 휴대폰 한 대" 연결을 없앴다. 계정 수 제한도 두지 않는다. 같은 계정을 여러 휴대폰에서 쓰는 것도 막지 않는다.
+- **모바일:** 로그인 뒤 연결 화면을 없앴다. 계정 박스 위 셀렉트 박스에서 계정을 고른다(등록이 오래된 순서, 로그인 직후 첫 계정, 재연결 때는 보던 계정 유지). 고른 계정만 토큰 만료 확인과 등록 대기·완료 조회를 한다. 등록본의 계정은 PC에서 보낼 때 정해지므로 원글 등록 때 계정을 고르지 않는다.
+- **관리자/API:** 휴대폰 연결 API(`/api/v1/threads/mobile/bindings`, `/attach`, 관리자 `/api/v1/admin/bindings/:id`)와 관리자 화면의 연결 칸·`연결 해제`를 삭제했다. 모바일 목록은 `accountId`를 받고, 나머지는 등록본·실행 기록의 계정을 쓴다. 계정 삭제는 휴대폰 세션을 지우지 않는다. `0008_mobile_account_selection.sql`은 `mobile_publish_attempt.binding_id` NOT NULL 해제 한 줄이다.
+- **기기 제한 삭제(같은 날 추가 결정):** 모바일 웹의 Android 전용 조건도 없앴다. 이제 HTTPS로 접속해 화면을 연 브라우저면 휴대폰·PC 구분 없이 토큰 확인·갱신과 원글·댓글 등록을 직접 보낸다(로컬 http 개발 서버는 `pnpm dev:desktop-meta`로 명시할 때만). 서버에는 원래 기기 검사가 없다.
+- **Electron:** 기능 수정 없음. "토큰과 휴대폰 연결은 그대로입니다" 같은 문구 두 곳(`use-managed-threads.ts`, `ManagedThreadsAccountSettings.tsx`)은 다음 Windows 릴리스 때 고친다.
+- **검증:** 관리자/API Vitest 192개(격리 PostgreSQL 11.22), HTTP 통합 84개, 빌드·타입·린트. 모바일 84개, 정적 배포 검사 13개, 합성 미리보기와 격리 서버 화면 확인. 실제 계정·Meta·Android 실기는 하지 않았다. 상세는 각 저장소 `docs/verification.md`의 2026-10-21 항목이다.
+- **미적용:** 커밋·개발 DB 0008 적용·배포 전이다. 순서는 0008 적용 → 관리자/API → 모바일이며, 두 배포 사이에는 기존 모바일 화면이 동작하지 않는다.
+
 ## 2026-10-20 WebP 첨부 전송 실패 수정 (Windows 0.1.7)
 
 - **증상:** 테스터가 Threads 계정 3개를 등록한 뒤 PC의 `모바일로 보내기`를 누르자 "게시 대기 전송 상태를 확인하지 못했습니다. 기존 자료는 보존했습니다."가 떴다. 이 문구는 `mobile-publications.ts`의 `safeProblem`이 분류되지 않은 예외를 덮는 포괄 메시지이고, 원래 오류는 기록되지 않는다.
@@ -64,7 +74,7 @@
 ## 1. 먼저 지킬 사항
 
 1. 실제 계정의 Meta 호출·등록·토큰 갱신은 사용자가 범위를 승인한 테스트에서만 실행한다. 승인은 그 테스트 범위에 한정하며 다음 실행의 포괄 승인으로 재사용하지 않는다.
-2. 오류를 해결하기 위해 서버 프록시, Electron Meta 호출, `no-cors`, 자동 재등록으로 우회하지 않는다. 모든 Meta 요청은 원칙적으로 Android 모바일 브라우저에서 직접 나가야 한다. 브라우저가 읽을 수 없는 Meta 응답(컨테이너 상태·게시 링크)은 조회하지 않는다.
+2. 오류를 해결하기 위해 서버 프록시, Electron Meta 호출, `no-cors`, 자동 재등록으로 우회하지 않는다. 모든 Meta 요청은 원칙적으로 사용자 브라우저의 모바일 웹에서 직접 나가야 한다(2026-10-21부터 PC 브라우저도 허용). 브라우저가 읽을 수 없는 Meta 응답(컨테이너 상태·게시 링크)은 조회하지 않는다.
 3. 기존 실제 컨테이너 ID, 실행 시도, 미저장 영수증, 토큰 revision을 보존한다. 사용자가 확인창에서 승인한 작업 종료·연결 해제·계정 삭제는 허용하되 원격 결과와 실행 흔적을 없애거나 자동 재등록하지 않는다.
 4. `marketo-sync`, `local-video-manager`, `local-video-manager-service`는 읽기 전용 참고 프로젝트다. 코드·설정·DB·배포를 수정하거나 런타임 의존성을 만들지 않는다. Lambda는 사용하지 않는다.
 5. AWS 서버에 SSH/SCP/SFTP/SSM/원격 Docker로 접속하지 않는다. 외부 DB 관리·AWS 배포·S3 설정은 사용자가 실행한다. 비밀번호·토큰·서명 URL·환경파일 내용을 채팅이나 로그로 출력하지 않는다.
@@ -89,13 +99,13 @@ Electron은 자동 업데이트 때문에 기존 공개 저장소를 유지한�
 ### 로그인·권한·계정
 
 - 관리자가 서비스 아이디·비밀번호를 발급한다. Electron과 모바일은 같은 직원 계정으로 중앙 API에 로그인한다. 공개 회원가입·이메일 인증·Meta 소셜 로그인은 없다.
-- 관리자는 직원 생성·사용 중지·비밀번호 초기화·휴대폰 연결 해제와 처리 상태를 관리한다. 직원의 본문·댓글·미디어·Meta 토큰은 열람하지 않는다.
+- 관리자는 직원 생성·사용 중지·비밀번호 초기화와 처리 상태를 관리한다. 직원의 본문·댓글·미디어·Meta 토큰은 열람하지 않는다.
 - Electron은 인터넷/API 접근 확인 실패 시 자료 열람·편집도 잠근다. 초기의 오프라인 허용 결정은 폐기되었다. 로컬 자료 자체는 보존한다.
 - 각 직원은 본인의 Facebook 개발자 계정 아래에서 Threads 계정별로 Meta 앱을 나눈다. 회사 전체 공용 개발자 계정이 아니다. 이 구조가 Meta 제재를 방지한다고 보장하지 않는다.
 - 계정 입력 순서는 **Meta 앱 이름 → Threads 계정 이름 → 수동 발급 장기 토큰**이다. 숫자 App ID는 필수 입력이 아니다. 표시 이름과 실제 `/me` 계정 ID를 혼동하지 않는다.
 - 계정별 **중지·재개·직원 간 이관은 모두 폐기**했다. 추가·토큰 교체·동기화·삭제만 제공한다. 관리자에 의한 서비스 사용자 중지는 별도 기능으로 유지한다.
-- 삭제는 경고 확인창 후 미완료 작업을 종료하고 서버 credential과 휴대폰/세션을 폐기한다. 진행 중/결과 불명 결과는 미확인 이력으로 남기며 실제 Threads 계정·글과 완료 이력은 보존한다. 재등록은 새 장기 토큰과 새 연결이다.
-- 휴대폰당 Threads 계정 하나, 계정당 휴대폰 연결 하나가 운영 원칙이다. 교체는 관리자 연결 해제 후 진행한다. 브라우저 연결 비밀값은 물리 휴대폰이나 모바일 데이터 사용을 증명하지 않는다.
+- 삭제는 경고 확인창 후 미완료 작업을 종료하고 서버 credential을 폐기한다(2026-10-21부터 휴대폰 로그인은 유지). 진행 중/결과 불명 결과는 미확인 이력으로 남기며 실제 Threads 계정·글과 완료 이력은 보존한다. 재등록은 새 장기 토큰으로 시작한다.
+- 2026-10-21부터 휴대폰과 계정의 연결 제한이 없다(위 2026-10-21 항목). 휴대폰은 로그인한 직원의 모든 계정을 셀렉트 박스로 골라 쓰고, 관리자 연결 해제는 없다. 모바일 웹은 기기를 검사하지 않으며(PC 브라우저 허용) 물리 휴대폰이나 모바일 데이터 사용을 증명하지 않는다.
 
 ### 등록·목록·보관
 
@@ -113,7 +123,7 @@ Electron은 자동 업데이트 때문에 기존 공개 저장소를 유지한�
 - PC 입력·DB 저장 성공은 Meta 검증 성공이 아니다. PC에서 토큰을 확인하거나 갱신하지 않는다. 수동 토큰 문자열에 만료일이 없다고 등록일+60일을 임의 저장하지 않는다.
 - 최초 연결에서 만료 정보가 없으면 브라우저의 `/me` 확인과 직접 갱신 1회로 실제 `expires_in`을 얻어 서버에 저장한다. 이후 같은 revision의 유효성·계정 ID·만료일을 재사용한다.
 - **만료까지 7일 초과면 Meta 확인·갱신 요청 0회.** 만료 전 7일 이내만 자동 갱신한다. 이미 만료/무효인 토큰은 새 장기 토큰 등록을 안내한다.
-- 로그인·접속·새로고침·온라인/포커스 복귀 시 서버 메타데이터를 읽고 조건에 맞을 때만 준비한다. 원글/댓글 직전에 별도 `/me`나 갱신을 반복하지 않는다.
+- 로그인·접속·새로고침·온라인/포커스 복귀·계정 선택 시 선택한 계정만 서버 메타데이터를 읽고 조건에 맞을 때만 준비한다. 원글/댓글 직전에 별도 `/me`나 갱신을 반복하지 않는다.
 - 모바일 데이터 동의 체크박스, 수동 토큰 확인·갱신 버튼, 정상 갱신 성공 알림은 제거했다. 상태와 만료일은 계정 카드 오른쪽 두 줄로 표시한다.
 - 갱신 후 서버 저장 실패는 같은 메모리 결과만 다시 저장한다. 응답 불명 갱신은 revision latch로 반복 호출을 막는다. 코드 190과 네트워크 오류를 같은 토큰 만료로 표시하지 않는다.
 
@@ -124,7 +134,7 @@ Electron ── 로그인 / 계정 / 스냅샷 / 서명 요청 ──> 관리자
 Electron ── 서명된 PUT, 이미지·영상 바이트 ─────> S3
 관리자/API ── HEAD·체크섬 확인·S3 내부 CopyObject ─> S3
 
-모바일 브라우저 ── 로그인 / 연결 / 조회 / 결과 저장 ─> 관리자/API
+모바일 브라우저 ── 로그인 / 조회 / 결과 저장 ───────> 관리자/API
 모바일 브라우저 ── 토큰 확인·갱신 / 생성 / 등록 ─────> graph.threads.com
 모바일 브라우저 ── 서명된 GET 미디어 미리보기 ─────> S3
 Meta ── 전달받은 미디어 URL 읽기 ────────────────> S3
@@ -132,7 +142,7 @@ Meta ── 전달받은 미디어 URL 읽기 ───────────�
 
 서버에 미디어 바이트 업로드 API나 Meta proxy/server action을 만들지 않는다. S3는 서버가 짧은 서명 URL만 발급하고 PC가 직접 업로드한다. 객체는 `threads/dev/`와 `threads/prod/`의 `staging/`·`published/`로 분리하며 버킷 전체 공개 정책을 요구하지 않는다.
 
-Better Auth secret과 Meta 암호화 마스터키는 다르다. DB credential은 AES-256-GCM으로 암호화하고 Electron 사본은 OS `safeStorage`로 보관한다. 모바일의 Meta 토큰과 S3 서명 URL은 메모리에만 둔다. 서비스 세션은 sessionStorage, 연결 비밀값과 비민감 실행 영수증은 localStorage를 사용한다. 브라우저 저장소를 무조건 삭제하면 연결·복구 기록이 유실될 수 있다.
+Better Auth secret과 Meta 암호화 마스터키는 다르다. DB credential은 AES-256-GCM으로 암호화하고 Electron 사본은 OS `safeStorage`로 보관한다. 모바일의 Meta 토큰과 S3 서명 URL은 메모리에만 둔다. 서비스 세션은 sessionStorage, 계정별 비민감 실행 영수증과 갱신 잠금 번호는 localStorage를 사용한다. 브라우저 저장소를 무조건 삭제하면 복구 기록이 유실될 수 있다.
 
 ## 5. 프로젝트별 주요 코드
 
@@ -163,8 +173,8 @@ Next.js 16.3.0, React 19.2.8, Drizzle ORM 0.45.2 / Kit 0.31.10, Better Auth 1.6.
 | 파일/폴더 | 역할 |
 | --- | --- |
 | `src/server/auth/`, `src/app/api/auth/[...all]/route.ts` | Better Auth 쿠키/서명 Bearer, 채널·권한 검사 |
-| `src/server/admin/service.ts`, `src/app/admin/page.tsx` | 관리자 직원·연결·처리 상태 |
-| `src/server/threads/service.ts`, `contracts.ts`, `schema-capabilities.ts` | 계정/credential/연결/모바일 검증·갱신 결과 저장 |
+| `src/server/admin/service.ts`, `src/app/admin/page.tsx` | 관리자 직원·계정 처리 상태 |
+| `src/server/threads/service.ts`, `contracts.ts`, `schema-capabilities.ts` | 계정/credential/모바일 검증·갱신 결과 저장 |
 | `src/server/publications/service.ts`, `storage.ts` | 스냅샷·직접 PUT 서명·HEAD·S3 복사·완료·회수 |
 | `src/server/mobile/service.ts`, `contracts.ts`, `list-cursor.ts` | 모바일 목록·실행권·영수증·상태 보고, 중복/결과 불명 보호 |
 | `src/server/db/` | 인증·계정·등록본·모바일 실행 Drizzle 모델 |
@@ -179,13 +189,13 @@ React 19.2.8 + TypeScript 5.9.3 + Vite 8.3.4 정적 클라이언트다. Next.js 
 
 | 파일 | 역할 |
 | --- | --- |
-| `src/api.ts` | 관리자/API 로그인·Bearer·소유권·연결·등록본 호출 |
+| `src/api.ts` | 관리자/API 로그인·Bearer·소유권·등록본 호출 |
 | `src/meta.ts` | 브라우저 직접 Meta fetch, form 인코딩, 안전한 오류 분류 |
 | `src/token.ts` | 만료일 기반 재사용·최초/7일 갱신·revision/latch/저장 복구 |
 | `src/publisher.ts` | 실행 의도 저장 → Meta 요청 → ID/영수증 저장, 순차 캐러셀, 단계 사이 60초 대기(상태·링크 조회 없음) |
 | `src/journal.ts` | 비민감 실행/영수증 보관·서버 저장 복구 |
-| `src/gate.ts` | Android·HTTPS·온라인/표시 상태, 명시적 로컬 개발 예외 |
-| `src/App.tsx`, `PostMediaCarousel.tsx`, `publication-list.ts`, `styles.css` | 연결·목록/상세·자동 계정 준비·캐러셀·cursor·계정 카드 |
+| `src/gate.ts` | HTTPS·온라인/표시 상태(기기 검사 없음), 명시적 로컬 개발 예외 |
+| `src/App.tsx`, `PostMediaCarousel.tsx`, `publication-list.ts`, `styles.css` | 계정 선택·목록/상세·자동 계정 준비·캐러셀·cursor·계정 카드 |
 | `scripts/serve.mjs`, `build-meta.mjs`, `check-static.mjs` | 정적 배포, origin/CSP, 번들/중계 금지 검사 |
 | `tests/preview.html`, `preview.ts` | 외부 요청을 차단하는 합성 UI 미리보기 |
 | `tests/meta-error-preview.html` | 외부 요청 없는 예외 분류 미리보기 |
@@ -204,6 +214,7 @@ React 19.2.8 + TypeScript 5.9.3 + Vite 8.3.4 정적 클라이언트다. Next.js 
 | `0004_publication_snapshots.sql` | 불변 등록본·파일 manifest·source CAS·삭제 영수증 |
 | `0005_publication_seven_day_deadline.sql` | 기존 행 보존, 새 168시간 기한 허용 |
 | `0006_mobile_publishing.sql` | 모바일 attempt/operation·실행권·결과 저장 |
+| `0008_mobile_account_selection.sql` | 휴대폰 연결 제한 삭제: 실행 기록의 연결 ID 필수 해제(2026-10-21, 개발 DB 미적용) |
 
 기존 검증 기록상 개발 DB는 0006까지 7개 적용/대기 0이다. **이번 인수인계에서 외부 DB를 재조회하지 않았다.** SQL·snapshot·hash를 고치거나 reset/push하지 않는다. 서버 시작·deploy는 migration/관리자를 자동 생성하지 않는다.
 
