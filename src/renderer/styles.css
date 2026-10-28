@@ -874,6 +874,10 @@ input::placeholder {
   width: 15px;
   height: 15px;
 }
+.export-toast .export-toast-close {
+  align-self: flex-start;
+  margin: -5px -4px 0 0;
+}
 .export-toast-error {
   border-color: #efd0c9;
   color: #a75353;

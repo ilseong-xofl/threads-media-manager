@@ -50,7 +50,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 {entry.action.label}
               </button>
             )}
-            <button type="button" aria-label="알림 닫기" onClick={() => store.dismiss(entry.id)}>
+            <button
+              type="button"
+              className="export-toast-close"
+              aria-label="알림 닫기"
+              onClick={() => store.dismiss(entry.id)}
+            >
               <Icon name="close" />
             </button>
           </div>
