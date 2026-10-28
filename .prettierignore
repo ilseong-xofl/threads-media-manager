@@ -8,6 +8,7 @@ docs/
 README.md
 AGENTS.md
 .agents/
+.claude/
 local-runtime/
 tests/
 
