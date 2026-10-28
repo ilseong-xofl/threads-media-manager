@@ -46,6 +46,15 @@ it('renames an account only through its fixed channel', async () => {
   await api.updateManagedThreadsAccount(input);
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.updateManagedThreadsAccount, input);
 });
+it('re-checks and refreshes a token only through fixed channels that carry no token', async () => {
+  const input = { accountId: 'account' };
+  await api.recheckManagedThreadsAccount(input);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.recheckManagedThreadsAccount, input);
+  await api.refreshManagedThreadsToken(input);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.refreshManagedThreadsToken, input);
+  expect(IPC.recheckManagedThreadsAccount).toBe('tmm:managed-threads:recheck');
+  expect(IPC.refreshManagedThreadsToken).toBe('tmm:managed-threads:refresh-token');
+});
 beforeEach(() => {
   electron.invoke
     .mockReset()

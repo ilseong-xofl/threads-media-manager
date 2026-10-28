@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,9 +7,13 @@ import type { AuthTokenStore, TokenCipher } from './auth-token-store';
 import type {
   DeletedManagedThreadsAccount,
   ManagedThreadsAccount,
+  MetaTokenFailureDetails,
+  MetaTokenOutcome,
 } from '../shared/managed-threads';
 import { EncryptedManagedThreadsStore, ManagedThreadsStorageError } from './managed-threads-store';
-import { ManagedThreadsManager } from './managed-threads';
+import { ManagedThreadsManager, tokenRefreshWindowDays } from './managed-threads';
+import { MetaTokenError, type MetaTokenDebug, type MetaTokenRefresh } from './meta-token-client';
+import { MetaTokenLog } from './meta-token-log';
 import { ServiceApiClient } from './service-api';
 import { ServiceAccess } from './service-access';
 
@@ -20,6 +24,21 @@ afterEach(async () => {
 });
 const json = (value: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(value), { status, headers });
+const NOW = Date.parse('2026-10-28T00:00:00.000Z');
+const later = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
+const metaFailure = (outcome: MetaTokenOutcome, fields: Partial<MetaTokenFailureDetails> = {}) =>
+  new MetaTokenError({
+    outcome,
+    detail: null,
+    httpStatus: null,
+    metaCode: null,
+    metaSubcode: null,
+    metaType: null,
+    metaMessage: null,
+    fbtraceId: null,
+    networkCode: null,
+    ...fields,
+  });
 async function setup() {
   let session: string | null = 'session-a';
   const tokenStore: AuthTokenStore = {
@@ -37,6 +56,12 @@ async function setup() {
   let loseResponse = false,
     rejectMutation = false;
   const writes: string[] = [];
+  // Meta request gate: the list's remaining interval, reservations and reported outcomes.
+  let gate = 0;
+  let failNext: { status: number; code: string } | null = null;
+  const busy = new Set<string>();
+  const reservations: { id: string; accountId?: string }[] = [];
+  const outcomes: { id: string; outcome: string }[] = [];
   const fetcher = vi.fn<typeof fetch>(async (url, init) => {
     const path = new URL(String(url)).pathname;
     const user = new Headers(init?.headers).get('Authorization') === 'Bearer session-b' ? 'b' : 'a';
@@ -56,7 +81,25 @@ async function setup() {
         accounts: [...server.values()]
           .filter((r) => r.account.ownerId === user)
           .map((r) => r.account),
+        metaRequest: { retryAfterSeconds: gate },
       });
+    if (path === '/api/v1/threads/meta-requests' && init?.method === 'POST') {
+      const body = JSON.parse(init.body as string);
+      if (gate > 0) return json({ error: { code: 'META_REQUEST_COOLDOWN', message: 'wait' } }, 429);
+      if (body.accountId && busy.has(body.accountId))
+        return json({ error: { code: 'ACCOUNT_BUSY', message: 'phone' } }, 409);
+      const reservation = {
+        id: `reservation-${reservations.length + 1}`,
+        ...(body.accountId ? { accountId: body.accountId } : {}),
+      };
+      reservations.push(reservation);
+      return json({ reservation: { id: reservation.id, retryAfterSeconds: 600 } });
+    }
+    if (path.startsWith('/api/v1/threads/meta-requests/') && init?.method === 'POST') {
+      const { outcome } = JSON.parse(init.body as string);
+      outcomes.push({ id: path.split('/')[5], outcome });
+      return json({ retryAfterSeconds: outcome === 'not_sent' ? 0 : 300 });
+    }
     if (init?.method === 'DELETE') {
       writes.push('DELETE');
       if (rejectMutation) return json({}, 503);
@@ -90,7 +133,24 @@ async function setup() {
       writes.push(init.method);
       if (rejectMutation)
         return json({ error: { code: 'INTERNAL_ERROR', message: 'secret-in-error' } }, 503);
+      if (failNext) {
+        const failure = failNext;
+        failNext = null;
+        return json({ error: { code: failure.code, message: 'secret-in-error' } }, failure.status);
+      }
       const body = JSON.parse(init.body as string);
+      const checked = body.verification as { threadsUserId: string; expiresAt: string } | undefined;
+      const target = init.method === 'PUT' ? path.split('/')[5] : null;
+      if (
+        checked &&
+        [...server.values()].some(
+          (r) =>
+            r.account.threadsUserId === checked.threadsUserId &&
+            r.account.id !== target &&
+            r.account.registrationId !== body.registrationId,
+        )
+      )
+        return json({ error: { code: 'ALREADY_REGISTERED', message: 'unique' } }, 409);
       let row;
       if (init.method === 'POST') {
         const existing = [...server.values()].find(
@@ -114,11 +174,13 @@ async function setup() {
             registrationId: body.registrationId,
             appName: body.appName,
             appId: null,
-            threadsUserId: null,
-            validationStatus: 'pending_validation' as const,
+            threadsUserId: checked?.threadsUserId ?? null,
+            validationStatus: checked
+              ? ('reported_valid' as const)
+              : ('pending_validation' as const),
             appIdVerified: false,
             tokenRevision: 1,
-            expiresAt: null,
+            expiresAt: checked?.expiresAt ?? null,
             createdAt: '2026-10-19T00:00:00.000Z',
           },
           token: body.token,
@@ -128,8 +190,20 @@ async function setup() {
         row = server.get(path.split('/')[5]);
         if (!row || row.account.ownerId !== user) return json({}, 404);
         if (row.account.tokenRevision !== body.expectedRevision) return json({}, 409);
+        if (
+          checked &&
+          row.account.threadsUserId &&
+          row.account.threadsUserId !== checked.threadsUserId
+        )
+          return json({ error: { code: 'ACCOUNT_IDENTITY_MISMATCH', message: 'other' } }, 409);
+        if (busy.has(row.account.id))
+          return json({ error: { code: 'ACCOUNT_BUSY', message: 'phone' } }, 409);
         row.token = body.token;
         row.account.tokenRevision++;
+        row.account.validationStatus = checked ? 'reported_valid' : 'pending_validation';
+        row.account.threadsUserId = checked?.threadsUserId ?? row.account.threadsUserId;
+        row.account.expiresAt = checked?.expiresAt ?? null;
+        row.account.appIdVerified = false;
       }
       if (loseResponse) throw new Error('network lost with secret-in-error');
       return json({ account: row.account, secret: 'must-never-leak' });
@@ -149,7 +223,33 @@ async function setup() {
     decryptString: async (v) => Buffer.from(v.map((n, i) => n ^ key[i % key.length])).toString(),
   };
   const store = new EncryptedManagedThreadsStore(join(directory, 'accounts.bin'), cipher);
-  const manager = new ManagedThreadsManager(client, store, scope);
+  // Meta identifies a Threads account by user ID; each new token is a new account unless linked.
+  const identities = new Map<string, string>();
+  const userFor = (token: string) => {
+    if (!identities.has(token)) identities.set(token, String(1000 + identities.size));
+    return identities.get(token)!;
+  };
+  const meta = {
+    debugToken: vi.fn(async (token: string): Promise<MetaTokenDebug> => ({
+      userId: userFor(token),
+      expiresAt: later(60),
+      issuedAt: later(-1),
+    })),
+    refreshToken: vi.fn(async (token: string): Promise<MetaTokenRefresh> => ({
+      token: `${token}-refreshed`,
+      expiresAt: later(60),
+    })),
+  };
+  const logPath = join(directory, 'meta-token-checks.log');
+  const options = { meta, log: new MetaTokenLog(logPath), now: () => NOW };
+  const manager = new ManagedThreadsManager(client, store, scope, options);
+  const bodies = (method: string) =>
+    fetcher.mock.calls
+      .filter(
+        ([url, init]) =>
+          init?.method === method && !String(url).includes('/api/v1/threads/meta-requests'),
+      )
+      .map(([, init]) => JSON.parse(init!.body as string));
   return {
     server,
     deleted,
@@ -158,6 +258,21 @@ async function setup() {
     store,
     writes,
     fetcher,
+    meta,
+    options,
+    logPath,
+    identities,
+    reservations,
+    outcomes,
+    busy,
+    bodies,
+    sameUser: (token: string, existing: string) => identities.set(token, userFor(existing)),
+    gate: (seconds: number) => {
+      gate = seconds;
+    },
+    failNext: (status: number, code: string) => {
+      failNext = { status, code };
+    },
     lose: (v: boolean) => {
       loseResponse = v;
     },
@@ -282,8 +397,9 @@ describe('managed Threads synchronization', () => {
     expect(writes).toEqual(['POST']);
   });
   it('reconciles lost replacement response without a second PUT', async () => {
-    const { manager, lose, writes } = await setup();
+    const { manager, lose, writes, sameUser } = await setup();
     const initial = await manager.register(input());
+    sameUser('replacement-secret', input().token);
     lose(true);
     const failed = await manager.replace({
       accountId: initial.accounts[0].account!.id,
@@ -329,9 +445,10 @@ describe('managed Threads synchronization', () => {
     );
   });
   it('retains pending replacement on concurrent refresh, blocks retry and discards only pending input', async () => {
-    const { manager, server, store, reject, writes } = await setup();
+    const { manager, server, store, reject, writes, sameUser } = await setup();
     const initial = await manager.register(input());
     const id = initial.accounts[0].account!.id;
+    sameUser('pending-secret', input().token);
     reject(true);
     const failed = await manager.replace({
       accountId: id,
@@ -367,7 +484,7 @@ describe('managed Threads synchronization', () => {
     expect(writes).toEqual(['POST']);
   });
   it('never sends a mutation if persisting pending credentials failed', async () => {
-    const { client, store, writes } = await setup();
+    const { client, store, writes, options } = await setup();
     const write = vi.fn(
       async (_scope: string, _owner: string, records: Parameters<typeof store.write>[2]) => {
         if (records.some((r) => r.pending))
@@ -378,12 +495,13 @@ describe('managed Threads synchronization', () => {
       client,
       { read: store.read.bind(store), write },
       scope,
+      options,
     );
     expect((await manager.register(input())).problem?.code).toBe('STORAGE_WRITE_FAILED');
     expect(writes).toEqual([]);
   });
   it('honestly retains persisted pending state if final local save fails after server success', async () => {
-    const { client, store, writes } = await setup();
+    const { client, store, writes, options } = await setup();
     const write = vi.fn(
       async (service: string, owner: string, records: Parameters<typeof store.write>[2]) => {
         if (records.some((r) => r.account && !r.pending))
@@ -395,6 +513,7 @@ describe('managed Threads synchronization', () => {
       client,
       { read: store.read.bind(store), write },
       scope,
+      options,
     );
     const result = await manager.register(input());
     expect(result.problem?.code).toBe('LOCAL_SYNC_PENDING');
@@ -449,14 +568,17 @@ describe('managed Threads synchronization', () => {
   });
   it('keeps simultaneous connections with identical names separate by generated IDs', async () => {
     const { manager, writes } = await setup();
-    const results = await Promise.all([manager.register(input()), manager.register(input())]);
+    const results = await Promise.all([
+      manager.register(input()),
+      manager.register({ ...input(), token: 'another-account-token' }),
+    ]);
     expect(results.map((r) => r.status)).toEqual(['ok', 'ok']);
     expect(writes).toEqual(['POST', 'POST']);
     expect(new Set(results[1].accounts.map((r) => r.registrationId)).size).toBe(2);
     expect(results[1].accounts.map((r) => r.appName)).toEqual(['123', '123']);
   });
-  it('retains staged input when the account-list request fails before POST', async () => {
-    const { manager, fetcher, store, writes } = await setup();
+  it('neither checks nor stores a new token when the account-list request fails', async () => {
+    const { manager, fetcher, store, writes, meta, reservations } = await setup();
     const original = fetcher.getMockImplementation()!;
     fetcher.mockImplementation(async (url, init) => {
       if (String(url).endsWith('/threads/accounts')) throw new Error('offline');
@@ -464,8 +586,11 @@ describe('managed Threads synchronization', () => {
     });
     const result = await manager.register(input());
     expect(result.problem?.code).toBe('SERVICE_UNAVAILABLE');
-    expect(result.accounts[0].localState).toBe('pending');
-    expect((await store.read(scope, 'a'))[0].pending?.token).toBe(input().token);
+    // The input form stays open with the token; nothing was reserved, checked or stored.
+    expect(result.accounts).toEqual([]);
+    expect(await store.read(scope, 'a')).toEqual([]);
+    expect(meta.debugToken).not.toHaveBeenCalled();
+    expect(reservations).toEqual([]);
     expect(writes).toEqual([]);
   });
   it('does not download unchanged credentials on each account-list refresh', async () => {
@@ -523,12 +648,15 @@ describe('managed Threads synchronization', () => {
     const row = result.accounts[0];
     expect(row).toMatchObject({ appName: '나의 뷰티 앱', label: 'my_threads', appId: null });
     expect(row.registrationId).toMatch(/^[0-9a-f-]{36}$/);
-    const mutation = fetcher.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    const mutation = fetcher.mock.calls.find(
+      ([url, init]) => init?.method === 'POST' && String(url).endsWith('/threads/accounts'),
+    )!;
     expect(JSON.parse(mutation[1]!.body as string)).toEqual({
       registrationId: row.registrationId,
       appName: '나의 뷰티 앱',
       label: 'my_threads',
       token: 'test-secret',
+      verification: { threadsUserId: '1000', expiresAt: later(60) },
     });
     expect((await store.read(scope, 'a'))[0].registrationId).toBe(row.registrationId);
   });
@@ -539,7 +667,7 @@ describe('managed Threads synchronization', () => {
     reject(false);
     const retried = await manager.retry({ localId: failed.accounts[0].localId });
     const bodies = fetcher.mock.calls
-      .filter(([, init]) => init?.method === 'POST')
+      .filter(([url, init]) => init?.method === 'POST' && String(url).endsWith('/threads/accounts'))
       .map(([, init]) => JSON.parse(init!.body as string));
     expect(bodies).toHaveLength(2);
     expect(bodies[0].registrationId).toBe(bodies[1].registrationId);
@@ -944,7 +1072,7 @@ describe('managed Threads synchronization', () => {
     expect((await store.read(scope, 'a'))[0].syncedToken).toBe(input().token);
   });
   it('does not send DELETE unless its intent is durably encrypted first', async () => {
-    const { manager, store, client, writes } = await setup();
+    const { manager, store, client, writes, options } = await setup();
     const initial = await manager.register(input());
     const guarded = new ManagedThreadsManager(
       client,
@@ -957,6 +1085,7 @@ describe('managed Threads synchronization', () => {
         },
       },
       scope,
+      options,
     );
     const result = await guarded.deleteAccount({
       accountId: initial.accounts[0].account!.id,
@@ -967,7 +1096,7 @@ describe('managed Threads synchronization', () => {
     expect((await store.read(scope, 'a'))[0].syncedToken).toBe(input().token);
   });
   it('retains the encrypted copy when cleanup failed after server deletion and then cleans on refresh', async () => {
-    const { manager, store, client, writes } = await setup();
+    const { manager, store, client, writes, options } = await setup();
     const initial = await manager.register(input());
     const guarded = new ManagedThreadsManager(
       client,
@@ -979,6 +1108,7 @@ describe('managed Threads synchronization', () => {
         },
       },
       scope,
+      options,
     );
     const result = await guarded.deleteAccount({
       accountId: initial.accounts[0].account!.id,
@@ -1057,5 +1187,470 @@ describe('managed Threads synchronization', () => {
     expect(result.accounts).toEqual([]);
     expect((await store.read(scope, 'a'))[0].pending?.token).toBe(input().token);
     expect(await store.read(scope, 'b')).toEqual([]);
+  });
+});
+
+describe('PC token check and refresh', () => {
+  const last = <T>(values: T[]) => values[values.length - 1];
+  it('lets only a development run change the 14-day refresh window', () => {
+    expect(tokenRefreshWindowDays(true, '60')).toBe(14);
+    expect(tokenRefreshWindowDays(false, undefined)).toBe(14);
+    expect(tokenRefreshWindowDays(false, '60')).toBe(60);
+    expect(tokenRefreshWindowDays(false, '1')).toBe(1);
+    for (const bad of ['0', '61', '7.5', ' 7', 'abc', ''])
+      expect(tokenRefreshWindowDays(false, bad)).toBe(14);
+  });
+  it('checks a new token before storing it, sends the result and logs it without the token', async () => {
+    const f = await setup();
+    const result = await f.manager.register(input());
+    expect(result).toMatchObject({ status: 'ok', metaRequestRetryAfterSeconds: 600 });
+    expect(result.refreshWindowDays).toBe(14);
+    expect(f.meta.debugToken).toHaveBeenCalledExactlyOnceWith(input().token);
+    expect(f.reservations).toEqual([{ id: 'reservation-1' }]);
+    expect(f.outcomes).toEqual([]);
+    expect([...f.server.values()][0].account).toMatchObject({
+      validationStatus: 'reported_valid',
+      threadsUserId: '1000',
+      expiresAt: later(60),
+    });
+    expect(result.accounts[0]).toMatchObject({
+      localState: 'synced',
+      pendingReason: null,
+      lastCheck: { operation: 'register', result: 'success', expiresAt: later(60) },
+    });
+    const log = await readFile(f.logPath, 'utf8');
+    expect(log).not.toContain(input().token);
+    expect(JSON.parse(log)).toMatchObject({
+      at: new Date(NOW).toISOString(),
+      ownerId: 'a',
+      localId: result.accounts[0].localId,
+      accountId: null,
+      appName: '123',
+      label: '계정 123',
+      result: 'success',
+    });
+  });
+  it('stores a failed registration as unverified, reports an invalid token and keeps the cause', async () => {
+    const f = await setup();
+    f.meta.debugToken.mockRejectedValueOnce(
+      metaFailure('invalid_token', {
+        httpStatus: 400,
+        metaCode: 190,
+        metaSubcode: 463,
+        metaType: 'OAuthException',
+        metaMessage: 'Session has expired',
+        fbtraceId: 'trace-1',
+      }),
+    );
+    const result = await f.manager.register(input());
+    expect(result.problem?.code).toBe('TOKEN_CHECK_FAILED_SAVED');
+    expect(result.problem?.message).toContain('"확인 필요"로 저장');
+    expect(result.problem?.message).toContain(
+      '(HTTP 400 · 코드 190 · 하위 코드 463 · OAuthException · fbtrace_id trace-1)',
+    );
+    expect(result.metaRequestRetryAfterSeconds).toBe(300);
+    expect(f.outcomes).toEqual([{ id: 'reservation-1', outcome: 'invalid_token' }]);
+    expect(last(f.bodies('POST'))).not.toHaveProperty('verification');
+    expect(result.accounts[0]).toMatchObject({
+      localState: 'synced',
+      account: { validationStatus: 'pending_validation', threadsUserId: null, expiresAt: null },
+      lastCheck: {
+        operation: 'register',
+        result: 'invalid_token',
+        httpStatus: 400,
+        metaCode: 190,
+        metaSubcode: 463,
+        metaType: 'OAuthException',
+        metaMessage: 'Session has expired',
+        fbtraceId: 'trace-1',
+      },
+    });
+    expect(await readFile(f.logPath, 'utf8')).not.toContain(input().token);
+  });
+  it.each([
+    ['not_sent', [{ id: 'reservation-1', outcome: 'not_sent' }], 0],
+    ['timeout', [], 600],
+    ['rejected', [], 600],
+    ['network', [], 600],
+    ['bad_response', [], 600],
+  ] as const)(
+    'reports only invalid-token and not-sent outcomes to the interval (%s)',
+    async (outcome, reported, seconds) => {
+      const f = await setup();
+      f.meta.debugToken.mockRejectedValueOnce(metaFailure(outcome));
+      const result = await f.manager.register(input());
+      expect(result.problem?.code).toBe('TOKEN_CHECK_FAILED_SAVED');
+      expect(f.outcomes).toEqual(reported);
+      expect(result.metaRequestRetryAfterSeconds).toBe(seconds);
+      expect(result.accounts[0].lastCheck?.result).toBe(outcome);
+    },
+  );
+  it('refuses a second registration of the same Threads account and names the existing row', async () => {
+    const f = await setup();
+    await f.manager.register(input());
+    f.sameUser('second-token', input().token);
+    const result = await f.manager.register({
+      label: '다른',
+      appName: '다른 앱',
+      token: 'second-token',
+    });
+    expect(result.problem?.code).toBe('DUPLICATE_ACCOUNT');
+    expect(result.problem?.message).toContain('123 · 계정 123');
+    expect(result.accounts).toHaveLength(1);
+    expect(f.writes).toEqual(['POST']);
+    expect(
+      (await readFile(f.logPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l).result),
+    ).toEqual(['success', 'duplicate']);
+  });
+  it('refuses during the server interval without reserving or calling Meta', async () => {
+    const f = await setup();
+    f.gate(245);
+    const result = await f.manager.register(input());
+    expect(result.problem?.code).toBe('META_REQUEST_COOLDOWN');
+    expect(result.metaRequestRetryAfterSeconds).toBe(245);
+    expect(f.reservations).toEqual([]);
+    expect(f.meta.debugToken).not.toHaveBeenCalled();
+    expect(f.writes).toEqual([]);
+    expect(await f.store.read(scope, 'a')).toEqual([]);
+  });
+  it('reads the interval again when another PC of the employee reserved first', async () => {
+    const f = await setup();
+    const original = f.fetcher.getMockImplementation()!;
+    f.fetcher.mockImplementation(async (url, init) => {
+      if (String(url).endsWith('/meta-requests')) {
+        f.gate(120);
+        return json({ error: { code: 'META_REQUEST_COOLDOWN', message: 'wait' } }, 429);
+      }
+      return original(url, init);
+    });
+    const result = await f.manager.register(input());
+    expect(result.problem?.code).toBe('META_REQUEST_COOLDOWN');
+    expect(result.metaRequestRetryAfterSeconds).toBe(120);
+    expect(f.meta.debugToken).not.toHaveBeenCalled();
+  });
+  it('replaces a token of the same Threads account and sends the check with its reason', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    f.sameUser('new-token', input().token);
+    const result = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: 'new-token',
+    });
+    expect(result.status).toBe('ok');
+    expect(last(f.reservations)).toEqual({ id: 'reservation-2', accountId: id });
+    expect(last(f.bodies('PUT'))).toMatchObject({
+      token: 'new-token',
+      reason: 'replace',
+      verification: { threadsUserId: '1000', expiresAt: later(60) },
+    });
+    expect(f.server.get(id)).toMatchObject({
+      token: 'new-token',
+      account: { tokenRevision: 2, validationStatus: 'reported_valid' },
+    });
+    expect(result.accounts[0].lastCheck).toMatchObject({ operation: 'replace', result: 'success' });
+  });
+  it('keeps the working token of a verified account when the new token fails the check', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    f.meta.debugToken.mockRejectedValueOnce(
+      metaFailure('rejected', { httpStatus: 400, metaCode: 100 }),
+    );
+    const result = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: 'bad-token',
+    });
+    expect(result.problem?.code).toBe('TOKEN_CHECK_FAILED');
+    expect(result.problem?.message).toContain('기존 토큰을 그대로');
+    expect(result.problem?.message).toContain('HTTP 400 · 코드 100');
+    expect(f.writes).toEqual(['POST']);
+    expect(f.server.get(id)!.token).toBe(input().token);
+    expect((await f.store.read(scope, 'a'))[0].pending).toBeNull();
+    expect(result.accounts[0]).toMatchObject({
+      localState: 'synced',
+      lastCheck: { operation: 'replace', result: 'rejected' },
+    });
+  });
+  it('stores a failed replacement as unverified when the account was not verified', async () => {
+    const f = await setup();
+    f.meta.debugToken.mockRejectedValueOnce(metaFailure('network', { networkCode: 'ECONNRESET' }));
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    f.meta.debugToken.mockRejectedValueOnce(metaFailure('timeout'));
+    const result = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: 'new-token',
+    });
+    expect(result.problem?.code).toBe('TOKEN_CHECK_FAILED_SAVED');
+    expect(last(f.bodies('PUT'))).toEqual({
+      expectedRevision: 1,
+      token: 'new-token',
+      expectedOwnershipVersion: 1,
+      expectedLifecycleVersion: 1,
+      reason: 'replace',
+    });
+    expect(f.server.get(id)).toMatchObject({
+      token: 'new-token',
+      account: { tokenRevision: 2, validationStatus: 'pending_validation' },
+    });
+  });
+  it('refuses a token of another Threads account for an existing row', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    const result = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: 'foreign',
+    });
+    expect(result.problem).toEqual({
+      code: 'ACCOUNT_MISMATCH',
+      message: '이 계정에 등록된 Threads 계정과 다른 계정의 토큰입니다.',
+    });
+    expect(f.writes).toEqual(['POST']);
+    expect(result.accounts[0].lastCheck?.result).toBe('mismatch');
+  });
+  it('drops pending input that the server refuses for the Threads account itself', async () => {
+    const f = await setup();
+    f.identities.set(input().token, '9999');
+    f.server.set('other', {
+      account: { ...legacyRemote('x').account, id: 'other', ownerId: 'b', threadsUserId: '9999' },
+      token: 'x',
+    });
+    const created = await f.manager.register(input());
+    expect(created.problem).toEqual({
+      code: 'ALREADY_REGISTERED',
+      message: '이미 다른 곳에 등록된 Threads 계정입니다. 관리자에게 확인해 주세요.',
+    });
+    expect(created.accounts).toEqual([]);
+    expect(await f.store.read(scope, 'a')).toEqual([]);
+    f.server.delete('other');
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    f.sameUser('new-token', input().token);
+    f.failNext(409, 'ACCOUNT_IDENTITY_MISMATCH');
+    const replaced = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: 'new-token',
+    });
+    expect(replaced.problem?.code).toBe('ACCOUNT_IDENTITY_MISMATCH');
+    expect(replaced.accounts[0]).toMatchObject({ localState: 'synced', pendingAction: null });
+    expect((await f.store.read(scope, 'a'))[0].syncedToken).toBe(input().token);
+    expect(JSON.stringify(replaced)).not.toContain('secret-in-error');
+  });
+  it('refuses a busy account before Meta and keeps a pending change the server refused as busy', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    f.busy.add(id);
+    expect((await f.manager.recheck({ accountId: id })).problem?.code).toBe('ACCOUNT_BUSY');
+    expect(f.meta.debugToken).toHaveBeenCalledTimes(1);
+    f.busy.delete(id);
+    f.sameUser('new-token', input().token);
+    f.failNext(409, 'ACCOUNT_BUSY');
+    const busy = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: 'new-token',
+    });
+    expect(busy.problem).toEqual({
+      code: 'ACCOUNT_BUSY',
+      message: '휴대폰에서 이 계정으로 등록 중인 글이 있습니다. 등록이 끝난 뒤 다시 시도해 주세요.',
+    });
+    expect(busy.accounts[0]).toMatchObject({ localState: 'pending', pendingReason: 'replace' });
+    expect((await f.manager.retry({ localId: busy.accounts[0].localId })).status).toBe('ok');
+    expect(f.server.get(id)!.token).toBe('new-token');
+  });
+  it('re-checks the stored token and sends it again as a checked revision', async () => {
+    const f = await setup();
+    f.meta.debugToken.mockRejectedValueOnce(metaFailure('not_sent', { networkCode: 'ENOTFOUND' }));
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    const result = await f.manager.recheck({ accountId: id });
+    expect(result.status).toBe('ok');
+    expect(last(f.meta.debugToken.mock.calls)).toEqual([input().token]);
+    expect(last(f.bodies('PUT'))).toMatchObject({
+      expectedRevision: 1,
+      token: input().token,
+      reason: 'recheck',
+      verification: { threadsUserId: '1000', expiresAt: later(60) },
+    });
+    expect(result.accounts[0]).toMatchObject({
+      localState: 'synced',
+      localRevision: 2,
+      account: { validationStatus: 'reported_valid' },
+      lastCheck: { operation: 'recheck', result: 'success' },
+    });
+  });
+  it('leaves the server untouched when a re-check fails', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    f.meta.debugToken.mockRejectedValueOnce(
+      metaFailure('invalid_token', { detail: 'short_lived' }),
+    );
+    const result = await f.manager.recheck({ accountId: id });
+    expect(result.problem?.code).toBe('TOKEN_CHECK_FAILED');
+    expect(result.problem?.message).toContain('1시간짜리 단기 토큰');
+    expect(f.writes).toEqual(['POST']);
+    expect(result.accounts[0].lastCheck).toMatchObject({
+      operation: 'recheck',
+      result: 'invalid_token',
+      detail: 'short_lived',
+    });
+    expect((await f.manager.recheck({ accountId: 'missing' })).problem?.code).toBe('NOT_FOUND');
+    expect((await f.manager.recheck({ accountId: id, token: 'x' })).problem?.code).toBe(
+      'VALIDATION_FAILED',
+    );
+  });
+  async function nearExpiry() {
+    const f = await setup();
+    f.meta.debugToken.mockResolvedValueOnce({
+      userId: '1000',
+      expiresAt: later(10),
+      issuedAt: null,
+    });
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    return { ...f, id, refreshed: `${input().token}-refreshed` };
+  }
+  it('refreshes a verified token near expiry, storing the new token before sending it', async () => {
+    const f = await nearExpiry();
+    const original = f.fetcher.getMockImplementation()!;
+    let storedBeforePut: string | undefined;
+    f.fetcher.mockImplementation(async (url, init) => {
+      if (init?.method === 'PUT')
+        storedBeforePut = (await f.store.read(scope, 'a'))[0].pending?.token;
+      return original(url, init);
+    });
+    const result = await f.manager.refreshToken({ accountId: f.id });
+    expect(result.status).toBe('ok');
+    expect(f.meta.refreshToken).toHaveBeenCalledExactlyOnceWith(input().token);
+    expect(storedBeforePut).toBe(f.refreshed);
+    expect(last(f.bodies('PUT'))).toMatchObject({
+      token: f.refreshed,
+      reason: 'refresh',
+      verification: { threadsUserId: '1000', expiresAt: later(60) },
+    });
+    expect((await f.store.read(scope, 'a'))[0].syncedToken).toBe(f.refreshed);
+    expect(result.accounts[0]).toMatchObject({
+      account: { tokenRevision: 2, expiresAt: later(60) },
+      lastCheck: { operation: 'refresh', result: 'success', expiresAt: later(60) },
+    });
+    expect(await readFile(f.logPath, 'utf8')).not.toContain(f.refreshed);
+  });
+  it('refreshes only verified accounts inside the window', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    const outside = await f.manager.refreshToken({ accountId: id });
+    expect(outside.problem?.code).toBe('REFRESH_NOT_AVAILABLE');
+    expect(outside.problem?.message).toContain('14일 이내');
+    f.server.get(id)!.account.validationStatus = 'invalid';
+    f.server.get(id)!.account.expiresAt = later(3);
+    expect((await f.manager.refreshToken({ accountId: id })).problem?.code).toBe(
+      'REFRESH_NOT_AVAILABLE',
+    );
+    f.server.get(id)!.account.validationStatus = 'reported_valid';
+    f.server.get(id)!.account.expiresAt = later(-1);
+    expect((await f.manager.refreshToken({ accountId: id })).problem?.code).toBe(
+      'REFRESH_NOT_AVAILABLE',
+    );
+    expect(f.meta.refreshToken).not.toHaveBeenCalled();
+    expect(f.reservations).toHaveLength(1);
+  });
+  it('keeps a refreshed token the server did not receive and refuses to discard it', async () => {
+    const f = await nearExpiry();
+    f.reject(true);
+    const failed = await f.manager.refreshToken({ accountId: f.id });
+    expect(failed.problem?.code).toBe('SERVICE_UNAVAILABLE');
+    expect(failed.accounts[0]).toMatchObject({ localState: 'pending', pendingReason: 'refresh' });
+    expect((await f.store.read(scope, 'a'))[0].pending?.token).toBe(f.refreshed);
+    const locked = await f.manager.discardPending({ localId: failed.accounts[0].localId });
+    expect(locked.problem).toEqual({
+      code: 'REFRESH_PENDING_LOCKED',
+      message: '갱신한 토큰은 취소할 수 없습니다. [저장 재시도]로 서버에 저장해 주세요.',
+    });
+    expect((await f.store.read(scope, 'a'))[0].pending?.token).toBe(f.refreshed);
+    f.reject(false);
+    const retried = await f.manager.retry({ localId: failed.accounts[0].localId });
+    expect(retried.accounts[0]).toMatchObject({ localState: 'synced', pendingReason: null });
+    expect(f.server.get(f.id)!.token).toBe(f.refreshed);
+  });
+  it('allows discarding a refreshed token once the server has moved on', async () => {
+    const f = await nearExpiry();
+    f.reject(true);
+    const failed = await f.manager.refreshToken({ accountId: f.id });
+    f.reject(false);
+    f.server.get(f.id)!.token = 'other-pc-token';
+    f.server.get(f.id)!.account.tokenRevision = 2;
+    const discarded = await f.manager.discardPending({ localId: failed.accounts[0].localId });
+    expect(discarded.status).toBe('ok');
+    expect((await f.store.read(scope, 'a'))[0]).toMatchObject({
+      pending: null,
+      syncedToken: 'other-pc-token',
+    });
+  });
+  it('still sends a refreshed token when this PC cannot store it, and warns when neither can', async () => {
+    const f = await nearExpiry();
+    let failFinalSave = false;
+    const write = vi.fn(
+      async (service: string, owner: string, records: Parameters<typeof f.store.write>[2]) => {
+        if (
+          records.some(
+            (r) =>
+              r.pending?.reason === 'refresh' || (failFinalSave && r.syncedToken === f.refreshed),
+          )
+        )
+          throw new ManagedThreadsStorageError('STORAGE_WRITE_FAILED');
+        await f.store.write(service, owner, records);
+      },
+    );
+    const guarded = new ManagedThreadsManager(
+      f.client,
+      { read: f.store.read.bind(f.store), write },
+      scope,
+      f.options,
+    );
+    f.reject(true);
+    const lost = await guarded.refreshToken({ accountId: f.id });
+    expect(lost.problem?.code).toBe('TOKEN_REFRESH_UNSAVED');
+    expect(lost.problem?.message).toContain('[다시 확인]');
+    f.reject(false);
+    // The server accepted it but this PC still cannot save: the next sync downloads the token.
+    failFinalSave = true;
+    const unsynced = await guarded.refreshToken({ accountId: f.id });
+    expect(unsynced.problem?.code).toBe('LOCAL_SYNC_PENDING');
+    expect(f.server.get(f.id)!.token).toBe(f.refreshed);
+    expect((await f.manager.getAccounts()).accounts[0].localRevision).toBe(2);
+    expect((await f.store.read(scope, 'a'))[0].syncedToken).toBe(f.refreshed);
+    failFinalSave = false;
+    f.server.get(f.id)!.account.expiresAt = later(5);
+    const sent = await guarded.refreshToken({ accountId: f.id });
+    expect(sent.status).toBe('ok');
+    expect(f.server.get(f.id)!.token).toBe(`${f.refreshed}-refreshed`);
+    expect((await f.store.read(scope, 'a'))[0].syncedToken).toBe(`${f.refreshed}-refreshed`);
+  });
+  it('treats an unanswered refresh as uncertain and keeps the server token', async () => {
+    const f = await nearExpiry();
+    f.meta.refreshToken.mockRejectedValueOnce(metaFailure('timeout'));
+    const result = await f.manager.refreshToken({ accountId: f.id });
+    expect(result.problem?.code).toBe('TOKEN_REFRESH_FAILED');
+    expect(result.problem?.message).toContain('요청이 처리됐는지 알 수 없습니다');
+    expect(result.problem?.message).toContain('[다시 확인]');
+    expect(f.writes).toEqual(['POST']);
+    expect(f.outcomes).toEqual([]);
+    expect(result.accounts[0].lastCheck).toMatchObject({ operation: 'refresh', result: 'timeout' });
+  });
+  it('confirms a lost checked registration only if the server stored it as checked', async () => {
+    const f = await setup();
+    f.lose(true);
+    const failed = await f.manager.register(input());
+    f.lose(false);
+    const row = [...f.server.values()][0];
+    row.account.validationStatus = 'pending_validation';
+    row.account.expiresAt = null;
+    const retried = await f.manager.retry({ localId: failed.accounts[0].localId });
+    expect(retried.problem?.code).toBe('STALE_CREDENTIAL');
+    expect(retried.accounts[0].localState).toBe('conflict');
+    expect(f.writes).toEqual(['POST']);
   });
 });

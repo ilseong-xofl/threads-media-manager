@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import type { ManagedThreadsAccountRow, ManagedThreadsTokenCheck } from '../shared/managed-threads';
 import { displayDate } from './view-model';
 import { useManagedThreads } from './use-managed-threads';
 import { useToast } from './toast';
@@ -13,23 +13,129 @@ const localStatus: Record<ManagedThreadsAccountRow['localState'], string> = {
   missing: '서버 목록에서 계정을 찾을 수 없음',
 };
 
-function mobileStatus(row: ManagedThreadsAccountRow) {
-  if (!row.account) return '서버에 저장한 뒤 휴대폰에서 확인';
-  if (row.account.validationStatus === 'invalid') return '휴대폰에서 유효하지 않다고 보고됨';
-  if (row.account.validationStatus === 'reported_valid') return '휴대폰에서 확인했다고 보고됨';
-  return '휴대폰 확인 대기';
+const DAY_MS = 86_400_000;
+
+function tokenStatus(row: ManagedThreadsAccountRow) {
+  if (!row.account) return '서버 저장 후 확인';
+  if (row.account.validationStatus === 'invalid') return '사용할 수 없음';
+  if (row.account.validationStatus === 'reported_valid') return '확인됨';
+  return '확인 필요';
 }
 
-export function managedThreadsActionAvailability(row: ManagedThreadsAccountRow | null) {
+/** Whole days left, rounded up, so "14일 남음" is exactly when refresh opens; ≤ 0 is expired. */
+export function managedThreadsExpiryDays(expiresAt: string, now: number): number {
+  return Math.ceil((Date.parse(expiresAt) - now) / DAY_MS);
+}
+
+/** "m:ss 후 가능" under a Meta button while the server's request interval remains. */
+export function managedThreadsCooldownLabel(remainingMs: number): string | null {
+  if (!(remainingMs > 0)) return null;
+  const seconds = Math.ceil(remainingMs / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 후 가능`;
+}
+
+/** One login notice for verified accounts that expired or enter the refresh window. */
+export function managedThreadsExpiryNotice(
+  rows: ManagedThreadsAccountRow[],
+  refreshWindowDays: number,
+  now: number,
+): string | null {
+  const expired: string[] = [];
+  const soon: string[] = [];
+  for (const row of rows) {
+    const account = row.account;
+    if (!account?.expiresAt || account.validationStatus !== 'reported_valid' || row.pendingDeletion)
+      continue;
+    const days = managedThreadsExpiryDays(account.expiresAt, now);
+    if (Date.parse(account.expiresAt) <= now) expired.push(row.label);
+    else if (days <= refreshWindowDays) soon.push(`${row.label}(${days}일)`);
+  }
+  const parts = [
+    expired.length ? `만료됨: ${expired.join(', ')}` : null,
+    soon.length ? `${refreshWindowDays}일 이내 만료: ${soon.join(', ')}` : null,
+  ].filter(Boolean);
+  return parts.length
+    ? `토큰 만료를 확인해 주세요. ${parts.join(' / ')}. 계정 관리에서 갱신하거나 토큰을 교체할 수 있습니다.`
+    : null;
+}
+
+export function managedThreadsActionAvailability(
+  row: ManagedThreadsAccountRow | null,
+  now = Date.now(),
+  refreshWindowDays = 14,
+) {
+  const synced =
+    !!row?.account && row.localState === 'synced' && !row.pendingAction && !row.pendingDeletion;
+  const expiresAt = row?.account?.expiresAt ? Date.parse(row.account.expiresAt) : Number.NaN;
   return {
     // Names are independent of the token, so a pending token replacement does not block them.
     edit: !!row?.account && !row.pendingDeletion && row.localState !== 'missing',
     replace:
       !!row?.account && !row.pendingAction && !row.pendingDeletion && row.localState !== 'missing',
+    recheck: synced,
+    refresh:
+      synced &&
+      row!.account!.validationStatus === 'reported_valid' &&
+      !!row!.account!.threadsUserId &&
+      expiresAt > now &&
+      expiresAt <= now + refreshWindowDays * DAY_MS,
     retry: !!row?.pendingAction && !row.pendingDeletion && row.localState === 'pending',
-    discard: !!row?.pendingAction && !row.pendingDeletion,
+    // A refreshed token exists only in this pending change until the server stores it.
+    discard:
+      !!row?.pendingAction &&
+      !row.pendingDeletion &&
+      (row.pendingReason !== 'refresh' || row.localState !== 'pending'),
     remove: !!row?.account && !row.pendingAction && row.localState !== 'missing',
   };
+}
+
+const checkOperation: Record<ManagedThreadsTokenCheck['operation'], string> = {
+  register: '등록',
+  replace: '토큰 교체',
+  recheck: '다시 확인',
+  refresh: '갱신',
+};
+const checkResult: Record<ManagedThreadsTokenCheck['result'], string> = {
+  success: '성공',
+  duplicate: '이미 등록된 Threads 계정',
+  mismatch: '다른 Threads 계정의 토큰',
+  invalid_token: '유효하지 않은 토큰',
+  rejected: 'Meta가 거절함',
+  network: '통신 실패(처리 여부 알 수 없음)',
+  not_sent: '요청을 보내지 못함',
+  timeout: '시간 초과(처리 여부 알 수 없음)',
+  bad_response: '응답을 확인하지 못함',
+};
+const checkDetail = {
+  expired: '만료됨',
+  short_lived: '남은 기간 24시간 미만(단기 토큰)',
+  permission: '토큰 정보 조회 권한 없음',
+};
+
+/** The last check of a row as labeled lines, shown in the summary and copied for support. */
+export function managedThreadsCheckLines(check: ManagedThreadsTokenCheck): string[] {
+  return [
+    `확인 시각: ${displayDate(check.at)}`,
+    `작업: ${checkOperation[check.operation]}`,
+    `결과: ${checkResult[check.result]}${check.detail ? ` · ${checkDetail[check.detail]}` : ''}`,
+    ...(check.expiresAt ? [`만료 일시: ${displayDate(check.expiresAt)}`] : []),
+    ...(check.httpStatus === null ? [] : [`HTTP 상태: ${check.httpStatus}`]),
+    ...(check.metaCode === null ? [] : [`Meta 코드: ${check.metaCode}`]),
+    ...(check.metaSubcode === null ? [] : [`하위 코드: ${check.metaSubcode}`]),
+    ...(check.metaType ? [`유형: ${check.metaType}`] : []),
+    ...(check.metaMessage ? [`메시지: ${check.metaMessage}`] : []),
+    ...(check.fbtraceId ? [`fbtrace_id: ${check.fbtraceId}`] : []),
+    ...(check.networkCode ? [`네트워크 코드: ${check.networkCode}`] : []),
+  ];
+}
+
+function MetaActionLabel({ children, cooldown }: { children: ReactNode; cooldown: string | null }) {
+  return (
+    <span className="managed-threads-meta-action">
+      <span>{children}</span>
+      {cooldown && <span className="managed-threads-cooldown">{cooldown}</span>}
+    </span>
+  );
 }
 
 export function ManagedThreadsAccountTable({
@@ -39,6 +145,7 @@ export function ManagedThreadsAccountTable({
   disabled,
   loaded,
   enabled,
+  now = Date.now(),
   onSelect,
 }: {
   rows: ManagedThreadsAccountRow[];
@@ -47,6 +154,7 @@ export function ManagedThreadsAccountTable({
   disabled: boolean;
   loaded: boolean;
   enabled: boolean;
+  now?: number;
   onSelect(localId: string): void;
 }) {
   return (
@@ -57,7 +165,6 @@ export function ManagedThreadsAccountTable({
           <col className="managed-threads-app-column" />
           <col className="managed-threads-id-column" />
           <col className="managed-threads-mobile-column" />
-          <col className="managed-threads-connection-column" />
           <col className="managed-threads-expiry-column" />
         </colgroup>
         <thead>
@@ -67,15 +174,14 @@ export function ManagedThreadsAccountTable({
             </th>
             <th scope="col">앱 이름</th>
             <th scope="col">Threads ID</th>
-            <th scope="col">휴대폰 토큰 확인</th>
-            <th scope="col">앱 연결 확인</th>
-            <th scope="col">보고된 만료 일시</th>
+            <th scope="col">토큰 확인</th>
+            <th scope="col">만료 일시</th>
           </tr>
         </thead>
         <tbody>
           {!rows.length && (
             <tr>
-              <td colSpan={6} className="managed-threads-empty">
+              <td colSpan={5} className="managed-threads-empty">
                 {!enabled ? (
                   <p role="status">서비스 로그인 후 계정을 확인할 수 있습니다.</p>
                 ) : !loaded ? (
@@ -134,9 +240,7 @@ export function ManagedThreadsAccountTable({
                   className="managed-threads-cell-detail"
                   title={row.account?.threadsUserId ?? undefined}
                 >
-                  {row.account?.threadsUserId
-                    ? `확인 ID: ${row.account.threadsUserId}`
-                    : '휴대폰 확인 전'}
+                  {row.account?.threadsUserId ? `확인 ID: ${row.account.threadsUserId}` : '확인 전'}
                 </span>
               </td>
               <td>
@@ -144,25 +248,21 @@ export function ManagedThreadsAccountTable({
                   className={`managed-threads-phone-state managed-threads-phone-${row.account?.validationStatus ?? 'pending_validation'}`}
                 >
                   <span aria-hidden="true" className="managed-threads-state-dot" />
-                  {mobileStatus(row)}
-                </span>
-              </td>
-              <td>
-                <span
-                  className={
-                    row.account?.appIdVerified
-                      ? 'managed-threads-verified'
-                      : 'managed-threads-muted'
-                  }
-                >
-                  {row.account?.appIdVerified ? '휴대폰 확인 보고 있음' : '확인되지 않음'}
+                  {tokenStatus(row)}
                 </span>
               </td>
               <td className="managed-threads-expiry">
                 {row.account?.expiresAt ? (
-                  displayDate(row.account.expiresAt)
+                  <>
+                    {displayDate(row.account.expiresAt)}
+                    <span className="managed-threads-cell-detail">
+                      {Date.parse(row.account.expiresAt) <= now
+                        ? '만료됨'
+                        : `${managedThreadsExpiryDays(row.account.expiresAt, now)}일 남음`}
+                    </span>
+                  </>
                 ) : (
-                  <span className="managed-threads-muted">휴대폰 확인 전</span>
+                  <span className="managed-threads-muted">확인 전</span>
                 )}
               </td>
             </tr>
@@ -350,15 +450,28 @@ export function ManagedThreadsAccountSettings({
   const [discarding, setDiscarding] = useState<ManagedThreadsAccountRow | null>(null);
   const [deleting, setDeleting] = useState<ManagedThreadsAccountRow | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
   const actionOpener = useRef<HTMLElement | null>(null);
   const disabled = !enabled || accounts.busy || !accounts.loaded;
   const editing = enabled && (registering || !!replacing);
   const visibleAccounts = enabled ? accounts.accounts : [];
   const selected = visibleAccounts.find((row) => row.localId === selectedId) ?? null;
-  const available = managedThreadsActionAvailability(selected);
+  const available = managedThreadsActionAvailability(selected, clock, accounts.refreshWindowDays);
   const actionDialogOpen = editing || !!renaming || !!discarding || !!deleting;
   const actionDisabled = disabled || actionDialogOpen;
+  // Shared by every Meta request button: the server allows one per employee per interval.
+  const cooldown = managedThreadsCooldownLabel(accounts.cooldownUntil - clock);
   const headingId = titleId ?? `${id}-title`;
+  useEffect(() => {
+    setClock(Date.now());
+    if (accounts.cooldownUntil <= Date.now()) return;
+    const timer = window.setInterval(() => {
+      const current = Date.now();
+      setClock(current);
+      if (current >= accounts.cooldownUntil) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [accounts.cooldownUntil]);
   useEffect(() => {
     if (enabled) return;
     setToken('');
@@ -395,7 +508,7 @@ export function ManagedThreadsAccountSettings({
     if (ok) closeForm();
   }
   async function save() {
-    if (disabled) return;
+    if (disabled || cooldown) return;
     const problem = managedThreadsInputProblem({ appName, label, token }, registering);
     if (problem) {
       notify({ message: problem, error: true });
@@ -437,14 +550,19 @@ export function ManagedThreadsAccountSettings({
           <button
             type="button"
             className="primary"
-            disabled={actionDisabled}
+            disabled={actionDisabled || !!cooldown}
             onClick={(event) => {
               actionOpener.current = event.currentTarget;
               closeForm();
               setRegistering(true);
             }}
           >
-            <span aria-hidden="true">＋</span> 계정 추가
+            <MetaActionLabel cooldown={cooldown}>
+              <span aria-hidden="true" className="managed-threads-plus">
+                ＋
+              </span>{' '}
+              계정 추가
+            </MetaActionLabel>
           </button>
           <button
             type="button"
@@ -456,7 +574,7 @@ export function ManagedThreadsAccountSettings({
         </div>
       </div>
       <p className="managed-threads-intro">
-        계정을 선택하면 정보 수정·토큰 교체·삭제와 보류된 작업을 관리할 수 있습니다.
+        계정을 선택하면 정보 수정·토큰 교체·다시 확인·갱신·삭제와 보류된 작업을 관리할 수 있습니다.
       </p>
       <div className="managed-threads-selected-actions" role="group" aria-label="선택 계정 작업">
         <span className="managed-threads-actions-label">선택 계정</span>
@@ -477,7 +595,7 @@ export function ManagedThreadsAccountSettings({
         </button>
         <button
           type="button"
-          disabled={actionDisabled || !available.replace}
+          disabled={actionDisabled || !available.replace || !!cooldown}
           onClick={(event) => {
             if (selected) {
               actionOpener.current = event.currentTarget;
@@ -486,7 +604,25 @@ export function ManagedThreadsAccountSettings({
             }
           }}
         >
-          토큰 교체
+          <MetaActionLabel cooldown={cooldown}>토큰 교체</MetaActionLabel>
+        </button>
+        <button
+          type="button"
+          disabled={actionDisabled || !available.recheck || !!cooldown}
+          onClick={() => {
+            if (selected?.account) void accounts.recheck({ accountId: selected.account.id });
+          }}
+        >
+          <MetaActionLabel cooldown={cooldown}>다시 확인</MetaActionLabel>
+        </button>
+        <button
+          type="button"
+          disabled={actionDisabled || !available.refresh || !!cooldown}
+          onClick={() => {
+            if (selected?.account) void accounts.refreshToken({ accountId: selected.account.id });
+          }}
+        >
+          <MetaActionLabel cooldown={cooldown}>갱신</MetaActionLabel>
         </button>
         <button
           type="button"
@@ -536,6 +672,11 @@ export function ManagedThreadsAccountSettings({
               {discarding.appName} · {discarding.label}
             </strong>
             <p>이 PC에 보류된 입력만 버립니다. 서버에 이미 저장된 계정과 토큰은 유지됩니다.</p>
+            {discarding.pendingReason === 'refresh' && (
+              <p>
+                서버 정보가 바뀌어 보내지 못한 갱신 토큰도 함께 버리고 서버의 토큰을 사용합니다.
+              </p>
+            )}
           </div>
           <div className="threads-actions managed-threads-dialog-actions">
             <button type="button" disabled={disabled} onClick={() => setDiscarding(null)}>
@@ -586,14 +727,17 @@ export function ManagedThreadsAccountSettings({
               onTokenChange={setToken}
             />
             <p>
-              입력한 토큰은 암호화하여 저장한 뒤 지워집니다. 기존 토큰은 화면에 표시하지 않습니다.
+              저장하기 전에 이 PC가 Meta에 토큰을 확인합니다. 입력한 토큰은 암호화하여 저장한 뒤
+              지워지며, 기존 토큰은 화면에 표시하지 않습니다.
             </p>
             <div className="threads-actions managed-threads-dialog-actions">
               <button type="button" disabled={disabled} onClick={closeForm}>
                 취소
               </button>
-              <button type="submit" className="primary" disabled={disabled}>
-                {accounts.busy ? '저장 중…' : '암호화하여 저장'}
+              <button type="submit" className="primary" disabled={disabled || !!cooldown}>
+                <MetaActionLabel cooldown={cooldown}>
+                  {accounts.busy ? '확인·저장 중…' : '확인하고 암호화하여 저장'}
+                </MetaActionLabel>
               </button>
             </div>
           </form>
@@ -625,9 +769,7 @@ export function ManagedThreadsAccountSettings({
               onLabelChange={setLabel}
               onTokenChange={() => {}}
             />
-            <p>
-              이름은 계정을 구분하는 표시용입니다. 토큰과 휴대폰 연결·확인 상태는 바뀌지 않습니다.
-            </p>
+            <p>이름은 계정을 구분하는 표시용입니다. 토큰과 확인 상태는 바뀌지 않습니다.</p>
             <div className="threads-actions managed-threads-dialog-actions">
               <button type="button" disabled={disabled} onClick={closeForm}>
                 취소
@@ -663,6 +805,7 @@ export function ManagedThreadsAccountSettings({
         disabled={actionDisabled}
         loaded={accounts.loaded}
         enabled={enabled}
+        now={clock}
         onSelect={setSelectedId}
       />
       <div className="managed-threads-selection-summary" aria-live="polite">
@@ -687,11 +830,52 @@ export function ManagedThreadsAccountSettings({
                 필요하면 새 토큰을 등록하세요.
               </p>
             ) : selected.localState === 'pending' ? (
-              <p>암호화한 입력을 이 PC에 보관했습니다. 저장 재시도는 직접 실행해 주세요.</p>
+              <p>
+                {selected.pendingReason === 'refresh'
+                  ? '갱신한 새 토큰을 이 PC에 보관했습니다. 서버에 저장될 때까지 취소할 수 없으니 [저장 재시도]를 실행해 주세요.'
+                  : '암호화한 입력을 이 PC에 보관했습니다. 저장 재시도는 직접 실행해 주세요.'}
+              </p>
             ) : selected.localState === 'missing' ? (
               <p>서버 목록에서 계정을 찾을 수 없습니다. 서버와 동기화하여 상태를 확인해 주세요.</p>
             ) : (
-              <p>이 계정의 토큰 확인·갱신은 연결된 휴대폰에서 진행합니다.</p>
+              <p>
+                [다시 확인]은 저장된 토큰을 이 PC에서 Meta에 다시 확인합니다. [갱신]은 확인된 계정의
+                만료가 {accounts.refreshWindowDays}일 이내일 때 열립니다.
+              </p>
+            )}
+            {selected.lastCheck && (
+              <div className="managed-threads-last-check">
+                <ul aria-label="최근 토큰 확인 결과">
+                  {managedThreadsCheckLines(selected.lastCheck).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                {selected.lastCheck.result !== 'success' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = [
+                        `${selected.appName} · ${selected.label}`,
+                        ...managedThreadsCheckLines(selected.lastCheck!),
+                      ].join('\n');
+                      const failed = () =>
+                        notify({
+                          message: '오류 내용을 복사하지 못했습니다. 화면의 내용을 확인해 주세요.',
+                          error: true,
+                        });
+                      try {
+                        navigator.clipboard
+                          .writeText(text)
+                          .then(() => notify({ message: '오류 내용을 복사했습니다.' }), failed);
+                      } catch {
+                        failed();
+                      }
+                    }}
+                  >
+                    오류 내용 복사
+                  </button>
+                )}
+              </div>
             )}
           </>
         ) : (
@@ -703,9 +887,10 @@ export function ManagedThreadsAccountSettings({
           i
         </span>
         <p>
-          앱 이름은 구분용입니다. 실제 Threads 계정은 휴대폰에서 토큰으로 확인합니다.
+          앱 이름은 구분용입니다. 실제 Threads 계정은 이 PC가 Meta에 토큰을 확인해 구분합니다.
           <br />
-          토큰은 이 PC와 서버에 암호화하여 저장하며, 토큰 확인·갱신은 휴대폰에서 직접 처리합니다.
+          토큰 확인·갱신은 이 PC 프로그램이 Meta에 직접 요청하며, 직원마다 10분에 한 번(유효하지
+          않은 토큰이면 5분 뒤) 요청할 수 있습니다. 토큰은 이 PC와 서버에 암호화하여 저장합니다.
         </p>
       </div>
     </section>

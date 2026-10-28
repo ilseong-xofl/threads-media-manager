@@ -23,6 +23,30 @@ export interface DeletedManagedThreadsAccount {
   ownershipVersion?: number;
 }
 
+export type ManagedThreadsTokenOperation = 'register' | 'replace' | 'recheck' | 'refresh';
+/** Why a Meta token request (debug_token or refresh_access_token) did not succeed. */
+export type MetaTokenOutcome =
+  'invalid_token' | 'rejected' | 'network' | 'not_sent' | 'timeout' | 'bad_response';
+export type MetaTokenDetail = 'expired' | 'short_lived' | 'permission';
+/** Safe scalar facts from a Meta failure. Never contains a token or a request URL. */
+export interface MetaTokenFailureDetails {
+  detail: MetaTokenDetail | null;
+  httpStatus: number | null;
+  metaCode: number | null;
+  metaSubcode: number | null;
+  metaType: string | null;
+  metaMessage: string | null;
+  fbtraceId: string | null;
+  networkCode: string | null;
+}
+/** The latest PC token check of one row, read from the plaintext check log. */
+export interface ManagedThreadsTokenCheck extends MetaTokenFailureDetails {
+  at: string;
+  operation: ManagedThreadsTokenOperation;
+  result: 'success' | 'duplicate' | 'mismatch' | MetaTokenOutcome;
+  expiresAt: string | null;
+}
+
 export interface ManagedThreadsAccountRow {
   localId: string;
   label: string;
@@ -33,13 +57,18 @@ export interface ManagedThreadsAccountRow {
   localRevision: number | null;
   localState: 'synced' | 'pending' | 'conflict' | 'missing';
   pendingAction: 'create' | 'replace' | null;
+  pendingReason: 'replace' | 'recheck' | 'refresh' | null;
   pendingDeletion: boolean;
+  lastCheck: ManagedThreadsTokenCheck | null;
 }
 
 export interface ManagedThreadsResult {
   status: 'ok' | 'error';
   accounts: ManagedThreadsAccountRow[];
   problem: { code: string; message: string } | null;
+  /** Seconds until this employee may send the next Meta token request (server-enforced). */
+  metaRequestRetryAfterSeconds: number;
+  refreshWindowDays: number;
 }
 
 export interface RegisterManagedThreadsAccountInput {
@@ -52,7 +81,7 @@ export interface ReplaceManagedThreadsTokenInput {
   expectedRevision: number;
   token: string;
 }
-/** Display names only; the token and the phone check are unchanged. */
+/** Display names only; the token and its check state are unchanged. */
 export interface UpdateManagedThreadsAccountInput {
   accountId: string;
   label: string;
@@ -64,6 +93,10 @@ export interface DeleteManagedThreadsAccountInput {
 }
 export interface PendingManagedThreadsAccountInput {
   localId: string;
+}
+/** Re-check or refresh the stored token of one synchronized account. */
+export interface ManagedThreadsTokenActionInput {
+  accountId: string;
 }
 
 export interface ManagedThreadsMethods {
@@ -78,6 +111,10 @@ export interface ManagedThreadsMethods {
   updateManagedThreadsAccount(
     input: UpdateManagedThreadsAccountInput,
   ): Promise<ManagedThreadsResult>;
+  recheckManagedThreadsAccount(
+    input: ManagedThreadsTokenActionInput,
+  ): Promise<ManagedThreadsResult>;
+  refreshManagedThreadsToken(input: ManagedThreadsTokenActionInput): Promise<ManagedThreadsResult>;
   retryManagedThreadsAccount(
     input: PendingManagedThreadsAccountInput,
   ): Promise<ManagedThreadsResult>;

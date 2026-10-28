@@ -3,6 +3,8 @@ import type {
   ManagedThreadsAccount,
   ManagedThreadsAccountRow,
   ManagedThreadsResult,
+  ManagedThreadsTokenCheck,
+  ManagedThreadsTokenOperation,
 } from '../shared/managed-threads';
 import { ServiceApiError, type ServiceApiClient, type ServiceBusinessContext } from './service-api';
 import {
@@ -18,19 +20,50 @@ import {
   validToken,
   type ManagedThreadsRecord,
 } from './managed-threads-store';
+import {
+  MetaTokenError,
+  metaTokenFailureSummary,
+  type MetaTokenClient,
+  type MetaTokenFailure,
+} from './meta-token-client';
+import type { MetaTokenLog } from './meta-token-log';
 
 type Client = Pick<
   ServiceApiClient,
   'getBusinessContext' | 'assertBusinessContext' | 'managedThreadsRequest'
 >;
 type Store = Pick<EncryptedManagedThreadsStore, 'read' | 'write'>;
+export interface ManagedThreadsOptions {
+  meta: Pick<MetaTokenClient, 'debugToken' | 'refreshToken'>;
+  log: Pick<MetaTokenLog, 'append' | 'latest'>;
+  now?: () => number;
+  refreshWindowDays?: number;
+}
+type Pending = NonNullable<ManagedThreadsRecord['pending']>;
+type Synced = ManagedThreadsRecord & { account: ManagedThreadsAccount; syncedToken: string };
+type Checked<T> =
+  { value: T; failure?: undefined } | { value?: undefined; failure: MetaTokenFailure };
+const DAY_MS = 86_400_000;
+const DEFAULT_REFRESH_WINDOW_DAYS = 14;
+
+/** Packaged builds always use 14 days; a development run may change it for real-account checks. */
+export function tokenRefreshWindowDays(packaged: boolean, value: string | undefined): number {
+  if (packaged || !value || !/^\d{1,2}$/.test(value)) return DEFAULT_REFRESH_WINDOW_DAYS;
+  const days = Number(value);
+  return days >= 1 && days <= 60 ? days : DEFAULT_REFRESH_WINDOW_DAYS;
+}
+
 class ManagedProblem extends Error {
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    /** Replaces the fixed message, e.g. with the Meta failure summary or a duplicate's name. */
+    readonly detail?: string,
+  ) {
     super(code);
   }
 }
-const fail = (code: string): never => {
-  throw new ManagedProblem(code);
+const fail = (code: string, detail?: string): never => {
+  throw new ManagedProblem(code, detail);
 };
 const messages: Record<string, string> = {
   STALE_LIFECYCLE: '계정 상태나 담당자가 변경되었습니다. 최신 상태에서 다시 선택해 주세요.',
@@ -61,8 +94,28 @@ const messages: Record<string, string> = {
   STORAGE_WRITE_FAILED: '계정 정보를 안전하게 저장하지 못했습니다. 다시 시도해 주세요.',
   LOCAL_SYNC_PENDING:
     '서버에는 반영되었지만 로컬 저장을 완료하지 못했습니다. 목록을 새로고침해 주세요.',
+  META_REQUEST_COOLDOWN:
+    'Meta 토큰 요청 간격이 남아 있습니다. 버튼 아래 남은 시간이 지난 뒤 다시 시도해 주세요.',
+  ACCOUNT_BUSY:
+    '휴대폰에서 이 계정으로 등록 중인 글이 있습니다. 등록이 끝난 뒤 다시 시도해 주세요.',
+  DUPLICATE_ACCOUNT: '이미 등록된 Threads 계정입니다. 같은 계정은 한 번만 등록할 수 있습니다.',
+  ACCOUNT_MISMATCH: '이 계정에 등록된 Threads 계정과 다른 계정의 토큰입니다.',
+  ACCOUNT_IDENTITY_MISMATCH: '이 계정에 등록된 Threads 계정과 다른 계정의 토큰입니다.',
+  ALREADY_REGISTERED: '이미 다른 곳에 등록된 Threads 계정입니다. 관리자에게 확인해 주세요.',
+  TOKEN_CHECK_FAILED: '토큰을 확인하지 못했습니다. 서버의 계정 정보는 바뀌지 않았습니다.',
+  TOKEN_CHECK_FAILED_SAVED: '토큰을 확인하지 못해 "확인 필요"로 저장했습니다.',
+  TOKEN_REFRESH_FAILED: '토큰을 갱신하지 못했습니다. 서버의 토큰은 바뀌지 않았습니다.',
+  TOKEN_REFRESH_UNSAVED:
+    '갱신한 토큰을 이 PC에 저장하지 못했고 서버 저장도 확인하지 못해 새 토큰이 사라졌을 수 있습니다. 요청 간격이 지난 뒤 [다시 확인]으로 기존 토큰을 확인하고, 유효하지 않으면 토큰을 교체해 주세요.',
+  REFRESH_PENDING_LOCKED: '갱신한 토큰은 취소할 수 없습니다. [저장 재시도]로 서버에 저장해 주세요.',
+  PENDING_CHANGE:
+    '보류된 변경이 있습니다. 저장을 재시도하거나 보류를 취소한 뒤 다시 시도해 주세요.',
+  REFRESH_NOT_AVAILABLE: '확인됨 상태이고 만료가 가까운(만료 전) 계정만 갱신할 수 있습니다.',
 };
-function rows(records: ManagedThreadsRecord[]): ManagedThreadsAccountRow[] {
+function rows(
+  records: ManagedThreadsRecord[],
+  checks: Map<string, ManagedThreadsTokenCheck>,
+): ManagedThreadsAccountRow[] {
   return records.map((r) => ({
     localId: r.localId,
     label: r.label,
@@ -74,7 +127,9 @@ function rows(records: ManagedThreadsRecord[]): ManagedThreadsAccountRow[] {
       r.syncedRevision === undefined ? (r.account?.tokenRevision ?? null) : r.syncedRevision,
     localState: r.missing ? 'missing' : r.conflict ? 'conflict' : r.pending ? 'pending' : 'synced',
     pendingAction: r.pending?.action ?? null,
+    pendingReason: r.pending?.reason ?? null,
     pendingDeletion: r.pendingDeletion !== null,
+    lastCheck: checks.get(r.localId) ?? null,
   }));
 }
 function accountFrom(value: unknown, owner: string): ManagedThreadsAccount {
@@ -93,11 +148,44 @@ function objectInput(value: unknown, keys: string[]): Record<string, unknown> {
 export class ManagedThreadsManager {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly revocationChecks = new Map<string, Promise<void>>();
+  private readonly meta: ManagedThreadsOptions['meta'];
+  private readonly log: ManagedThreadsOptions['log'];
+  private readonly now: () => number;
+  private readonly refreshWindowDays: number;
+  /** Local clock deadline of the server's per-employee Meta request interval. */
+  private metaGate: { ownerId: string; availableAt: number } | null = null;
   constructor(
     private readonly client: Client,
     private readonly store: Store,
     private readonly serviceScope: string,
-  ) {}
+    options: ManagedThreadsOptions,
+  ) {
+    this.meta = options.meta;
+    this.log = options.log;
+    this.now = options.now ?? Date.now;
+    this.refreshWindowDays = options.refreshWindowDays ?? DEFAULT_REFRESH_WINDOW_DAYS;
+  }
+  private noteRetryAfter(context: ServiceBusinessContext, seconds: unknown): void {
+    if (!Number.isSafeInteger(seconds) || (seconds as number) < 0 || (seconds as number) > 86_400)
+      fail('INVALID_RESPONSE');
+    this.metaGate = {
+      ownerId: context.ownerId,
+      availableAt: this.now() + (seconds as number) * 1000,
+    };
+  }
+  private retryAfter(ownerId: string | undefined): number {
+    if (!ownerId || this.metaGate?.ownerId !== ownerId) return 0;
+    return Math.max(0, Math.ceil((this.metaGate.availableAt - this.now()) / 1000));
+  }
+  private async rows(ownerId: string, records: ManagedThreadsRecord[]) {
+    let checks = new Map<string, ManagedThreadsTokenCheck>();
+    try {
+      checks = await this.log.latest(ownerId);
+    } catch {
+      // An unreadable check log only hides the last check result.
+    }
+    return rows(records, checks);
+  }
   private run(
     work: (context: ServiceBusinessContext, records: ManagedThreadsRecord[]) => Promise<void>,
   ): Promise<ManagedThreadsResult> {
@@ -118,8 +206,10 @@ export class ManagedThreadsManager {
         this.client.assertBusinessContext(context);
         return {
           status: 'ok',
-          accounts: rows(records),
+          accounts: await this.rows(context.ownerId, records),
           problem: null,
+          metaRequestRetryAfterSeconds: this.retryAfter(context.ownerId),
+          refreshWindowDays: this.refreshWindowDays,
         };
       } catch (error) {
         let code =
@@ -128,24 +218,32 @@ export class ManagedThreadsManager {
           error instanceof ManagedThreadsStorageError
             ? error.code
             : 'SERVICE_UNAVAILABLE';
+        let detail = error instanceof ManagedProblem ? error.detail : undefined;
         let accounts: ManagedThreadsAccountRow[] = [];
         if (context) {
           try {
             this.client.assertBusinessContext(context);
-            accounts = rows(await this.store.read(this.serviceScope, context.ownerId));
+            const stored = await this.store.read(this.serviceScope, context.ownerId);
             this.client.assertBusinessContext(context);
+            accounts = await this.rows(context.ownerId, stored);
           } catch (readError) {
             accounts = [];
-            if (readError instanceof ServiceApiError) code = readError.code;
+            if (readError instanceof ServiceApiError) {
+              code = readError.code;
+              detail = undefined;
+            }
           }
         }
+        const known = Object.hasOwn(messages, code);
         return {
           status: 'error',
           accounts,
           problem: {
-            code: Object.hasOwn(messages, code) ? code : 'SERVICE_UNAVAILABLE',
-            message: messages[code] ?? messages.SERVICE_UNAVAILABLE,
+            code: known ? code : 'SERVICE_UNAVAILABLE',
+            message: known ? (detail ?? messages[code]) : messages.SERVICE_UNAVAILABLE,
           },
+          metaRequestRetryAfterSeconds: this.retryAfter(context?.ownerId),
+          refreshWindowDays: this.refreshWindowDays,
         };
       }
     };
@@ -174,6 +272,10 @@ export class ManagedThreadsManager {
       value.deletedAccounts.length > 100000
     )
       fail('INVALID_RESPONSE');
+    // Absent until the server database has the request interval table; then no wait applies.
+    const metaRequest = (value as Record<string, unknown>).metaRequest;
+    if (metaRequest !== undefined && !isObject(metaRequest)) fail('INVALID_RESPONSE');
+    this.noteRetryAfter(context, isObject(metaRequest) ? metaRequest.retryAfterSeconds : 0);
     let deleted: ReturnType<typeof parseDeletedManagedAccount>[];
     try {
       deleted = (value as { deletedAccounts: unknown[] }).deletedAccounts.map(
@@ -330,9 +432,13 @@ export class ManagedThreadsManager {
           fail('INVALID_RESPONSE');
         const pending = record.pending;
         if (pending) {
+          // A checked token must also have reached the server as checked, with the same expiry.
           const confirmed =
             token === pending.token &&
-            (pending.action === 'create' || account.tokenRevision > pending.expectedRevision!);
+            (pending.action === 'create' || account.tokenRevision > pending.expectedRevision!) &&
+            (!pending.verification ||
+              (account.validationStatus === 'reported_valid' &&
+                account.expiresAt === pending.verification.expiresAt));
           if (confirmed) {
             record.pending = null;
             record.conflict = false;
@@ -378,20 +484,45 @@ export class ManagedThreadsManager {
       fail('LIFECYCLE_CONFLICT');
     if (record.legacyAppId !== null) fail('LEGACY_REGISTRATION_PENDING');
     if (record.conflict || record.missing) fail('STALE_CREDENTIAL');
-    const value =
-      pending.action === 'create'
-        ? await this.client.managedThreadsRequest(context, 'create', undefined, {
-            label: record.label,
-            registrationId: record.registrationId,
-            appName: record.appName,
-            token: pending.token,
-          })
-        : await this.client.managedThreadsRequest(context, 'replace', record.account!.id, {
-            expectedRevision: pending.expectedRevision,
-            token: pending.token,
-            expectedOwnershipVersion: pending.expectedOwnershipVersion ?? 1,
-            expectedLifecycleVersion: pending.expectedLifecycleVersion ?? 1,
-          });
+    const checked = pending.verification ? { verification: pending.verification } : {};
+    let value: unknown;
+    try {
+      value =
+        pending.action === 'create'
+          ? await this.client.managedThreadsRequest(context, 'create', undefined, {
+              label: record.label,
+              registrationId: record.registrationId,
+              appName: record.appName,
+              token: pending.token,
+              ...checked,
+            })
+          : await this.client.managedThreadsRequest(context, 'replace', record.account!.id, {
+              expectedRevision: pending.expectedRevision,
+              token: pending.token,
+              expectedOwnershipVersion: pending.expectedOwnershipVersion ?? 1,
+              expectedLifecycleVersion: pending.expectedLifecycleVersion ?? 1,
+              ...checked,
+              ...(pending.reason ? { reason: pending.reason } : {}),
+            });
+    } catch (error) {
+      if (
+        error instanceof ServiceApiError &&
+        ['ALREADY_REGISTERED', 'ACCOUNT_IDENTITY_MISMATCH'].includes(error.code)
+      ) {
+        // The server refuses this Threads account itself, so resending the same input cannot help.
+        // ACCOUNT_BUSY is different: the pending input stays for an explicit retry.
+        if (pending.action === 'create') {
+          const index = records.indexOf(record);
+          if (index >= 0) records.splice(index, 1);
+        } else {
+          record.pending = null;
+          record.conflict = false;
+        }
+        await this.save(context, records);
+        fail(error.code);
+      }
+      throw error;
+    }
     if (!isObject(value)) fail('INVALID_RESPONSE');
     const account = accountFrom((value as Record<string, unknown>).account, context.ownerId);
     if (
@@ -425,6 +556,151 @@ export class ManagedThreadsManager {
       fail('LOCAL_SYNC_PENDING');
     }
   }
+  /**
+   * Every Meta token request shares one server-enforced interval per employee: the caller has just
+   * synchronized, so a remaining interval refuses before any reservation or Meta request.
+   */
+  private async requestMeta<T>(
+    context: ServiceBusinessContext,
+    records: ManagedThreadsRecord[],
+    accountId: string | null,
+    request: () => Promise<T>,
+  ): Promise<Checked<T>> {
+    if (this.retryAfter(context.ownerId) > 0) fail('META_REQUEST_COOLDOWN');
+    let reserved: unknown;
+    try {
+      reserved = await this.client.managedThreadsRequest(
+        context,
+        'meta-reserve',
+        undefined,
+        accountId ? { accountId } : {},
+      );
+    } catch (error) {
+      // Another PC of this employee reserved first; read the interval for the button countdown.
+      if (error instanceof ServiceApiError && error.code === 'META_REQUEST_COOLDOWN')
+        await this.listAndPurgeDeleted(context, records).catch(() => undefined);
+      throw error;
+    }
+    const reservation =
+      isObject(reserved) && isObject(reserved.reservation) ? reserved.reservation : null;
+    if (!reservation || !validId(reservation.id)) return fail('INVALID_RESPONSE');
+    this.noteRetryAfter(context, reservation.retryAfterSeconds);
+    try {
+      return { value: await request() };
+    } catch (error) {
+      const failure: MetaTokenFailure =
+        error instanceof MetaTokenError
+          ? error.failure
+          : {
+              outcome: 'network',
+              detail: null,
+              httpStatus: null,
+              metaCode: null,
+              metaSubcode: null,
+              metaType: null,
+              metaMessage: null,
+              fbtraceId: null,
+              networkCode: null,
+            };
+      // Success keeps the full interval and needs no report.
+      if (failure.outcome === 'invalid_token' || failure.outcome === 'not_sent')
+        try {
+          const reported = await this.client.managedThreadsRequest(
+            context,
+            'meta-outcome',
+            reservation.id,
+            { outcome: failure.outcome },
+          );
+          if (isObject(reported)) this.noteRetryAfter(context, reported.retryAfterSeconds);
+        } catch {
+          // Best effort: an unreported outcome only keeps the longer interval.
+        }
+      return { failure };
+    }
+  }
+  /** Plaintext troubleshooting record without the token; its failure never blocks the action. */
+  private async logCheck(
+    context: ServiceBusinessContext,
+    target: {
+      localId: string;
+      account: ManagedThreadsAccount | null;
+      appName: string;
+      label: string;
+    },
+    operation: ManagedThreadsTokenOperation,
+    result: ManagedThreadsTokenCheck['result'],
+    facts: { expiresAt?: string; failure?: MetaTokenFailure },
+  ): Promise<void> {
+    const failure = facts.failure;
+    await this.log
+      .append({
+        at: new Date(this.now()).toISOString(),
+        ownerId: context.ownerId,
+        operation,
+        localId: target.localId,
+        accountId: target.account?.id ?? null,
+        appName: target.appName,
+        label: target.label,
+        result,
+        expiresAt: facts.expiresAt ?? null,
+        detail: failure?.detail ?? null,
+        httpStatus: failure?.httpStatus ?? null,
+        metaCode: failure?.metaCode ?? null,
+        metaSubcode: failure?.metaSubcode ?? null,
+        metaType: failure?.metaType ?? null,
+        metaMessage: failure?.metaMessage ?? null,
+        fbtraceId: failure?.fbtraceId ?? null,
+        networkCode: failure?.networkCode ?? null,
+      })
+      .catch(() => undefined);
+  }
+  /** Meta's user ID identifies the Threads account (per Meta app); a name never does. */
+  private async checkIdentity(
+    context: ServiceBusinessContext,
+    records: ManagedThreadsRecord[],
+    target: ManagedThreadsRecord,
+    operation: ManagedThreadsTokenOperation,
+    checked: { userId: string; expiresAt: string },
+  ): Promise<void> {
+    const known = target.account?.threadsUserId;
+    const other = records.find(
+      (r) =>
+        r !== target &&
+        (r.account?.threadsUserId === checked.userId ||
+          r.pending?.verification?.threadsUserId === checked.userId),
+    );
+    const result = known && known !== checked.userId ? 'mismatch' : other ? 'duplicate' : 'success';
+    await this.logCheck(context, target, operation, result, { expiresAt: checked.expiresAt });
+    if (result === 'mismatch') fail('ACCOUNT_MISMATCH');
+    if (other)
+      fail(
+        'DUPLICATE_ACCOUNT',
+        `이미 등록된 Threads 계정입니다(${other.appName} · ${other.label}). 같은 계정은 한 번만 등록할 수 있습니다.`,
+      );
+  }
+  private syncedTarget(records: ManagedThreadsRecord[], accountId: unknown): Synced {
+    const target = records.find((r) => r.account?.id === accountId);
+    if (!target?.account || target.missing || !target.syncedToken) return fail('NOT_FOUND');
+    if (target.pendingDeletion) fail('DELETION_PENDING');
+    if (target.pending || target.conflict) fail('PENDING_CHANGE');
+    return target as Synced;
+  }
+  private replacement(
+    account: ManagedThreadsAccount,
+    token: string,
+    reason: NonNullable<Pending['reason']>,
+    verification?: Pending['verification'],
+  ): Pending {
+    return {
+      action: 'replace',
+      token,
+      expectedRevision: account.tokenRevision,
+      expectedOwnershipVersion: account.ownershipVersion ?? 1,
+      expectedLifecycleVersion: account.lifecycleVersion ?? 1,
+      ...(verification ? { verification } : {}),
+      reason,
+    };
+  }
   getAccounts(): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
       await this.refresh(context, records);
@@ -446,11 +722,16 @@ export class ManagedThreadsManager {
     this.revocationChecks.set(key, check);
     return check;
   }
+  /**
+   * The token is checked with Meta before anything is stored. A failed check still registers the
+   * account as unverified so the row can show the cause and offer [다시 확인] with the same token.
+   */
   register(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
       const data = objectInput(input, ['label', 'appName', 'token']);
       if (!validLabel(data.label) || !validLabel(data.appName) || !validToken(data.token))
         fail('VALIDATION_FAILED');
+      const token = data.token as string;
       const record: ManagedThreadsRecord = {
         localId: randomUUID(),
         label: (data.label as string).trim(),
@@ -460,19 +741,40 @@ export class ManagedThreadsManager {
         legacyAppId: null,
         account: null,
         syncedToken: null,
-        pending: { action: 'create', token: data.token as string, expectedRevision: null },
+        pending: { action: 'create', token, expectedRevision: null },
         pendingDeletion: null,
         conflict: false,
         missing: false,
       };
+      await this.refresh(context, records);
+      const checked = await this.requestMeta(context, records, null, () =>
+        this.meta.debugToken(token),
+      );
+      if (checked.failure)
+        await this.logCheck(context, record, 'register', checked.failure.outcome, checked);
+      else {
+        await this.checkIdentity(context, records, record, 'register', checked.value);
+        record.pending = {
+          action: 'create',
+          token,
+          expectedRevision: null,
+          verification: { threadsUserId: checked.value.userId, expiresAt: checked.value.expiresAt },
+        };
+      }
       records.push(record);
       await this.save(context, records);
-      await this.refresh(context, records);
-      const current = records.find((r) => r.localId === record.localId);
-      if (!current) fail('ACCOUNT_REMOVED');
-      await this.send(context, records, current!);
+      await this.send(context, records, record);
+      if (checked.failure)
+        fail(
+          'TOKEN_CHECK_FAILED_SAVED',
+          `토큰을 확인하지 못해 계정을 "확인 필요"로 저장했습니다. ${metaTokenFailureSummary(checked.failure)}`,
+        );
     });
   }
+  /**
+   * A failed check of a verified account's new token leaves the server and its working token as
+   * they are; an unverified account stores the new token as unverified, like a registration.
+   */
   replace(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
       const data = objectInput(input, ['accountId', 'expectedRevision', 'token']);
@@ -483,24 +785,126 @@ export class ManagedThreadsManager {
         !validToken(data.token)
       )
         fail('VALIDATION_FAILED');
+      const token = data.token as string;
+      await this.refresh(context, records);
       const record = records.find((r) => r.account?.id === data.accountId);
-      if (!record || record.missing) fail('NOT_FOUND');
-      const target = record!;
+      if (!record?.account || record.missing) return fail('NOT_FOUND');
+      const target = record as ManagedThreadsRecord & { account: ManagedThreadsAccount };
       if (target.pendingDeletion) fail('DELETION_PENDING');
-      if (target.account!.tokenRevision !== data.expectedRevision) fail('STALE_CREDENTIAL');
-      target.pending = {
-        action: 'replace',
-        token: data.token as string,
-        expectedRevision: data.expectedRevision as number,
-        expectedOwnershipVersion: target.account!.ownershipVersion ?? 1,
-        expectedLifecycleVersion: target.account!.lifecycleVersion ?? 1,
-      };
+      if (target.pending?.reason === 'refresh') fail('REFRESH_PENDING_LOCKED');
+      if (target.account.tokenRevision !== data.expectedRevision) fail('STALE_CREDENTIAL');
+      const checked = await this.requestMeta(context, records, target.account.id, () =>
+        this.meta.debugToken(token),
+      );
+      if (checked.failure) {
+        await this.logCheck(context, target, 'replace', checked.failure.outcome, checked);
+        if (target.account.validationStatus === 'reported_valid')
+          fail(
+            'TOKEN_CHECK_FAILED',
+            `새 토큰을 확인하지 못해 서버의 기존 토큰을 그대로 두었습니다. ${metaTokenFailureSummary(checked.failure)}`,
+          );
+        target.pending = this.replacement(target.account, token, 'replace');
+      } else {
+        await this.checkIdentity(context, records, target, 'replace', checked.value);
+        target.pending = this.replacement(target.account, token, 'replace', {
+          threadsUserId: checked.value.userId,
+          expiresAt: checked.value.expiresAt,
+        });
+      }
       target.conflict = false;
       await this.save(context, records);
+      await this.send(context, records, target);
+      if (checked.failure)
+        fail(
+          'TOKEN_CHECK_FAILED_SAVED',
+          `새 토큰을 확인하지 못해 "확인 필요"로 저장했습니다. ${metaTokenFailureSummary(checked.failure)}`,
+        );
+    });
+  }
+  /** Checks the stored token again; only a successful check changes the server (revision + 1). */
+  recheck(input: unknown): Promise<ManagedThreadsResult> {
+    return this.run(async (context, records) => {
+      const data = objectInput(input, ['accountId']);
+      if (!validId(data.accountId)) fail('VALIDATION_FAILED');
       await this.refresh(context, records);
-      const current = records.find((r) => r.localId === target.localId);
-      if (!current) fail('ACCOUNT_REMOVED');
-      await this.send(context, records, current!);
+      const target = this.syncedTarget(records, data.accountId);
+      const token = target.syncedToken;
+      const checked = await this.requestMeta(context, records, target.account.id, () =>
+        this.meta.debugToken(token),
+      );
+      if (checked.failure) {
+        await this.logCheck(context, target, 'recheck', checked.failure.outcome, checked);
+        return fail(
+          'TOKEN_CHECK_FAILED',
+          `토큰을 확인하지 못했습니다. 서버의 계정 상태는 바뀌지 않았습니다. ${metaTokenFailureSummary(checked.failure)}`,
+        );
+      }
+      await this.checkIdentity(context, records, target, 'recheck', checked.value);
+      target.pending = this.replacement(target.account, token, 'recheck', {
+        threadsUserId: checked.value.userId,
+        expiresAt: checked.value.expiresAt,
+      });
+      await this.save(context, records);
+      await this.send(context, records, target);
+    });
+  }
+  /**
+   * Manual refresh of one verified account close to expiry. Meta returns a new token only once, so
+   * it is stored locally first and then sent; one of the two copies must survive.
+   */
+  refreshToken(input: unknown): Promise<ManagedThreadsResult> {
+    return this.run(async (context, records) => {
+      const data = objectInput(input, ['accountId']);
+      if (!validId(data.accountId)) fail('VALIDATION_FAILED');
+      await this.refresh(context, records);
+      const target = this.syncedTarget(records, data.accountId);
+      const account = target.account;
+      const threadsUserId = account.threadsUserId;
+      const expiresAt = account.expiresAt === null ? Number.NaN : Date.parse(account.expiresAt);
+      const now = this.now();
+      if (
+        account.validationStatus !== 'reported_valid' ||
+        !threadsUserId ||
+        !(expiresAt > now && expiresAt <= now + this.refreshWindowDays * DAY_MS)
+      )
+        return fail(
+          'REFRESH_NOT_AVAILABLE',
+          `확인됨 상태이고 만료까지 ${this.refreshWindowDays}일 이내(만료 전)인 계정만 갱신할 수 있습니다.`,
+        );
+      const checked = await this.requestMeta(context, records, account.id, () =>
+        this.meta.refreshToken(target.syncedToken),
+      );
+      if (checked.failure) {
+        const { outcome } = checked.failure;
+        await this.logCheck(context, target, 'refresh', outcome, checked);
+        return fail(
+          'TOKEN_REFRESH_FAILED',
+          outcome === 'timeout' || outcome === 'network'
+            ? `${metaTokenFailureSummary(checked.failure)} 서버의 토큰은 그대로입니다. 요청 간격이 지난 뒤 [다시 확인]으로 기존 토큰을 확인해 주세요.`
+            : `토큰을 갱신하지 못했습니다. 서버의 토큰은 그대로입니다. ${metaTokenFailureSummary(checked.failure)}`,
+        );
+      }
+      await this.logCheck(context, target, 'refresh', 'success', {
+        expiresAt: checked.value.expiresAt,
+      });
+      target.pending = this.replacement(account, checked.value.token, 'refresh', {
+        threadsUserId,
+        expiresAt: checked.value.expiresAt,
+      });
+      let saved = true;
+      try {
+        // Not bound to the login: this is the owner's only copy of the new token until it is sent.
+        await this.store.write(this.serviceScope, context.ownerId, records);
+      } catch {
+        saved = false;
+      }
+      try {
+        await this.send(context, records, target);
+      } catch (error) {
+        // send() clears the pending change only once the server has accepted the new token.
+        if (!saved && target.pending) fail('TOKEN_REFRESH_UNSAVED');
+        throw error;
+      }
     });
   }
   /**
@@ -636,6 +1040,10 @@ export class ManagedThreadsManager {
       if (index < 0) fail('NOT_FOUND');
       const record = records[index];
       if (record.pendingDeletion) fail('DELETION_PENDING');
+      // A refreshed token exists only here until the server stores it. Once the server has moved
+      // on (conflict) or lost the account, it can no longer be sent, so it may be discarded.
+      if (record.pending?.reason === 'refresh' && !record.conflict && !record.missing)
+        fail('REFRESH_PENDING_LOCKED');
       if (!record.account) records.splice(index, 1);
       else {
         record.pending = null;

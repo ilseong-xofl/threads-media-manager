@@ -62,7 +62,14 @@ async function setup() {
       throw new Error('Unexpected request');
     },
   );
-  const manager = new ManagedThreadsManager(client, store, scope);
+  // These policies never check a token; any Meta request would fail the test.
+  const unexpected = async (): Promise<never> => {
+    throw new Error('Unexpected Meta request');
+  };
+  const manager = new ManagedThreadsManager(client, store, scope, {
+    meta: { debugToken: unexpected, refreshToken: unexpected },
+    log: { append: async () => {}, latest: async () => new Map() },
+  });
   return {
     manager,
     store,

@@ -141,7 +141,8 @@ class WindowsReleaseTests(unittest.TestCase):
 
     def test_rejects_user_data_and_credentials_outside_asar(self):
         for name in ["lib/net45/resources/auth.json", "lib/net45/resources/state/state.db",
-                     "lib/net45/resources/.env", "lib/net45/resources/threads-account.json"]:
+                     "lib/net45/resources/.env", "lib/net45/resources/threads-account.json",
+                     "lib/net45/resources/meta-token-checks.log"]:
             with self.subTest(name=name):
                 self.build(extra={name: b"synthetic private fixture"})
                 with self.assertRaisesRegex(ValueError, "User data or credentials"):

@@ -6,6 +6,8 @@ const ok = (accounts: ManagedThreadsAccountRow[] = []): ManagedThreadsResult => 
   status: 'ok',
   accounts,
   problem: null,
+  metaRequestRetryAfterSeconds: 0,
+  refreshWindowDays: 14,
 });
 const row: ManagedThreadsAccountRow = {
   localId: 'local-1',
@@ -17,7 +19,9 @@ const row: ManagedThreadsAccountRow = {
   localRevision: null,
   localState: 'pending',
   pendingAction: 'create',
+  pendingReason: null,
   pendingDeletion: false,
+  lastCheck: null,
 };
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -32,6 +36,8 @@ function setup() {
     registerManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     replaceManagedThreadsToken: vi.fn().mockResolvedValue(ok()),
     updateManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
+    recheckManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
+    refreshManagedThreadsToken: vi.fn().mockResolvedValue(ok()),
     deleteManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     retryManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     discardPendingManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
@@ -58,6 +64,8 @@ describe('managed Threads account request lifecycle', () => {
       accounts: [],
       busy: false,
       loaded: true,
+      cooldownUntil: 0,
+      refreshWindowDays: 14,
     });
     expect(effects.notify).not.toHaveBeenCalled();
     expect(effects.onSyncing.mock.calls).toEqual([[true], [false]]);
@@ -116,6 +124,8 @@ describe('managed Threads account request lifecycle', () => {
       accounts: [],
       loaded: false,
       busy: false,
+      cooldownUntil: 0,
+      refreshWindowDays: 14,
     });
     controller.setEnabled(true);
     expect(api.getManagedThreadsAccounts).toHaveBeenCalledOnce();
@@ -197,8 +207,70 @@ describe('managed Threads account request lifecycle', () => {
       accounts: [],
       busy: false,
       loaded: false,
+      cooldownUntil: 0,
+      refreshWindowDays: 14,
     });
     expect(api.deleteManagedThreadsAccount).toHaveBeenCalledOnce();
     expect(effects.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('PC token checks in the account controller', () => {
+  it('keeps the Meta request countdown from every result, including errors', async () => {
+    const { api, controller } = setup();
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    controller.setEnabled(true);
+    await settle();
+    expect(controller.getSnapshot().cooldownUntil).toBe(0);
+    api.recheckManagedThreadsAccount.mockResolvedValueOnce({
+      ...ok([row]),
+      status: 'error',
+      problem: { code: 'TOKEN_CHECK_FAILED', message: '토큰을 확인하지 못했습니다.' },
+      metaRequestRetryAfterSeconds: 300,
+      refreshWindowDays: 60,
+    });
+    expect(await controller.recheck({ accountId: 'account-1' })).toBe(false);
+    expect(api.recheckManagedThreadsAccount).toHaveBeenCalledWith({ accountId: 'account-1' });
+    expect(controller.getSnapshot()).toMatchObject({
+      cooldownUntil: 1_300_000,
+      refreshWindowDays: 60,
+    });
+    api.getManagedThreadsAccounts.mockResolvedValueOnce(ok([row]));
+    await controller.synchronize();
+    expect(controller.getSnapshot().cooldownUntil).toBe(0);
+    vi.restoreAllMocks();
+  });
+  it('closes the form when a failed check still saved the account, but not otherwise', async () => {
+    const { api, controller, effects } = setup();
+    controller.setEnabled(true);
+    await settle();
+    api.registerManagedThreadsAccount.mockResolvedValueOnce({
+      ...ok([row]),
+      status: 'error',
+      problem: { code: 'TOKEN_CHECK_FAILED_SAVED', message: '"확인 필요"로 저장했습니다.' },
+    });
+    expect(
+      await controller.register({ label: '뷰티', appName: '뷰티 앱', token: 'synthetic-token' }),
+    ).toBe(true);
+    expect(effects.notify).toHaveBeenLastCalledWith('"확인 필요"로 저장했습니다.', true);
+    api.replaceManagedThreadsToken.mockResolvedValueOnce({
+      ...ok([row]),
+      status: 'error',
+      problem: { code: 'TOKEN_CHECK_FAILED', message: '기존 토큰을 그대로 두었습니다.' },
+    });
+    expect(
+      await controller.replace({ accountId: 'account-1', expectedRevision: 1, token: 'x' }),
+    ).toBe(false);
+  });
+  it('refreshes one account only through its explicit action', async () => {
+    const { api, controller, effects } = setup();
+    controller.setEnabled(true);
+    await settle();
+    expect(await controller.refreshToken({ accountId: 'account-1' })).toBe(true);
+    expect(api.refreshManagedThreadsToken).toHaveBeenCalledExactlyOnceWith({
+      accountId: 'account-1',
+    });
+    expect(effects.notify).toHaveBeenLastCalledWith('토큰을 갱신하고 새 만료 일시를 저장했습니다.');
+    expect(api.getManagedThreadsAccounts).toHaveBeenCalledOnce();
   });
 });

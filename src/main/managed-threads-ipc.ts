@@ -7,6 +7,8 @@ interface ManagedAccountActions {
   register(input: unknown): Promise<ManagedThreadsResult>;
   replace(input: unknown): Promise<ManagedThreadsResult>;
   update(input: unknown): Promise<ManagedThreadsResult>;
+  recheck(input: unknown): Promise<ManagedThreadsResult>;
+  refreshToken(input: unknown): Promise<ManagedThreadsResult>;
   retry(input: unknown): Promise<ManagedThreadsResult>;
   discardPending(input: unknown): Promise<ManagedThreadsResult>;
 }
@@ -31,6 +33,10 @@ export function handleManagedThreadsRequest(
       return manager.replace(args[0]);
     case IPC.updateManagedThreadsAccount:
       return manager.update(args[0]);
+    case IPC.recheckManagedThreadsAccount:
+      return manager.recheck(args[0]);
+    case IPC.refreshManagedThreadsToken:
+      return manager.refreshToken(args[0]);
     case IPC.retryManagedThreadsAccount:
       return manager.retry(args[0]);
     case IPC.discardPendingManagedThreadsAccount:

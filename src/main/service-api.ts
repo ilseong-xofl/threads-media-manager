@@ -202,11 +202,22 @@ export class ServiceApiClient {
     this.assertBusinessContext(context);
     return this.businessAbort.signal;
   }
-  /** Only the fixed account endpoints are available; no arbitrary URL or Meta transport. */
+  /**
+   * Only the fixed account endpoints are available; no arbitrary URL or Meta transport. `id` is the
+   * account ID, or the reservation ID for 'meta-outcome'.
+   */
   async managedThreadsRequest(
     context: ServiceBusinessContext,
-    operation: 'list' | 'create' | 'credential' | 'replace' | 'delete' | 'profile',
-    accountId?: string,
+    operation:
+      | 'list'
+      | 'create'
+      | 'credential'
+      | 'replace'
+      | 'delete'
+      | 'profile'
+      | 'meta-reserve'
+      | 'meta-outcome',
+    id?: string,
     body?: unknown,
   ): Promise<unknown> {
     this.assertBusinessContext(context);
@@ -214,25 +225,27 @@ export class ServiceApiClient {
     if ((await this.tokenStore.read()) !== saved.token)
       throw new ServiceApiError('로그인이 변경되었습니다.', 'AUTH_CHANGED', 401);
     this.assertBusinessContext(context);
-    const noId = ['list', 'create'];
-    const withId = ['credential', 'replace', 'delete', 'profile'];
+    const noId = ['list', 'create', 'meta-reserve'];
+    const withId = ['credential', 'replace', 'delete', 'profile', 'meta-outcome'];
     if (
       (!noId.includes(operation) && !withId.includes(operation)) ||
-      (withId.includes(operation) && !/^[A-Za-z0-9_-]{1,80}$/.test(accountId ?? '')) ||
-      (noId.includes(operation) && accountId !== undefined)
+      (withId.includes(operation) && !/^[A-Za-z0-9_-]{1,80}$/.test(id ?? '')) ||
+      (noId.includes(operation) && id !== undefined)
     )
       throw new ServiceApiError('요청 정보를 확인해 주세요.', 'VALIDATION_FAILED', 400);
     const path =
-      '/api/v1/threads/accounts' +
-      (accountId
-        ? `/${accountId}${operation === 'delete' ? '' : operation === 'profile' ? '/profile' : '/credential'}`
-        : '');
+      operation === 'meta-reserve' || operation === 'meta-outcome'
+        ? `/api/v1/threads/meta-requests${id ? `/${id}/outcome` : ''}`
+        : '/api/v1/threads/accounts' +
+          (id
+            ? `/${id}${operation === 'delete' ? '' : operation === 'profile' ? '/profile' : '/credential'}`
+            : '');
     const method =
       operation === 'replace'
         ? 'PUT'
         : operation === 'delete'
           ? 'DELETE'
-          : operation === 'create' || operation === 'profile'
+          : ['create', 'profile', 'meta-reserve', 'meta-outcome'].includes(operation)
             ? 'POST'
             : 'GET';
     const response = await this.request(path, method, saved.token, body);
@@ -267,6 +280,22 @@ export class ServiceApiClient {
         throw new ServiceApiError(
           '계정 상태가 변경되었습니다. 최신 상태를 확인해 주세요.',
           failure.error.code,
+          response.status,
+        );
+      // Token-check outcomes the manager explains individually; any other 409 stays generic.
+      if (
+        object(failure) &&
+        object(failure.error) &&
+        ((response.status === 429 && failure.error.code === 'META_REQUEST_COOLDOWN') ||
+          (response.status === 409 &&
+            typeof failure.error.code === 'string' &&
+            ['ACCOUNT_BUSY', 'ALREADY_REGISTERED', 'ACCOUNT_IDENTITY_MISMATCH'].includes(
+              failure.error.code,
+            )))
+      )
+        throw new ServiceApiError(
+          '계정 정보를 처리하지 못했습니다. 다시 확인해 주세요.',
+          failure.error.code as string,
           response.status,
         );
       const code =

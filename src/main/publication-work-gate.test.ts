@@ -11,6 +11,8 @@ describe('publication and local mutation barrier', () => {
     for (const mutation of [
       IPC.deleteManagedThreadsAccount,
       IPC.replaceManagedThreadsToken,
+      IPC.recheckManagedThreadsAccount,
+      IPC.refreshManagedThreadsToken,
       IPC.saveMediaEdit,
       IPC.deleteMedia,
       IPC.restoreDatabase,

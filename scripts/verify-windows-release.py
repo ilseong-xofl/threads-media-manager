@@ -20,7 +20,7 @@ EXE_NAME = "ThreadsMediaManager.exe"
 ASAR_NAME = "lib/net45/resources/app.asar"
 FORBIDDEN_NAMES = {
     "auth.json", "credentials.json", "threads-account.json", "file-server.json",
-    "threads-publishing.json", "view-settings.json", "accounts.xlsx",
+    "threads-publishing.json", "view-settings.json", "accounts.xlsx", "meta-token-checks.log",
 }
 
 

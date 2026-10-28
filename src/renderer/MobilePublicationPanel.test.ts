@@ -25,7 +25,9 @@ const row: ManagedThreadsAccountRow = {
   localRevision: 1,
   localState: 'synced',
   pendingAction: null,
+  pendingReason: null,
   pendingDeletion: false,
+  lastCheck: null,
   account: {
     id: 'account-one',
     ownerId: 'owner-one',

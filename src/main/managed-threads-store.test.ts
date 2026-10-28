@@ -212,6 +212,55 @@ describe('encrypted managed account store', () => {
     expect(await store.read('scope', 'a')).toEqual([deleting]);
     expect((await readFile(file)).toString()).not.toContain('private-token');
   });
+  it('keeps a checked pending token and its reason in file version 4 and rejects bad shapes', async () => {
+    const { file, cipher, store } = await setup();
+    const account = {
+      id: 'server-id',
+      ownerId: 'a',
+      label: '나의 계정',
+      registrationId: 'registration-checked',
+      appName: '앱',
+      appId: null,
+      threadsUserId: '1234',
+      validationStatus: 'reported_valid' as const,
+      appIdVerified: false,
+      tokenRevision: 3,
+      expiresAt: '2026-11-07T00:00:00.000Z',
+      createdAt: '2026-10-19T00:00:00.000Z',
+    };
+    const verification = { threadsUserId: '1234', expiresAt: '2026-12-27T00:00:00.000Z' };
+    const refreshed: ManagedThreadsRecord = {
+      ...record('checked', '앱'),
+      account,
+      syncedToken: 'old-private-token',
+      pending: {
+        action: 'replace',
+        token: 'refreshed-private-token',
+        expectedRevision: 3,
+        verification,
+        reason: 'refresh',
+      },
+    };
+    const created = {
+      ...record('created', '앱'),
+      pending: { ...record('created', '앱').pending!, verification },
+    };
+    await store.write('scope', 'a', [refreshed, created]);
+    expect(await store.read('scope', 'a')).toEqual([refreshed, created]);
+    const saved = JSON.parse(await cipher.decryptString(await readFile(file)));
+    expect(saved.version).toBe(4);
+    for (const pending of [
+      { ...refreshed.pending, reason: 'transfer' },
+      { ...refreshed.pending, verification: { ...verification, threadsUserId: 'me' } },
+      { ...refreshed.pending, verification: { ...verification, expiresAt: '2026-12-27' } },
+      { ...refreshed.pending, verification: { ...verification, token: 'x' } },
+      { ...created.pending, reason: 'replace' },
+    ])
+      await expect(
+        store.write('scope', 'a', [{ ...refreshed, pending } as ManagedThreadsRecord]),
+      ).rejects.toThrow('invalid pending');
+    expect(await store.read('scope', 'a')).toEqual([refreshed, created]);
+  });
   it('has no plaintext fallback if the OS keyring is unavailable', async () => {
     const { file, cipher } = await setup();
     cipher.isEncryptionAvailable = async () => false;

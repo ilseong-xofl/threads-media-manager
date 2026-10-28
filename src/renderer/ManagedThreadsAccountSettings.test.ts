@@ -1,13 +1,16 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, expect, it, vi } from 'vitest';
-import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { ManagedThreadsAccountRow, ManagedThreadsTokenCheck } from '../shared/managed-threads';
 import {
   ManagedThreadsAccountSettings,
   ManagedThreadsAccountFields,
   ManagedThreadsAccountTable,
   ManagedThreadsDeleteConfirmation,
   managedThreadsActionAvailability,
+  managedThreadsCheckLines,
+  managedThreadsCooldownLabel,
+  managedThreadsExpiryNotice,
   managedThreadsInputProblem,
   managedThreadsNameProblem,
 } from './ManagedThreadsAccountSettings';
@@ -38,13 +41,28 @@ const row: ManagedThreadsAccountRow = {
   localRevision: 1,
   localState: 'synced',
   pendingAction: null,
+  pendingReason: null,
   pendingDeletion: false,
+  lastCheck: null,
 };
-function mock(rows: ManagedThreadsAccountRow[] = [], busy = false, loaded = true) {
+const NOW = Date.parse('2026-10-28T00:00:00.000Z');
+const inDays = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
+const verified = (expiresAt: string | null): ManagedThreadsAccountRow => ({
+  ...row,
+  account: { ...server, validationStatus: 'reported_valid', threadsUserId: '777', expiresAt },
+});
+function mock(
+  rows: ManagedThreadsAccountRow[] = [],
+  busy = false,
+  loaded = true,
+  cooldownUntil = 0,
+) {
   vi.mocked(useManagedThreads).mockReturnValue({
     accounts: rows,
     busy,
     loaded,
+    cooldownUntil,
+    refreshWindowDays: 14,
     getSnapshot: vi.fn(),
     subscribe: vi.fn(),
     setEnabled: vi.fn(),
@@ -52,6 +70,8 @@ function mock(rows: ManagedThreadsAccountRow[] = [], busy = false, loaded = true
     register: vi.fn(),
     replace: vi.fn(),
     update: vi.fn(),
+    recheck: vi.fn(),
+    refreshToken: vi.fn(),
     remove: vi.fn(),
     retry: vi.fn(),
     discard: vi.fn(),
@@ -63,13 +83,18 @@ function render(enabled = true) {
 beforeEach(() => {
   mock();
 });
+afterEach(() => {
+  vi.useRealTimers();
+});
 
-it('distinguishes local synchronization from mobile validation', () => {
+it('distinguishes local synchronization from the PC token check', () => {
   mock([row]);
   const html = render();
   expect(html).toContain('서버와 동기화됨');
-  expect(html).toContain('휴대폰 확인 대기');
-  expect(html).toContain('토큰 확인·갱신은 휴대폰에서 직접');
+  expect(html).toContain('확인 필요');
+  expect(html).toContain('토큰 확인·갱신은 이 PC 프로그램이 Meta에 직접 요청');
+  expect(html).toContain('10분에 한 번');
+  expect(html).not.toContain('휴대폰에서');
   expect(html).toContain('토큰 교체');
   expect(html).not.toContain('지금 조회');
   expect(html).not.toContain('자동 갱신');
@@ -115,7 +140,7 @@ it('renders app name, Threads account name, and masked token in order without a 
   expect(html).not.toContain('App ID');
 });
 
-it('keeps same-name accounts separately visible and never treats names as app verification', () => {
+it('keeps same-name accounts separately visible', () => {
   mock([
     row,
     {
@@ -127,8 +152,6 @@ it('keeps same-name accounts separately visible and never treats names as app ve
   ]);
   const html = render();
   expect((html.match(/>뷰티 계정<\/strong>/g) ?? []).length).toBe(2);
-  expect((html.match(/확인되지 않음/g) ?? []).length).toBe(2);
-  expect(html).not.toContain('휴대폰 확인 보고 있음');
 });
 
 it('shows a stored actual Meta App ID only as read-only metadata when available', () => {
@@ -176,7 +199,10 @@ it('edits the two display names before the token actions, independent of a pendi
   mock([row]);
   const html = render();
   expect(html.indexOf('>정보 수정</button>')).toBeGreaterThan(-1);
-  expect(html.indexOf('>정보 수정</button>')).toBeLessThan(html.indexOf('>토큰 교체</button>'));
+  // Meta buttons wrap their label so the request countdown can sit under it.
+  expect(html.indexOf('>정보 수정</button>')).toBeLessThan(html.indexOf('>토큰 교체</span>'));
+  expect(html.indexOf('>토큰 교체</span>')).toBeLessThan(html.indexOf('>다시 확인</span>'));
+  expect(html.indexOf('>다시 확인</span>')).toBeLessThan(html.indexOf('>갱신</span>'));
   expect(managedThreadsActionAvailability(row).edit).toBe(true);
   expect(
     managedThreadsActionAvailability({ ...row, pendingAction: 'replace', localState: 'pending' })
@@ -218,25 +244,26 @@ it('does not offer re-upload for conflicted changes or missing server accounts',
   });
 });
 
-it('labels validation as a phone report and keeps App ID verification separate', () => {
-  mock([
-    {
-      ...row,
-      account: {
-        ...server,
-        validationStatus: 'reported_valid',
-        threadsUserId: '777',
-        expiresAt: '2026-11-19T00:00:00.000Z',
-      },
-    },
-  ]);
+it('labels a checked token with its expiry', () => {
+  vi.useFakeTimers({ now: NOW });
+  mock([verified(inDays(21.5))]);
   const html = render();
-  expect(html).toContain('휴대폰에서 확인했다고 보고됨');
-  expect(html).toContain('확인되지 않음');
-  expect(html).toContain('777');
+  expect(html).toContain('확인됨');
   expect(html).toContain('확인 ID: 777');
   expect(html).toContain('title="뷰티 계정"');
-  expect(html).toContain('보고된 만료 일시');
+  expect(html).toContain('만료 일시');
+  expect(html).toContain('22일 남음');
+  mock([
+    verified(inDays(-1)),
+    { ...row, localId: 'invalid', account: { ...server, validationStatus: 'invalid' } },
+    { ...row, localId: 'unsaved', account: null, pendingAction: 'create', localState: 'pending' },
+  ]);
+  const states = render();
+  expect(states).toContain('만료됨');
+  expect(states).toContain('사용할 수 없음');
+  expect(states).toContain('서버 저장 후 확인');
+  expect(states).toContain('확인 전');
+  expect(states).not.toContain('휴대폰');
 });
 
 it('locks actions while disconnected or busy without showing secret values', () => {
@@ -249,7 +276,7 @@ it('locks actions while disconnected or busy without showing secret values', () 
   mock([row], true);
   const busy = render();
   expect(busy).toContain('동기화 중…');
-  expect((busy.match(/<button[^>]*disabled=""/g) ?? []).length).toBe(7);
+  expect((busy.match(/<button[^>]*disabled=""/g) ?? []).length).toBe(9);
   expect(busy).toContain('type="radio"');
   expect(busy).toContain('disabled=""');
 });
@@ -308,7 +335,7 @@ it('renders an empty list without token or publishing controls', () => {
   expect(html).toContain('등록된 Threads 계정이 없습니다.');
   expect(html).toContain('계정 추가');
   expect(html).toContain('선택된 계정이 없습니다.');
-  expect(html).toContain('colSpan="6"');
+  expect(html).toContain('colSpan="5"');
   expect(html).not.toContain('API 업로드');
 });
 
@@ -349,12 +376,126 @@ it('provides the dialog title, table column headers, and a stable selected radio
       onSelect: vi.fn(),
     }),
   );
-  expect((html.match(/scope="col"/g) ?? []).length).toBe(6);
+  expect((html.match(/scope="col"/g) ?? []).length).toBe(5);
   expect(html).toContain('앱 이름');
   expect(html).toContain('Threads ID');
-  expect(html).toContain('휴대폰 토큰 확인');
-  expect(html).toContain('앱 연결 확인');
-  expect(html).toContain('보고된 만료 일시');
+  expect(html).toContain('>토큰 확인</th>');
+  expect(html).not.toContain('앱 연결 확인');
+  expect(html).toContain('>만료 일시</th>');
+  expect(html).not.toContain('휴대폰 토큰 확인');
+  expect(html).not.toContain('보고된 만료 일시');
   expect((html.match(/checked=""/g) ?? []).length).toBe(1);
   expect((html.match(/managed-threads-row-selected/g) ?? []).length).toBe(1);
+});
+
+it('shows the shared Meta request countdown under every Meta button and disables them', () => {
+  vi.useFakeTimers({ now: NOW });
+  mock([row], false, true, NOW + 125_000);
+  const html = render();
+  expect((html.match(/2:05 후 가능/g) ?? []).length).toBe(4);
+  for (const label of ['계정 추가', '토큰 교체', '다시 확인', '갱신'])
+    expect(html).toMatch(new RegExp(`<button[^>]*disabled=""[^>]*>(?:(?!</button>).)*${label}`));
+  expect(managedThreadsCooldownLabel(0)).toBeNull();
+  expect(managedThreadsCooldownLabel(-5)).toBeNull();
+  expect(managedThreadsCooldownLabel(1)).toBe('0:01 후 가능');
+  expect(managedThreadsCooldownLabel(59_001)).toBe('1:00 후 가능');
+  expect(managedThreadsCooldownLabel(600_000)).toBe('10:00 후 가능');
+});
+
+it('offers re-check on any synchronized account and refresh only near a verified expiry', () => {
+  const available = (value: ManagedThreadsAccountRow, days = 14) =>
+    managedThreadsActionAvailability(value, NOW, days);
+  expect(available(row)).toMatchObject({ recheck: true, refresh: false });
+  expect(available(verified(inDays(10)))).toMatchObject({ recheck: true, refresh: true });
+  expect(available(verified(inDays(14)))).toMatchObject({ refresh: true });
+  expect(available(verified(inDays(14.5)))).toMatchObject({ refresh: false });
+  expect(available(verified(inDays(14.5)), 30)).toMatchObject({ refresh: true });
+  expect(available(verified(inDays(-0.1)))).toMatchObject({ recheck: true, refresh: false });
+  expect(available(verified(null))).toMatchObject({ refresh: false });
+  for (const blocked of [
+    { ...verified(inDays(3)), pendingAction: 'replace' as const, localState: 'pending' as const },
+    { ...verified(inDays(3)), pendingDeletion: true },
+    { ...verified(inDays(3)), localState: 'missing' as const },
+    { ...verified(inDays(3)), localState: 'conflict' as const },
+  ])
+    expect(available(blocked)).toMatchObject({ recheck: false, refresh: false });
+  const refreshing = {
+    ...verified(inDays(3)),
+    pendingAction: 'replace' as const,
+    pendingReason: 'refresh' as const,
+    localState: 'pending' as const,
+  };
+  expect(available(refreshing)).toMatchObject({ retry: true, discard: false, replace: false });
+  expect(available({ ...refreshing, localState: 'conflict' })).toMatchObject({ discard: true });
+});
+
+it('lists the last token check with codes for copying and labels each field', () => {
+  const check: ManagedThreadsTokenCheck = {
+    at: '2026-10-28T01:02:00.000Z',
+    operation: 'recheck',
+    result: 'invalid_token',
+    detail: null,
+    expiresAt: null,
+    httpStatus: 400,
+    metaCode: 190,
+    metaSubcode: 463,
+    metaType: 'OAuthException',
+    metaMessage: 'Session has expired',
+    fbtraceId: 'trace-1',
+    networkCode: null,
+  };
+  expect(managedThreadsCheckLines(check)).toEqual([
+    '확인 시각: 2026. 10. 28. 10:02',
+    '작업: 다시 확인',
+    '결과: 유효하지 않은 토큰',
+    'HTTP 상태: 400',
+    'Meta 코드: 190',
+    '하위 코드: 463',
+    '유형: OAuthException',
+    '메시지: Session has expired',
+    'fbtrace_id: trace-1',
+  ]);
+  expect(
+    managedThreadsCheckLines({
+      ...check,
+      operation: 'refresh',
+      result: 'not_sent',
+      detail: null,
+      httpStatus: null,
+      metaCode: null,
+      metaSubcode: null,
+      metaType: null,
+      metaMessage: null,
+      fbtraceId: null,
+      networkCode: 'ENOTFOUND',
+    }).slice(1),
+  ).toEqual(['작업: 갱신', '결과: 요청을 보내지 못함', '네트워크 코드: ENOTFOUND']);
+  expect(managedThreadsCheckLines({ ...check, detail: 'short_lived' })[2]).toBe(
+    '결과: 유효하지 않은 토큰 · 남은 기간 24시간 미만(단기 토큰)',
+  );
+});
+
+it('builds one login notice for verified accounts that expired or expire within the window', () => {
+  const named = (label: string, value: ManagedThreadsAccountRow) => ({
+    ...value,
+    localId: label,
+    label,
+  });
+  expect(
+    managedThreadsExpiryNotice(
+      [
+        named('지난', verified(inDays(-2))),
+        named('임박', verified(inDays(2.5))),
+        named('경계', verified(inDays(14))),
+        named('여유', verified(inDays(30))),
+        named('미확인', { ...row, account: { ...server, expiresAt: inDays(1) } }),
+        named('삭제 중', { ...verified(inDays(1)), pendingDeletion: true }),
+      ],
+      14,
+      NOW,
+    ),
+  ).toBe(
+    '토큰 만료를 확인해 주세요. 만료됨: 지난 / 14일 이내 만료: 임박(3일), 경계(14일). 계정 관리에서 갱신하거나 토큰을 교체할 수 있습니다.',
+  );
+  expect(managedThreadsExpiryNotice([verified(inDays(30)), row], 14, NOW)).toBeNull();
 });

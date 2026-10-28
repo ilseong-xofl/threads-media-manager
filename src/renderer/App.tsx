@@ -38,6 +38,7 @@ import { parseAICaptionResponse } from './ai-caption-response';
 import './registration.css';
 import { SettingsModal } from './SettingsModal';
 import { AccountManagementModal } from './AccountManagementModal';
+import { managedThreadsExpiryNotice } from './ManagedThreadsAccountSettings';
 import { AppAccountMenu } from './AppAccountMenu';
 import './settings.css';
 import { useThreadsApi } from './use-threads-api';
@@ -119,6 +120,30 @@ export function App({
     statuses: MobilePublicationStatus[];
   } | null>(null);
   const [statusRequest, setStatusRequest] = useState(0);
+  // App remounts per signed-in user, so this reminds once per login, not on service flickers.
+  const expiryNoticeChecked = useRef(false);
+  useEffect(() => {
+    if (!serviceAvailable || expiryNoticeChecked.current) return;
+    expiryNoticeChecked.current = true;
+    window.threadsMedia.getManagedThreadsAccounts().then(
+      (result) => {
+        const message = managedThreadsExpiryNotice(
+          result.accounts,
+          result.refreshWindowDays,
+          Date.now(),
+        );
+        if (message)
+          setActionNotice({
+            message,
+            error: true,
+            action: { label: '계정 관리', onClick: () => setAccountsOpen(true) },
+          });
+      },
+      () => {
+        expiryNoticeChecked.current = false;
+      },
+    );
+  }, [serviceAvailable, setActionNotice]);
   const statusLibrary =
     libraryTab === 'registered' && !registration && serviceAvailable
       ? (view.snapshot?.libraryId ?? '')

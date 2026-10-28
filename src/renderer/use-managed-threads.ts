@@ -4,6 +4,7 @@ import type {
   ManagedThreadsAccountRow,
   ManagedThreadsMethods,
   ManagedThreadsResult,
+  ManagedThreadsTokenActionInput,
   PendingManagedThreadsAccountInput,
   RegisterManagedThreadsAccountInput,
   ReplaceManagedThreadsTokenInput,
@@ -15,6 +16,9 @@ export interface ManagedThreadsViewState {
   accounts: ManagedThreadsAccountRow[];
   busy: boolean;
   loaded: boolean;
+  /** Local-clock time when the next Meta token request is allowed; 0 when it already is. */
+  cooldownUntil: number;
+  refreshWindowDays: number;
 }
 
 /** Keeps stale IPC responses from restoring account metadata after the service lock closes. */
@@ -25,8 +29,13 @@ export function createManagedThreadsController(
     onSyncing(working: boolean): void;
   },
 ) {
-  const emptyMetadata = { accounts: [] };
-  let state: ManagedThreadsViewState = { ...emptyMetadata, busy: false, loaded: false };
+  const emptyMetadata = { accounts: [], cooldownUntil: 0 };
+  let state: ManagedThreadsViewState = {
+    ...emptyMetadata,
+    busy: false,
+    loaded: false,
+    refreshWindowDays: 14,
+  };
   let enabled = false;
   let pending = false;
   let generation = 0;
@@ -51,13 +60,18 @@ export function createManagedThreadsController(
       const result = await action();
       if (!enabled || request !== generation) return false;
       const authChanged = ['AUTH_CHANGED', 'AUTH_REQUIRED'].includes(result.problem?.code ?? '');
+      // Every result, including errors, carries the server's remaining Meta request interval.
+      const wait = result.metaRequestRetryAfterSeconds;
       update({
         accounts: authChanged ? [] : result.accounts,
         loaded: true,
+        cooldownUntil: Number.isFinite(wait) && wait > 0 ? Date.now() + wait * 1000 : 0,
+        refreshWindowDays: result.refreshWindowDays,
       });
       if (result.status !== 'ok') {
         effects.notify(result.problem?.message ?? '계정 정보를 저장하지 못했습니다.', true);
-        return false;
+        // The account was stored as "확인 필요", so the input form closes as on success.
+        return result.problem?.code === 'TOKEN_CHECK_FAILED_SAVED';
       }
       if (message) effects.notify(message);
       return true;
@@ -107,19 +121,31 @@ export function createManagedThreadsController(
     register(input: RegisterManagedThreadsAccountInput) {
       return run(
         () => api.registerManagedThreadsAccount(input),
-        '계정 정보를 암호화하여 저장했습니다. 토큰 확인은 휴대폰에서 진행합니다.',
+        '토큰을 확인하고 계정 정보를 암호화하여 저장했습니다.',
       );
     },
     replace(input: ReplaceManagedThreadsTokenInput) {
       return run(
         () => api.replaceManagedThreadsToken(input),
-        '새 토큰을 암호화하여 저장했습니다. 휴대폰에서 다시 확인해 주세요.',
+        '새 토큰을 확인하고 암호화하여 저장했습니다.',
       );
     },
     update(input: UpdateManagedThreadsAccountInput) {
       return run(
         () => api.updateManagedThreadsAccount(input),
-        '계정 정보를 수정했습니다. 토큰과 휴대폰 연결은 그대로입니다.',
+        '계정 정보를 수정했습니다. 토큰과 확인 상태는 그대로입니다.',
+      );
+    },
+    recheck(input: ManagedThreadsTokenActionInput) {
+      return run(
+        () => api.recheckManagedThreadsAccount(input),
+        '토큰을 다시 확인해 "확인됨"으로 저장했습니다.',
+      );
+    },
+    refreshToken(input: ManagedThreadsTokenActionInput) {
+      return run(
+        () => api.refreshManagedThreadsToken(input),
+        '토큰을 갱신하고 새 만료 일시를 저장했습니다.',
       );
     },
     remove(input: DeleteManagedThreadsAccountInput) {
@@ -157,6 +183,10 @@ export function useManagedThreads(enabled: boolean, onSyncing?: (working: boolea
           window.threadsMedia.replaceManagedThreadsToken(input),
         updateManagedThreadsAccount: (input) =>
           window.threadsMedia.updateManagedThreadsAccount(input),
+        recheckManagedThreadsAccount: (input) =>
+          window.threadsMedia.recheckManagedThreadsAccount(input),
+        refreshManagedThreadsToken: (input) =>
+          window.threadsMedia.refreshManagedThreadsToken(input),
         deleteManagedThreadsAccount: (input) =>
           window.threadsMedia.deleteManagedThreadsAccount(input),
         retryManagedThreadsAccount: (input) =>

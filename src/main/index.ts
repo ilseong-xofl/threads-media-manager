@@ -19,9 +19,11 @@ import { cleanupPublicationOutbox } from './publication-outbox';
 import { mobilePublicationBlocks } from './publication-work-gate';
 import { validPublicationJournal, type PublicationJournal } from './mobile-publication-data';
 import { ServiceAccess } from './service-access';
-import { ManagedThreadsManager } from './managed-threads';
+import { ManagedThreadsManager, tokenRefreshWindowDays } from './managed-threads';
 import { EncryptedManagedThreadsStore } from './managed-threads-store';
 import { handleManagedThreadsRequest } from './managed-threads-ipc';
+import { createMetaTokenClient } from './meta-token-client';
+import { MetaTokenLog } from './meta-token-log';
 import squirrelStartup from 'electron-squirrel-startup';
 import { configureRuntime } from './runtime';
 import { configureAutoUpdates } from './updates';
@@ -430,6 +432,15 @@ const managedThreads = new ManagedThreadsManager(
     decryptString: encryption.decryptString,
   }),
   serviceOrigin ?? 'unconfigured',
+  {
+    // The only desktop Meta transport: debug_token and refresh_access_token, run from main.
+    meta: createMetaTokenClient(),
+    log: new MetaTokenLog(join(app.getPath('userData'), 'meta-token-checks.log')),
+    refreshWindowDays: tokenRefreshWindowDays(
+      app.isPackaged,
+      process.env.TMM_TOKEN_REFRESH_WINDOW_DAYS,
+    ),
+  },
 );
 let managedAccountOperations = 0;
 let managedAccountMutations = 0;
@@ -464,7 +475,8 @@ async function mutateAuth(action: () => Promise<AppAuthState>): Promise<AppAuthS
     authMutation = false;
   }
 }
-// Legacy account/history code remains readable, but no desktop Meta request is permitted.
+// The legacy single-account client stays disabled: no desktop publishing, statistics or legacy
+// token calls. Managed accounts check and refresh tokens only through meta-token-client above.
 const threadsClient = createDesktopThreadsClient();
 const threadsAccounts = new ThreadsAccountManager({
   userData: app.getPath('userData'),
@@ -858,6 +870,9 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           }
           if (channel === IPC.signOut) {
             if (args.length) throw new Error('Unexpected arguments');
+            // A refreshed token must reach this PC or the server before the session ends.
+            if (managedAccountMutations > 0)
+              throw new Error('계정 관리 작업이 끝난 뒤 로그아웃할 수 있습니다.');
             return mutateAuth(() => serviceClient.signOut());
           }
           if (authMutation) throw new Error('로그인 상태를 확인 중입니다.');
@@ -1372,7 +1387,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       powerMonitor.on('resume', () => {
         if (!updateQuitting && !authMutation) void serviceAccess.check();
       });
-      // Desktop token refresh and statistics scheduling are intentionally stopped.
+      // No scheduled desktop Meta work: managed-account refresh is manual, statistics stay stopped.
       app.on('activate', () => {
         if (!window) createWindow();
       });

@@ -327,6 +327,71 @@ describe('service login boundary reused from local-video-manager', () => {
       client.managedThreadsRequest(context, 'create', undefined, {}),
     ).rejects.toMatchObject({ code: 'REMOTE_CONFLICT' });
   });
+  it('reserves and reports Meta token requests only on the fixed service paths', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json(account))
+      .mockResolvedValueOnce(json({ reservation: { id: 'reservation-1', retryAfterSeconds: 600 } }))
+      .mockResolvedValueOnce(json({ retryAfterSeconds: 300 }));
+    const client = new ServiceApiClient(
+      'https://admin.example.test',
+      store('signed-session'),
+      fetcher,
+    );
+    const context = await client.getBusinessContext();
+    await client.managedThreadsRequest(context, 'meta-reserve', undefined, { accountId: 'a-1' });
+    expect(fetcher.mock.calls[1][0]).toBe(
+      'https://admin.example.test/api/v1/threads/meta-requests',
+    );
+    expect(fetcher.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ accountId: 'a-1' }),
+      redirect: 'error',
+    });
+    await client.managedThreadsRequest(context, 'meta-outcome', 'reservation-1', {
+      outcome: 'invalid_token',
+    });
+    expect(fetcher.mock.calls[2][0]).toBe(
+      'https://admin.example.test/api/v1/threads/meta-requests/reservation-1/outcome',
+    );
+    expect(fetcher.mock.calls[2][1]?.method).toBe('POST');
+    const count = fetcher.mock.calls.length;
+    for (const [operation, id] of [
+      ['meta-outcome', '../accounts'],
+      ['meta-outcome', undefined],
+      ['meta-reserve', 'account'],
+      ['meta-outcome', 'https://graph.threads.com/debug_token'],
+    ] as const)
+      await expect(client.managedThreadsRequest(context, operation, id)).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+      });
+    expect(fetcher).toHaveBeenCalledTimes(count);
+  });
+  it('passes through only the token-check refusals the account manager explains', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(account));
+    const client = new ServiceApiClient(
+      'https://admin.example.test',
+      store('signed-session'),
+      fetcher,
+    );
+    const context = await client.getBusinessContext();
+    for (const [status, code, expected] of [
+      [429, 'META_REQUEST_COOLDOWN', 'META_REQUEST_COOLDOWN'],
+      [409, 'ACCOUNT_BUSY', 'ACCOUNT_BUSY'],
+      [409, 'ALREADY_REGISTERED', 'ALREADY_REGISTERED'],
+      [409, 'ACCOUNT_IDENTITY_MISMATCH', 'ACCOUNT_IDENTITY_MISMATCH'],
+      [409, 'STALE_CREDENTIAL', 'REMOTE_CONFLICT'],
+      [429, 'ACCOUNT_BUSY', 'SERVICE_UNAVAILABLE'],
+      [409, 'META_REQUEST_COOLDOWN', 'REMOTE_CONFLICT'],
+    ] as const) {
+      fetcher.mockResolvedValueOnce(json({ error: { code, message: 'server-text' } }, status));
+      const error = await client
+        .managedThreadsRequest(context, 'meta-reserve', undefined, {})
+        .catch((reason: unknown) => reason);
+      expect(error).toMatchObject({ code: expected, status });
+      expect(`${(error as Error).message} ${JSON.stringify(error)}`).not.toContain('server-text');
+    }
+  });
   it('rejects all retired lifecycle and recipient endpoints before any network request', async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));
     const client = new ServiceApiClient(

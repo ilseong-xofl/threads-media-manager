@@ -102,6 +102,10 @@ export interface ManagedThreadsRecord {
     expectedRevision: number | null;
     expectedOwnershipVersion?: number;
     expectedLifecycleVersion?: number;
+    /** This PC's Meta check of `token`; absent when the check failed (saved as unverified). */
+    verification?: { threadsUserId: string; expiresAt: string };
+    /** Replacement only. A 'refresh' token exists nowhere else until the server stores it. */
+    reason?: 'replace' | 'recheck' | 'refresh';
   } | null;
   pendingDeletion: {
     expectedRevision: number;
@@ -288,8 +292,18 @@ function validateFile(value: unknown): StoredFile {
                 'expectedRevision',
                 'expectedOwnershipVersion',
                 'expectedLifecycleVersion',
+                'verification',
+                'reason',
               ].includes(k),
           ) ||
+          (r.pending.verification !== undefined &&
+            (!isObject(r.pending.verification) ||
+              !exactKeys(r.pending.verification, ['threadsUserId', 'expiresAt']) ||
+              !validAppId(r.pending.verification.threadsUserId) ||
+              !validDate(r.pending.verification.expiresAt))) ||
+          (r.pending.reason !== undefined &&
+            (r.pending.action !== 'replace' ||
+              !['replace', 'recheck', 'refresh'].includes(String(r.pending.reason)))) ||
           (r.pending.expectedOwnershipVersion !== undefined &&
             !validRevision(r.pending.expectedOwnershipVersion)) ||
           (r.pending.expectedLifecycleVersion !== undefined &&

@@ -11,6 +11,9 @@ const api: ThreadsMediaApi = {
   replaceManagedThreadsToken: (input) => ipcRenderer.invoke(IPC.replaceManagedThreadsToken, input),
   updateManagedThreadsAccount: (input) =>
     ipcRenderer.invoke(IPC.updateManagedThreadsAccount, input),
+  recheckManagedThreadsAccount: (input) =>
+    ipcRenderer.invoke(IPC.recheckManagedThreadsAccount, input),
+  refreshManagedThreadsToken: (input) => ipcRenderer.invoke(IPC.refreshManagedThreadsToken, input),
   retryManagedThreadsAccount: (input) => ipcRenderer.invoke(IPC.retryManagedThreadsAccount, input),
   discardPendingManagedThreadsAccount: (input) =>
     ipcRenderer.invoke(IPC.discardPendingManagedThreadsAccount, input),

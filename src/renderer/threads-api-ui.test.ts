@@ -836,10 +836,12 @@ it('shows paused desktop actions while preserving old publication details', () =
   const settings = renderToStaticMarkup(
     createElement(ThreadsAccountSettings, { threads: paused, enabled: true }),
   );
-  expect(settings).toContain('토큰 확인·갱신은 휴대폰에서 직접 처리');
+  expect(settings).toContain('토큰 확인·갱신은 이 PC 프로그램이 Meta에 직접 요청');
   expect(settings).not.toContain('name="token"');
   expect(settings).not.toContain('지금 조회');
-  expect(settings).toMatch(/<button[^>]*disabled=""[^>]*>토큰 교체<\/button>/);
+  expect(settings).toMatch(
+    /<button[^>]*disabled=""[^>]*><span[^>]*><span>토큰 교체<\/span><\/span><\/button>/,
+  );
   const history = renderToStaticMarkup(
     createElement(ThreadsPublicationPanel, { postKey: 'source:post', threads: paused }),
   );
