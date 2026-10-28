@@ -10,7 +10,6 @@ interface ManagedAccountActions {
   recheck(input: unknown): Promise<ManagedThreadsResult>;
   refreshToken(input: unknown): Promise<ManagedThreadsResult>;
   retry(input: unknown): Promise<ManagedThreadsResult>;
-  discardPending(input: unknown): Promise<ManagedThreadsResult>;
 }
 
 /** Called only after the main frame and service-access checks. No arbitrary endpoint IPC. */
@@ -39,8 +38,6 @@ export function handleManagedThreadsRequest(
       return manager.refreshToken(args[0]);
     case IPC.retryManagedThreadsAccount:
       return manager.retry(args[0]);
-    case IPC.discardPendingManagedThreadsAccount:
-      return manager.discardPending(args[0]);
     default:
       throw new Error('Unsupported account operation');
   }

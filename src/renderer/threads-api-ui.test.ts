@@ -839,9 +839,7 @@ it('shows paused desktop actions while preserving old publication details', () =
   expect(settings).toContain('토큰 확인·갱신은 이 PC 프로그램이 Meta에 직접 요청');
   expect(settings).not.toContain('name="token"');
   expect(settings).not.toContain('지금 조회');
-  expect(settings).toMatch(
-    /<button[^>]*disabled=""[^>]*><span[^>]*><span>토큰 교체<\/span><\/span><\/button>/,
-  );
+  expect(settings).toMatch(/<button[^>]*disabled=""[^>]*>토큰 교체<\/button>/);
   const history = renderToStaticMarkup(
     createElement(ThreadsPublicationPanel, { postKey: 'source:post', threads: paused }),
   );

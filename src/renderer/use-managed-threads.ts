@@ -139,7 +139,7 @@ export function createManagedThreadsController(
     recheck(input: ManagedThreadsTokenActionInput) {
       return run(
         () => api.recheckManagedThreadsAccount(input),
-        '토큰을 다시 확인해 "확인됨"으로 저장했습니다.',
+        '토큰을 재확인해 "확인됨"으로 저장했습니다.',
       );
     },
     refreshToken(input: ManagedThreadsTokenActionInput) {
@@ -155,16 +155,7 @@ export function createManagedThreadsController(
       );
     },
     retry(input: PendingManagedThreadsAccountInput) {
-      return run(
-        () => api.retryManagedThreadsAccount(input),
-        '보류된 계정 정보를 서버에 저장했습니다.',
-      );
-    },
-    discard(input: PendingManagedThreadsAccountInput) {
-      return run(
-        () => api.discardPendingManagedThreadsAccount(input),
-        '이 PC의 보류된 변경을 버렸습니다. 서버에 저장된 토큰은 유지됩니다.',
-      );
+      return run(() => api.retryManagedThreadsAccount(input), '갱신한 토큰을 서버에 저장했습니다.');
     },
   };
 }
@@ -191,8 +182,6 @@ export function useManagedThreads(enabled: boolean, onSyncing?: (working: boolea
           window.threadsMedia.deleteManagedThreadsAccount(input),
         retryManagedThreadsAccount: (input) =>
           window.threadsMedia.retryManagedThreadsAccount(input),
-        discardPendingManagedThreadsAccount: (input) =>
-          window.threadsMedia.discardPendingManagedThreadsAccount(input),
       },
       {
         notify: (message, error) => effects.current.notify({ message, error }),

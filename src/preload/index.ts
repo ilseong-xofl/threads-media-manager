@@ -15,8 +15,6 @@ const api: ThreadsMediaApi = {
     ipcRenderer.invoke(IPC.recheckManagedThreadsAccount, input),
   refreshManagedThreadsToken: (input) => ipcRenderer.invoke(IPC.refreshManagedThreadsToken, input),
   retryManagedThreadsAccount: (input) => ipcRenderer.invoke(IPC.retryManagedThreadsAccount, input),
-  discardPendingManagedThreadsAccount: (input) =>
-    ipcRenderer.invoke(IPC.discardPendingManagedThreadsAccount, input),
   getMobilePublications: (input) => ipcRenderer.invoke(IPC.mobilePublications, input),
   getMobilePublicationStatuses: () => ipcRenderer.invoke(IPC.mobilePublicationStatuses),
   sendMobilePublication: (input) => ipcRenderer.invoke(IPC.sendMobilePublication, input),

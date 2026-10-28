@@ -40,7 +40,6 @@ function setup() {
     refreshManagedThreadsToken: vi.fn().mockResolvedValue(ok()),
     deleteManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
     retryManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
-    discardPendingManagedThreadsAccount: vi.fn().mockResolvedValue(ok()),
   };
   const effects = { notify: vi.fn(), onSyncing: vi.fn() };
   return { api, effects, controller: createManagedThreadsController(api, effects) };
@@ -150,15 +149,13 @@ describe('managed Threads account request lifecycle', () => {
     expect(controller.getSnapshot().busy).toBe(false);
   });
 
-  it('sends the selected revision and only discards the explicitly requested local change', async () => {
+  it('sends the selected revision and never retries a change on its own', async () => {
     const { api, controller } = setup();
     controller.setEnabled(true);
     await settle();
     const replacement = { accountId: 'account-2', expectedRevision: 7, token: 'synthetic-token' };
     await controller.replace(replacement);
     expect(api.replaceManagedThreadsToken).toHaveBeenCalledWith(replacement);
-    await controller.discard({ localId: 'local-1' });
-    expect(api.discardPendingManagedThreadsAccount).toHaveBeenCalledWith({ localId: 'local-1' });
     expect(api.retryManagedThreadsAccount).not.toHaveBeenCalled();
   });
 

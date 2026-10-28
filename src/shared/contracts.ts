@@ -20,7 +20,6 @@ export const IPC = {
   recheckManagedThreadsAccount: 'tmm:managed-threads:recheck',
   refreshManagedThreadsToken: 'tmm:managed-threads:refresh-token',
   retryManagedThreadsAccount: 'tmm:managed-threads:retry',
-  discardPendingManagedThreadsAccount: 'tmm:managed-threads:discard-pending',
   mobilePublications: 'tmm:mobile-publications:list',
   mobilePublicationStatuses: 'tmm:mobile-publications:statuses',
   sendMobilePublication: 'tmm:mobile-publications:send',

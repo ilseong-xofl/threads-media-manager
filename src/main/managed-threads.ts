@@ -67,7 +67,7 @@ const fail = (code: string, detail?: string): never => {
 };
 const messages: Record<string, string> = {
   STALE_LIFECYCLE: '계정 상태나 담당자가 변경되었습니다. 최신 상태에서 다시 선택해 주세요.',
-  OWNERSHIP_REVOKED: '이 계정의 담당자가 변경되었습니다. 서버와 동기화해 주세요.',
+  OWNERSHIP_REVOKED: '이 계정의 담당자가 변경되었습니다. 계정 관리 창을 다시 열어 주세요.',
   LIFECYCLE_CONFLICT: '계정 상태나 담당자가 변경되었습니다. 최신 상태에서 다시 선택해 주세요.',
   OWNERSHIP_CONFLICT: '계정 담당자가 변경되었습니다. 최신 상태를 확인해 주세요.',
   VALIDATION_FAILED: 'Meta 앱 이름·계정 이름·장기 토큰 입력을 확인해 주세요.',
@@ -83,8 +83,8 @@ const messages: Record<string, string> = {
   STALE_CREDENTIAL:
     '서버 토큰이 변경되었습니다. 대기 입력을 취소하거나 최신 상태에서 다시 등록해 주세요.',
   NOT_FOUND: '계정 정보를 찾을 수 없습니다. 목록을 다시 확인해 주세요.',
-  ACCOUNT_REMOVED: '삭제된 계정입니다. 서버와 동기화하여 이 PC의 사본을 정리해 주세요.',
-  DELETION_PENDING: '계정 삭제가 대기 중입니다. 서버와 동기화하거나 삭제를 다시 시도해 주세요.',
+  ACCOUNT_REMOVED: '삭제된 계정입니다. 계정 관리 창을 다시 열어 주세요.',
+  DELETION_PENDING: '계정 삭제가 대기 중입니다. [삭제 재시도]를 눌러 주세요.',
   DELETE_CONFLICT:
     '토큰 정보가 변경되었습니다. 최신 목록을 확인한 뒤 계정 삭제를 다시 선택해 주세요.',
   LOCAL_DELETE_SYNC_PENDING:
@@ -95,10 +95,12 @@ const messages: Record<string, string> = {
   LOCAL_SYNC_PENDING:
     '서버에는 반영되었지만 로컬 저장을 완료하지 못했습니다. 목록을 새로고침해 주세요.',
   META_REQUEST_COOLDOWN:
-    'Meta 토큰 요청 간격이 남아 있습니다. 버튼 아래 남은 시간이 지난 뒤 다시 시도해 주세요.',
+    'Meta 토큰 요청 간격이 남아 있습니다. "다음 토큰 확인·갱신까지" 시간이 지난 뒤 다시 시도해 주세요.',
   ACCOUNT_BUSY:
     '휴대폰에서 이 계정으로 등록 중인 글이 있습니다. 등록이 끝난 뒤 다시 시도해 주세요.',
   DUPLICATE_ACCOUNT: '이미 등록된 Threads 계정입니다. 같은 계정은 한 번만 등록할 수 있습니다.',
+  SAME_TOKEN:
+    '지금 저장된 토큰과 같습니다. 토큰 확인이 필요한 계정이면 토큰 확인 칸의 [재확인]을 눌러 주세요.',
   ACCOUNT_MISMATCH: '이 계정에 등록된 Threads 계정과 다른 계정의 토큰입니다.',
   ACCOUNT_IDENTITY_MISMATCH: '이 계정에 등록된 Threads 계정과 다른 계정의 토큰입니다.',
   ALREADY_REGISTERED: '이미 다른 곳에 등록된 Threads 계정입니다. 관리자에게 확인해 주세요.',
@@ -106,12 +108,43 @@ const messages: Record<string, string> = {
   TOKEN_CHECK_FAILED_SAVED: '토큰을 확인하지 못해 "확인 필요"로 저장했습니다.',
   TOKEN_REFRESH_FAILED: '토큰을 갱신하지 못했습니다. 서버의 토큰은 바뀌지 않았습니다.',
   TOKEN_REFRESH_UNSAVED:
-    '갱신한 토큰을 이 PC에 저장하지 못했고 서버 저장도 확인하지 못해 새 토큰이 사라졌을 수 있습니다. 요청 간격이 지난 뒤 [다시 확인]으로 기존 토큰을 확인하고, 유효하지 않으면 토큰을 교체해 주세요.',
-  REFRESH_PENDING_LOCKED: '갱신한 토큰은 취소할 수 없습니다. [저장 재시도]로 서버에 저장해 주세요.',
-  PENDING_CHANGE:
-    '보류된 변경이 있습니다. 저장을 재시도하거나 보류를 취소한 뒤 다시 시도해 주세요.',
+    '갱신한 토큰을 이 PC에 저장하지 못했고 서버 저장도 확인하지 못해 새 토큰이 사라졌을 수 있습니다. 서버에는 기존 토큰이 그대로 있으니, 요청 간격이 지난 뒤 [갱신]을 다시 눌러 주세요. 그래도 안 되면 토큰을 교체해 주세요.',
+  REFRESH_PENDING_LOCKED:
+    '갱신한 새 토큰이 아직 서버에 반영되지 않았습니다. [갱신 재시도]를 먼저 눌러 주세요.',
+  RESEND_SERVER_CHANGED:
+    '서버에 보내지 못한 사이 서버의 토큰이 바뀌어, 이 PC의 변경 대신 서버의 토큰을 사용합니다.',
+  RESEND_ACCOUNT_MISSING: '서버 목록에서 이 계정을 찾을 수 없어 이 PC에 남은 변경을 정리했습니다.',
+  RESEND_LEGACY_DROPPED:
+    '예전 버전에서 남은 등록 입력이라 서버에 보낼 수 없어 정리했습니다. 필요하면 계정을 다시 추가해 주세요.',
+  PENDING_CHANGE: '서버에 반영하지 못한 갱신이 있습니다. [갱신 재시도]를 먼저 눌러 주세요.',
   REFRESH_NOT_AVAILABLE: '확인됨 상태이고 만료가 가까운(만료 전) 계정만 갱신할 수 있습니다.',
 };
+const sameName = (a: string, b: string) =>
+  a.normalize('NFKC').trim().toLowerCase() === b.normalize('NFKC').trim().toLowerCase();
+/**
+ * One Meta app holds one Threads account, so a token, app name or account name that another of
+ * this employee's accounts already uses is refused before any Meta request spends the interval.
+ * A different token of an already registered account is still caught after Meta by its user ID.
+ */
+function duplicateProblem(
+  records: ManagedThreadsRecord[],
+  candidate: { token?: string; appName?: string; label?: string },
+  except?: ManagedThreadsRecord,
+): string | null {
+  const others = records.filter((r) => r !== except && !r.missing);
+  const owner = (r: ManagedThreadsRecord) => `${r.appName} · ${r.label}`;
+  const { token, appName, label } = candidate;
+  const byToken =
+    token && others.find((r) => r.syncedToken === token || r.pending?.token === token);
+  if (byToken)
+    return `이미 등록된 토큰입니다(${owner(byToken)}). 같은 계정은 한 번만 등록할 수 있습니다.`;
+  const byApp = appName && others.find((r) => sameName(r.appName, appName));
+  if (byApp)
+    return `같은 Meta 앱 이름의 계정이 이미 있습니다(${owner(byApp)}). Meta 앱 하나에는 Threads 계정 하나만 등록합니다.`;
+  const byLabel = label && others.find((r) => sameName(r.label, label));
+  if (byLabel) return `같은 Threads 계정 이름이 이미 등록되어 있습니다(${owner(byLabel)}).`;
+  return null;
+}
 function rows(
   records: ManagedThreadsRecord[],
   checks: Map<string, ManagedThreadsTokenCheck>,
@@ -723,8 +756,9 @@ export class ManagedThreadsManager {
     return check;
   }
   /**
-   * The token is checked with Meta before anything is stored. A failed check still registers the
-   * account as unverified so the row can show the cause and offer [다시 확인] with the same token.
+   * The token is checked with Meta, then the account is stored on the server first; this PC keeps
+   * it only once the server has it, so a failed send leaves nothing behind. A failed check still
+   * registers the account as unverified so the row can offer [재확인] with the same token.
    */
   register(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
@@ -747,6 +781,12 @@ export class ManagedThreadsManager {
         missing: false,
       };
       await this.refresh(context, records);
+      const duplicate = duplicateProblem(records, {
+        token,
+        appName: record.appName,
+        label: record.label,
+      });
+      if (duplicate) fail('DUPLICATE_ACCOUNT', duplicate);
       const checked = await this.requestMeta(context, records, null, () =>
         this.meta.debugToken(token),
       );
@@ -762,7 +802,6 @@ export class ManagedThreadsManager {
         };
       }
       records.push(record);
-      await this.save(context, records);
       await this.send(context, records, record);
       if (checked.failure)
         fail(
@@ -772,8 +811,9 @@ export class ManagedThreadsManager {
     });
   }
   /**
+   * Server first, like a registration: this PC takes the new token only once the server has it.
    * A failed check of a verified account's new token leaves the server and its working token as
-   * they are; an unverified account stores the new token as unverified, like a registration.
+   * they are; an unverified account stores the new token as unverified.
    */
   replace(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
@@ -793,6 +833,9 @@ export class ManagedThreadsManager {
       if (target.pendingDeletion) fail('DELETION_PENDING');
       if (target.pending?.reason === 'refresh') fail('REFRESH_PENDING_LOCKED');
       if (target.account.tokenRevision !== data.expectedRevision) fail('STALE_CREDENTIAL');
+      if (token === target.syncedToken) fail('SAME_TOKEN');
+      const duplicate = duplicateProblem(records, { token }, target);
+      if (duplicate) fail('DUPLICATE_ACCOUNT', duplicate);
       const checked = await this.requestMeta(context, records, target.account.id, () =>
         this.meta.debugToken(token),
       );
@@ -812,7 +855,6 @@ export class ManagedThreadsManager {
         });
       }
       target.conflict = false;
-      await this.save(context, records);
       await this.send(context, records, target);
       if (checked.failure)
         fail(
@@ -821,7 +863,7 @@ export class ManagedThreadsManager {
         );
     });
   }
-  /** Checks the stored token again; only a successful check changes the server (revision + 1). */
+  /** Checks the stored token again; only a successful check changes the server (revision + 1). Server first. */
   recheck(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
       const data = objectInput(input, ['accountId']);
@@ -844,13 +886,13 @@ export class ManagedThreadsManager {
         threadsUserId: checked.value.userId,
         expiresAt: checked.value.expiresAt,
       });
-      await this.save(context, records);
       await this.send(context, records, target);
     });
   }
   /**
    * Manual refresh of one verified account close to expiry. Meta returns a new token only once, so
-   * it is stored locally first and then sent; one of the two copies must survive.
+   * it is stored locally first and then sent; one of the two copies must survive. This is the only
+   * change that can be left unsent, for [갱신 재시도].
    */
   refreshToken(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
@@ -880,7 +922,7 @@ export class ManagedThreadsManager {
         return fail(
           'TOKEN_REFRESH_FAILED',
           outcome === 'timeout' || outcome === 'network'
-            ? `${metaTokenFailureSummary(checked.failure)} 서버의 토큰은 그대로입니다. 요청 간격이 지난 뒤 [다시 확인]으로 기존 토큰을 확인해 주세요.`
+            ? `${metaTokenFailureSummary(checked.failure)} 서버의 토큰은 그대로입니다. 요청 간격이 지난 뒤 [갱신]을 다시 눌러 주세요. 그래도 안 되면 토큰을 교체해 주세요.`
             : `토큰을 갱신하지 못했습니다. 서버의 토큰은 그대로입니다. ${metaTokenFailureSummary(checked.failure)}`,
         );
       }
@@ -908,8 +950,9 @@ export class ManagedThreadsManager {
     });
   }
   /**
-   * Names are display labels only. A rename is idempotent, so it needs no pending record: a lost
-   * response shows the new names on the next list sync. Token state stays untouched.
+   * Names identify nothing for Meta, but stay unique among this employee's accounts. A rename is
+   * idempotent, so it needs no pending record: a lost response shows the new names on the next
+   * list sync. Token state stays untouched.
    */
   update(input: unknown): Promise<ManagedThreadsResult> {
     return this.run(async (context, records) => {
@@ -920,6 +963,12 @@ export class ManagedThreadsManager {
       if (!record || record.missing) fail('NOT_FOUND');
       const target = record!;
       if (target.pendingDeletion) fail('DELETION_PENDING');
+      const duplicate = duplicateProblem(
+        records,
+        { appName: data.appName as string, label: data.label as string },
+        target,
+      );
+      if (duplicate) fail('DUPLICATE_ACCOUNT', duplicate);
       const value = await this.client.managedThreadsRequest(
         context,
         'profile',
@@ -959,6 +1008,18 @@ export class ManagedThreadsManager {
       await this.refresh(context, records);
       const record = records.find((r) => r.localId === data.localId);
       if (!record) return; // A server tombstone has already removed this pending create.
+      // One PC per employee, so the server moves on only through the old phone's refresh during
+      // the transition, or loses the account. Such a change can never be sent: follow the server.
+      if (record.pending && (record.conflict || record.missing)) {
+        const code =
+          record.legacyAppId !== null
+            ? 'RESEND_LEGACY_DROPPED'
+            : record.missing
+              ? 'RESEND_ACCOUNT_MISSING'
+              : 'RESEND_SERVER_CHANGED';
+        await this.dropPending(context, records, record);
+        fail(code);
+      }
       await this.send(context, records, record);
     });
   }
@@ -1031,25 +1092,17 @@ export class ManagedThreadsManager {
       records.splice(0, records.length, ...retained);
     });
   }
-  discardPending(input: unknown): Promise<ManagedThreadsResult> {
-    return this.run(async (context, records) => {
-      const data = objectInput(input, ['localId']);
-      if (!validId(data.localId)) fail('VALIDATION_FAILED');
-      await this.refresh(context, records);
-      const index = records.findIndex((r) => r.localId === data.localId);
-      if (index < 0) fail('NOT_FOUND');
-      const record = records[index];
-      if (record.pendingDeletion) fail('DELETION_PENDING');
-      // A refreshed token exists only here until the server stores it. Once the server has moved
-      // on (conflict) or lost the account, it can no longer be sent, so it may be discarded.
-      if (record.pending?.reason === 'refresh' && !record.conflict && !record.missing)
-        fail('REFRESH_PENDING_LOCKED');
-      if (!record.account) records.splice(index, 1);
-      else {
-        record.pending = null;
-        record.conflict = false;
-      }
-      await this.save(context, records);
-    });
+  /** An unsent create disappears; an unsent replacement leaves the server's token in place. */
+  private async dropPending(
+    context: ServiceBusinessContext,
+    records: ManagedThreadsRecord[],
+    record: ManagedThreadsRecord,
+  ): Promise<void> {
+    if (!record.account) records.splice(records.indexOf(record), 1);
+    else {
+      record.pending = null;
+      record.conflict = false;
+    }
+    await this.save(context, records);
   }
 }

@@ -141,6 +141,38 @@ describe('mobile publication presentation', () => {
     expect(html.indexOf('value="account-one"')).toBeLessThan(html.indexOf('value="account-newer"'));
   });
 
+  it('keeps an account with an unsent refresh visible but unselectable until it is retried', () => {
+    const unsent = {
+      ...row,
+      pendingAction: 'replace' as const,
+      pendingReason: 'refresh' as const,
+      localState: 'pending' as const,
+    };
+    const send = (accounts: (typeof row)[]) =>
+      renderToStaticMarkup(
+        createElement(MobilePublicationSendDialog, {
+          accounts,
+          busy: false,
+          mediaCount: 1,
+          includesComment: false,
+          hasHistory: false,
+          onSend: vi.fn(),
+          onClose: vi.fn(),
+        }),
+      );
+    const only = send([unsent]);
+    expect(only).toContain('<option value="account-one" disabled="">');
+    expect(only).toContain('(갱신 재시도 필요)');
+    expect(only).toContain('[갱신 재시도]를 마친 뒤 보낼 수 있습니다');
+    expect(only).toContain('class="primary" disabled=""');
+    const other = {
+      ...row,
+      localId: 'local-two',
+      account: { ...row.account!, id: 'account-two', createdAt: '2026-10-20T00:00:00.000Z' },
+    };
+    expect(send([unsent, other])).toContain('<option value="account-two" selected="">');
+  });
+
   it('disables sending and the selector when there are no registered accounts', () => {
     const html = renderToStaticMarkup(
       createElement(MobilePublicationSendDialog, {

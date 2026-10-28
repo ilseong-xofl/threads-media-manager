@@ -135,7 +135,6 @@ function mock(
     refreshToken: vi.fn(),
     remove: vi.fn(),
     retry: vi.fn(),
-    discard: vi.fn(),
   });
 }
 function render(threads?: ThreadsUi) {

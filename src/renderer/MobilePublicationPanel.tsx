@@ -220,10 +220,12 @@ export function MobilePublicationSendDialog({
   onClose(): void;
 }) {
   const choices = mobileAccountChoices(accounts);
-  const [accountId, setAccountId] = useState(() => choices[0]?.account?.id ?? '');
-  const selectedAccountId = choices.some((item) => item.account?.id === accountId)
+  // A refreshed token not yet on the server is the account's only valid copy: keep it off phones.
+  const sendable = choices.filter((item) => !item.pendingAction);
+  const [accountId, setAccountId] = useState(() => sendable[0]?.account?.id ?? '');
+  const selectedAccountId = sendable.some((item) => item.account?.id === accountId)
     ? accountId
-    : (choices[0]?.account?.id ?? '');
+    : (sendable[0]?.account?.id ?? '');
   return (
     <ManagedThreadsActionDialog title="모바일로 보내기" busy={busy} onClose={onClose}>
       <div className="mobile-publication-dialog-body">
@@ -239,13 +241,21 @@ export function MobilePublicationSendDialog({
           >
             {!choices.length && <option value="">등록된 계정이 없습니다</option>}
             {choices.map((item) => (
-              <option key={item.account!.id} value={item.account!.id}>
+              <option
+                key={item.account!.id}
+                value={item.account!.id}
+                disabled={!!item.pendingAction}
+              >
                 {mobilePublicationAccountLabel(item.account!.id, accounts)}
+                {item.pendingAction ? ' (갱신 재시도 필요)' : ''}
               </option>
             ))}
           </select>
         </div>
-        {!choices.length && <p>계정 관리에서 계정을 등록하고 서버와 동기화해 주세요.</p>}
+        {!choices.length && <p>계정 관리에서 계정을 등록해 주세요.</p>}
+        {sendable.length < choices.length && (
+          <p>갱신 재시도가 필요한 계정은 계정 관리에서 [갱신 재시도]를 마친 뒤 보낼 수 있습니다.</p>
+        )}
         <p>
           저장된 본문과 미디어 {mediaCount}개를 선택한 순서대로 보냅니다.
           {includesComment ? ' 준비한 댓글도 함께 보냅니다.' : ''}

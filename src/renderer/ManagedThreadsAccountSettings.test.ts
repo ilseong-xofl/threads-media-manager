@@ -9,10 +9,11 @@ import {
   ManagedThreadsDeleteConfirmation,
   managedThreadsActionAvailability,
   managedThreadsCheckLines,
-  managedThreadsCooldownLabel,
+  managedThreadsCooldownTime,
   managedThreadsExpiryNotice,
   managedThreadsInputProblem,
   managedThreadsNameProblem,
+  managedThreadsResendExplanation,
 } from './ManagedThreadsAccountSettings';
 import { useManagedThreads } from './use-managed-threads';
 
@@ -74,7 +75,6 @@ function mock(
     refreshToken: vi.fn(),
     remove: vi.fn(),
     retry: vi.fn(),
-    discard: vi.fn(),
   });
 }
 function render(enabled = true) {
@@ -91,7 +91,9 @@ it('distinguishes local synchronization from the PC token check', () => {
   mock([row]);
   const html = render();
   expect(html).toContain('서버와 동기화됨');
-  expect(html).toContain('확인 필요');
+  // An unverified row offers the check in its own status cell instead of a shared button.
+  expect(html).toContain('>재확인</button>');
+  expect(html).not.toContain('>서버와 동기화</button>');
   expect(html).toContain('토큰 확인·갱신은 이 PC 프로그램이 Meta에 직접 요청');
   expect(html).toContain('10분에 한 번');
   expect(html).not.toContain('휴대폰에서');
@@ -138,6 +140,7 @@ it('renders app name, Threads account name, and masked token in order without a 
   expect(html).toContain('type="password"');
   expect(html).not.toContain('numeric');
   expect(html).not.toContain('App ID');
+  expect((html.match(/\(중복 불가\)/g) ?? []).length).toBe(3);
 });
 
 it('keeps same-name accounts separately visible', () => {
@@ -162,47 +165,47 @@ it('shows a stored actual Meta App ID only as read-only metadata when available'
   expect(html).not.toContain('inputMode');
 });
 
-it('keeps local-save recovery distinct from deletion of a registered account', () => {
-  const pending = {
+it('keeps an unsent refresh apart as [갱신 재시도] and explains it without a cancel option', () => {
+  const unsent = {
     ...row,
-    account: null,
     localState: 'pending' as const,
-    pendingAction: 'create' as const,
+    pendingAction: 'replace' as const,
+    pendingReason: 'refresh' as const,
   };
-  mock([pending]);
+  mock([unsent]);
   const html = render();
   expect(html).toContain('서버 저장 대기');
-  expect(html).toContain('저장 재시도');
-  expect(html).toContain('보류 취소');
-  expect(html).not.toContain('계정 삭제');
+  expect(html).toContain('>갱신 재시도</button>');
+  expect(html).not.toContain('보류 취소');
+  expect(html).not.toContain('서버 재전송');
+  expect(html.indexOf('>삭제</button>')).toBeLessThan(html.indexOf('>갱신 재시도</button>'));
   expect(managedThreadsActionAvailability(null)).toMatchObject({
     replace: false,
     retry: false,
-    discard: false,
     remove: false,
   });
-  expect(managedThreadsActionAvailability(pending)).toMatchObject({
+  expect(managedThreadsActionAvailability(unsent)).toMatchObject({
     replace: false,
     retry: true,
-    discard: true,
     remove: false,
   });
   expect(managedThreadsActionAvailability(row)).toMatchObject({
     replace: true,
     retry: false,
-    discard: false,
     remove: true,
   });
+  const explained = managedThreadsResendExplanation(unsent).join(' ');
+  expect(explained).toContain('Meta에서 토큰을 갱신해 새 토큰을 이 PC에 암호화하여 저장했지만');
+  expect(explained).toContain('Meta에 다시 요청하지 않고');
+  expect(explained).toContain('그 전에는 모바일로 보낼 수 없습니다');
 });
 
 it('edits the two display names before the token actions, independent of a pending token', () => {
   mock([row]);
   const html = render();
   expect(html.indexOf('>정보 수정</button>')).toBeGreaterThan(-1);
-  // Meta buttons wrap their label so the request countdown can sit under it.
-  expect(html.indexOf('>정보 수정</button>')).toBeLessThan(html.indexOf('>토큰 교체</span>'));
-  expect(html.indexOf('>토큰 교체</span>')).toBeLessThan(html.indexOf('>다시 확인</span>'));
-  expect(html.indexOf('>다시 확인</span>')).toBeLessThan(html.indexOf('>갱신</span>'));
+  expect(html.indexOf('>정보 수정</button>')).toBeLessThan(html.indexOf('>토큰 교체</button>'));
+  expect(html.indexOf('>토큰 교체</button>')).toBeLessThan(html.indexOf('>갱신</button>'));
   expect(managedThreadsActionAvailability(row).edit).toBe(true);
   expect(
     managedThreadsActionAvailability({ ...row, pendingAction: 'replace', localState: 'pending' })
@@ -221,17 +224,19 @@ it('edits the two display names before the token actions, independent of a pendi
   );
 });
 
-it('does not offer re-upload for conflicted changes or missing server accounts', () => {
+it('offers [갱신 재시도] for a conflicted change so it can follow the server, never for a missing account', () => {
   const conflicted = { ...row, localState: 'conflict' as const, pendingAction: 'replace' as const };
   mock([conflicted]);
   const conflict = render();
   expect(conflict).toContain('서버의 최신 정보와 충돌');
   expect(managedThreadsActionAvailability(conflicted)).toMatchObject({
     replace: false,
-    retry: false,
-    discard: true,
+    retry: true,
     remove: false,
   });
+  expect(managedThreadsResendExplanation(conflicted).join(' ')).toContain(
+    '서버의 토큰을 사용합니다',
+  );
   const absent = { ...row, localState: 'missing' as const };
   mock([absent]);
   const missing = render();
@@ -239,7 +244,6 @@ it('does not offer re-upload for conflicted changes or missing server accounts',
   expect(managedThreadsActionAvailability(absent)).toMatchObject({
     replace: false,
     retry: false,
-    discard: false,
     remove: false,
   });
 });
@@ -275,8 +279,8 @@ it('locks actions while disconnected or busy without showing secret values', () 
   expect(locked).not.toContain('뷰티 마케팅 앱');
   mock([row], true);
   const busy = render();
-  expect(busy).toContain('동기화 중…');
-  expect((busy.match(/<button[^>]*disabled=""/g) ?? []).length).toBe(9);
+  expect(busy).toMatch(/<button[^>]*disabled=""[^>]*>재확인<\/button>/);
+  expect((busy.match(/<button[^>]*disabled=""/g) ?? []).length).toBe(7);
   expect(busy).toContain('type="radio"');
   expect(busy).toContain('disabled=""');
 });
@@ -290,7 +294,6 @@ it('preserves the uncertain-delete row and only offers explicit deletion retry',
   expect(managedThreadsActionAvailability(pending)).toMatchObject({
     replace: false,
     retry: false,
-    discard: false,
     remove: true,
   });
 });
@@ -388,29 +391,38 @@ it('provides the dialog title, table column headers, and a stable selected radio
   expect((html.match(/managed-threads-row-selected/g) ?? []).length).toBe(1);
 });
 
-it('shows the shared Meta request countdown under every Meta button and disables them', () => {
+it('shows one shared Meta request countdown and disables every Meta button', () => {
   vi.useFakeTimers({ now: NOW });
   mock([row], false, true, NOW + 125_000);
   const html = render();
-  expect((html.match(/2:05 후 가능/g) ?? []).length).toBe(4);
-  for (const label of ['계정 추가', '토큰 교체', '다시 확인', '갱신'])
+  expect(html).toContain('role="timer"');
+  expect(html).toContain('다음 토큰 확인·갱신까지 <strong>2:05</strong>');
+  expect((html.match(/2:05/g) ?? []).length).toBe(1);
+  expect(html).not.toContain('후 가능');
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>재확인<\/button>/);
+  for (const label of ['계정 추가', '토큰 교체', '갱신'])
     expect(html).toMatch(new RegExp(`<button[^>]*disabled=""[^>]*>(?:(?!</button>).)*${label}`));
-  expect(managedThreadsCooldownLabel(0)).toBeNull();
-  expect(managedThreadsCooldownLabel(-5)).toBeNull();
-  expect(managedThreadsCooldownLabel(1)).toBe('0:01 후 가능');
-  expect(managedThreadsCooldownLabel(59_001)).toBe('1:00 후 가능');
-  expect(managedThreadsCooldownLabel(600_000)).toBe('10:00 후 가능');
+  mock([row]);
+  expect(render()).not.toContain('role="timer"');
+  expect(managedThreadsCooldownTime(0)).toBeNull();
+  expect(managedThreadsCooldownTime(-5)).toBeNull();
+  expect(managedThreadsCooldownTime(1)).toBe('0:01');
+  expect(managedThreadsCooldownTime(59_001)).toBe('1:00');
+  expect(managedThreadsCooldownTime(600_000)).toBe('10:00');
 });
 
-it('offers re-check on any synchronized account and refresh only near a verified expiry', () => {
+it('offers re-check only on an unverified account and refresh only near a verified expiry', () => {
   const available = (value: ManagedThreadsAccountRow, days = 14) =>
     managedThreadsActionAvailability(value, NOW, days);
   expect(available(row)).toMatchObject({ recheck: true, refresh: false });
-  expect(available(verified(inDays(10)))).toMatchObject({ recheck: true, refresh: true });
+  expect(available(verified(inDays(10)))).toMatchObject({ recheck: false, refresh: true });
+  expect(available({ ...row, account: { ...server, validationStatus: 'invalid' } })).toMatchObject({
+    recheck: false,
+  });
   expect(available(verified(inDays(14)))).toMatchObject({ refresh: true });
   expect(available(verified(inDays(14.5)))).toMatchObject({ refresh: false });
   expect(available(verified(inDays(14.5)), 30)).toMatchObject({ refresh: true });
-  expect(available(verified(inDays(-0.1)))).toMatchObject({ recheck: true, refresh: false });
+  expect(available(verified(inDays(-0.1)))).toMatchObject({ recheck: false, refresh: false });
   expect(available(verified(null))).toMatchObject({ refresh: false });
   for (const blocked of [
     { ...verified(inDays(3)), pendingAction: 'replace' as const, localState: 'pending' as const },
@@ -425,8 +437,8 @@ it('offers re-check on any synchronized account and refresh only near a verified
     pendingReason: 'refresh' as const,
     localState: 'pending' as const,
   };
-  expect(available(refreshing)).toMatchObject({ retry: true, discard: false, replace: false });
-  expect(available({ ...refreshing, localState: 'conflict' })).toMatchObject({ discard: true });
+  expect(available(refreshing)).toMatchObject({ retry: true, replace: false });
+  expect(available({ ...refreshing, localState: 'conflict' })).toMatchObject({ retry: true });
 });
 
 it('lists the last token check with codes for copying and labels each field', () => {
@@ -446,7 +458,7 @@ it('lists the last token check with codes for copying and labels each field', ()
   };
   expect(managedThreadsCheckLines(check)).toEqual([
     '확인 시각: 2026. 10. 28. 10:02',
-    '작업: 다시 확인',
+    '작업: 재확인',
     '결과: 유효하지 않은 토큰',
     'HTTP 상태: 400',
     'Meta 코드: 190',

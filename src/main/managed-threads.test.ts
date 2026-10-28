@@ -353,6 +353,15 @@ describe('managed Threads synchronization', () => {
       (await f.manager.update({ accountId: 'other', label: '이름', appName: '앱' })).problem?.code,
     ).toBe('NOT_FOUND');
     expect(f.writes).toEqual(['PROFILE']);
+    await f.manager.register(input('456'));
+    f.writes.length = 0;
+    const taken = await f.manager.update({
+      accountId: account.id,
+      label: '계정 456',
+      appName: '앱 1',
+    });
+    expect(taken.problem?.code).toBe('DUPLICATE_ACCOUNT');
+    expect(f.writes).toEqual([]);
   });
   it('registers multiple accounts, exposes metadata only and separates another logged-in owner', async () => {
     const { manager, client, store } = await setup();
@@ -371,33 +380,32 @@ describe('managed Threads synchronization', () => {
     expect(await store.read(scope, 'a')).toHaveLength(2);
     expect(await store.read(scope, 'b')).toHaveLength(1);
   });
-  it('persists pending before POST, retains it on service failure, and explicitly retries', async () => {
+  it('stores nothing on this PC when the server cannot take a new account', async () => {
     const { manager, store, reject, writes } = await setup();
     reject(true);
     const failed = await manager.register(input());
     expect(failed.status).toBe('error');
-    expect(failed.accounts[0].localState).toBe('pending');
-    expect((await store.read(scope, 'a'))[0].pending?.token).toBe(input().token);
+    expect(failed.accounts).toEqual([]);
+    expect(await store.read(scope, 'a')).toEqual([]);
     expect(JSON.stringify(failed)).not.toMatch(/private-token|secret-in-error/);
     reject(false);
-    expect((await manager.getAccounts()).accounts[0].localState).toBe('pending');
+    expect((await manager.getAccounts()).accounts).toEqual([]);
     expect(writes).toEqual(['POST']);
-    const retried = await manager.retry({ localId: failed.accounts[0].localId });
-    expect(retried.accounts[0].localState).toBe('synced');
-    expect(writes).toEqual(['POST', 'POST']);
   });
-  it('reconciles a lost create response by owned registration ID and token without a second POST', async () => {
-    const { manager, lose, writes } = await setup();
+  it('downloads an account whose create response was lost on the next sync, without a second POST', async () => {
+    const { manager, store, lose, writes } = await setup();
     lose(true);
     const failed = await manager.register(input());
+    expect(failed.status).toBe('error');
+    expect(failed.accounts).toEqual([]);
     lose(false);
-    const retried = await manager.retry({ localId: failed.accounts[0].localId });
-    expect(retried.status).toBe('ok');
-    expect(retried.accounts[0].localState).toBe('synced');
+    const synced = await manager.getAccounts();
+    expect(synced.accounts[0]).toMatchObject({ localState: 'synced', label: input().label });
+    expect((await store.read(scope, 'a'))[0].syncedToken).toBe(input().token);
     expect(writes).toEqual(['POST']);
   });
-  it('reconciles lost replacement response without a second PUT', async () => {
-    const { manager, lose, writes, sameUser } = await setup();
+  it('downloads a replacement whose response was lost on the next sync, without a second PUT', async () => {
+    const { manager, store, lose, writes, sameUser } = await setup();
     const initial = await manager.register(input());
     sameUser('replacement-secret', input().token);
     lose(true);
@@ -406,11 +414,15 @@ describe('managed Threads synchronization', () => {
       expectedRevision: 1,
       token: 'replacement-secret',
     });
-    expect(failed.accounts[0].localState).toBe('pending');
+    expect(failed.status).toBe('error');
+    expect(failed.accounts[0]).toMatchObject({
+      localState: 'synced',
+      pendingAction: null,
+      localRevision: 1,
+    });
     lose(false);
-    const retried = await manager.retry({ localId: failed.accounts[0].localId });
-    expect(retried.status).toBe('ok');
-    expect(retried.accounts[0].localRevision).toBe(2);
+    expect((await manager.getAccounts()).accounts[0].localRevision).toBe(2);
+    expect((await store.read(scope, 'a'))[0].syncedToken).toBe('replacement-secret');
     expect(writes).toEqual(['POST', 'PUT']);
   });
   it('downloads mobile refresh and never uploads stale local credentials', async () => {
@@ -444,8 +456,8 @@ describe('managed Threads synchronization', () => {
       0,
     );
   });
-  it('retains pending replacement on concurrent refresh, blocks retry and discards only pending input', async () => {
-    const { manager, server, store, reject, writes, sameUser } = await setup();
+  it('keeps the working token and stores nothing when a replacement cannot reach the server', async () => {
+    const { manager, store, reject, writes, sameUser } = await setup();
     const initial = await manager.register(input());
     const id = initial.accounts[0].account!.id;
     sameUser('pending-secret', input().token);
@@ -455,40 +467,32 @@ describe('managed Threads synchronization', () => {
       expectedRevision: 1,
       token: 'pending-secret',
     });
-    reject(false);
-    server.get(id)!.account.tokenRevision = 2;
-    server.get(id)!.token = 'mobile-secret';
-    const retry = await manager.retry({ localId: failed.accounts[0].localId });
-    expect(retry.problem?.code).toBe('STALE_CREDENTIAL');
-    expect(retry.accounts[0].localState).toBe('conflict');
-    expect((await store.read(scope, 'a'))[0].pending?.token).toBe('pending-secret');
-    expect(writes).toEqual(['POST', 'PUT']);
-    expect(
-      (await manager.discardPending({ localId: failed.accounts[0].localId })).accounts[0]
-        .localState,
-    ).toBe('synced');
+    expect(failed.status).toBe('error');
+    expect(failed.accounts[0]).toMatchObject({ localState: 'synced', pendingAction: null });
     const stored = (await store.read(scope, 'a'))[0];
-    expect(stored.syncedToken).toBe('mobile-secret');
+    expect(stored.syncedToken).toBe(input().token);
     expect(stored.pending).toBeNull();
+    expect(writes).toEqual(['POST', 'PUT']);
   });
-  it('keeps an ambiguous creation with a different remote token as conflict', async () => {
-    const { manager, server, lose, writes } = await setup();
+  it('downloads the latest server token for a lost create even after the phone changed it', async () => {
+    const { manager, server, store, lose, writes } = await setup();
     lose(true);
-    const failed = await manager.register(input());
+    await manager.register(input());
     lose(false);
     [...server.values()][0].token = 'new-mobile-token';
     [...server.values()][0].account.tokenRevision = 2;
-    const retried = await manager.retry({ localId: failed.accounts[0].localId });
-    expect(retried.problem?.code).toBe('STALE_CREDENTIAL');
-    expect(retried.accounts[0].localState).toBe('conflict');
+    const synced = await manager.getAccounts();
+    expect(synced.accounts[0]).toMatchObject({ localState: 'synced', localRevision: 2 });
+    expect((await store.read(scope, 'a'))[0].syncedToken).toBe('new-mobile-token');
     expect(writes).toEqual(['POST']);
   });
-  it('never sends a mutation if persisting pending credentials failed', async () => {
+  it('never writes a new account to this PC before the server has stored it', async () => {
     const { client, store, writes, options } = await setup();
     const write = vi.fn(
-      async (_scope: string, _owner: string, records: Parameters<typeof store.write>[2]) => {
+      async (service: string, owner: string, records: Parameters<typeof store.write>[2]) => {
         if (records.some((r) => r.pending))
           throw new ManagedThreadsStorageError('STORAGE_WRITE_FAILED');
+        await store.write(service, owner, records);
       },
     );
     const manager = new ManagedThreadsManager(
@@ -497,10 +501,11 @@ describe('managed Threads synchronization', () => {
       scope,
       options,
     );
-    expect((await manager.register(input())).problem?.code).toBe('STORAGE_WRITE_FAILED');
-    expect(writes).toEqual([]);
+    expect((await manager.register(input())).status).toBe('ok');
+    expect(writes).toEqual(['POST']);
+    expect((await store.read(scope, 'a'))[0].pending).toBeNull();
   });
-  it('honestly retains persisted pending state if final local save fails after server success', async () => {
+  it('reports a server-stored account this PC could not save and recovers it on the next sync', async () => {
     const { client, store, writes, options } = await setup();
     const write = vi.fn(
       async (service: string, owner: string, records: Parameters<typeof store.write>[2]) => {
@@ -517,8 +522,10 @@ describe('managed Threads synchronization', () => {
     );
     const result = await manager.register(input());
     expect(result.problem?.code).toBe('LOCAL_SYNC_PENDING');
-    expect(result.accounts[0].localState).toBe('pending');
+    expect(result.accounts).toEqual([]);
     expect(writes).toEqual(['POST']);
+    const healthy = new ManagedThreadsManager(client, store, scope, options);
+    expect((await healthy.getAccounts()).accounts[0].localState).toBe('synced');
   });
   it('rejects extra IPC fields, malformed IDs and max revision without business mutations', async () => {
     const { manager, writes } = await setup();
@@ -566,16 +573,18 @@ describe('managed Threads synchronization', () => {
     expect(result.problem?.code).toBe('INVALID_RESPONSE');
     expect(JSON.stringify(result)).not.toMatch(/malicious-token|"ownerId":"b"/);
   });
-  it('keeps simultaneous connections with identical names separate by generated IDs', async () => {
-    const { manager, writes } = await setup();
+  it('refuses a second account with the same names before Meta, even when submitted at once', async () => {
+    const { manager, writes, meta } = await setup();
     const results = await Promise.all([
       manager.register(input()),
       manager.register({ ...input(), token: 'another-account-token' }),
     ]);
-    expect(results.map((r) => r.status)).toEqual(['ok', 'ok']);
-    expect(writes).toEqual(['POST', 'POST']);
-    expect(new Set(results[1].accounts.map((r) => r.registrationId)).size).toBe(2);
-    expect(results[1].accounts.map((r) => r.appName)).toEqual(['123', '123']);
+    expect(results[0].status).toBe('ok');
+    expect(results[1].problem?.code).toBe('DUPLICATE_ACCOUNT');
+    expect(results[1].problem?.message).toContain('같은 Meta 앱 이름');
+    expect(meta.debugToken).toHaveBeenCalledTimes(1);
+    expect(writes).toEqual(['POST']);
+    expect(results[1].accounts).toHaveLength(1);
   });
   it('neither checks nor stores a new token when the account-list request fails', async () => {
     const { manager, fetcher, store, writes, meta, reservations } = await setup();
@@ -660,29 +669,27 @@ describe('managed Threads synchronization', () => {
     });
     expect((await store.read(scope, 'a'))[0].registrationId).toBe(row.registrationId);
   });
-  it('keeps the same durable identity across explicit retries', async () => {
-    const { manager, reject, fetcher } = await setup();
-    reject(true);
-    const failed = await manager.register(input());
-    reject(false);
-    const retried = await manager.retry({ localId: failed.accounts[0].localId });
-    const bodies = fetcher.mock.calls
-      .filter(([url, init]) => init?.method === 'POST' && String(url).endsWith('/threads/accounts'))
-      .map(([, init]) => JSON.parse(init!.body as string));
-    expect(bodies).toHaveLength(2);
-    expect(bodies[0].registrationId).toBe(bodies[1].registrationId);
-    expect(retried.accounts[0].registrationId).toBe(bodies[0].registrationId);
+  it('refuses a second create after a lost response because the next sync finds the token', async () => {
+    const { manager, lose, writes, meta } = await setup();
+    lose(true);
+    await manager.register(input());
+    lose(false);
+    const again = await manager.register(input());
+    expect(again.problem?.code).toBe('DUPLICATE_ACCOUNT');
+    expect(again.accounts).toHaveLength(1);
+    expect(writes).toEqual(['POST']);
+    expect(meta.debugToken).toHaveBeenCalledTimes(1);
   });
-  it('blocks blind creation of a migrated unresolved App ID registration', async () => {
+  it('clears a migrated unresolved App ID registration on resend instead of creating it blindly', async () => {
     const { manager, store, writes } = await setup();
     await store.write(scope, 'a', [legacyRecord()]);
     const read = await manager.getAccounts();
     expect(read.accounts[0].localState).toBe('conflict');
     const retry = await manager.retry({ localId: 'legacy-local' });
-    expect(retry.problem?.code).toBe('LEGACY_REGISTRATION_PENDING');
-    expect((await store.read(scope, 'a'))[0].pending?.token).toBe('legacy-secret');
+    expect(retry.problem?.code).toBe('RESEND_LEGACY_DROPPED');
+    expect(retry.accounts).toEqual([]);
+    expect(await store.read(scope, 'a')).toEqual([]);
     expect(writes).toEqual([]);
-    expect((await manager.discardPending({ localId: 'legacy-local' })).accounts).toEqual([]);
   });
   it('reconciles legacy ambiguous creation only using its old App ID and exact token', async () => {
     const { manager, store, writes, server } = await setup();
@@ -714,7 +721,8 @@ describe('managed Threads synchronization', () => {
       localState: 'synced',
     });
     const retry = await manager.retry({ localId: 'legacy-local' });
-    expect(retry.problem?.code).toBe('LEGACY_REGISTRATION_PENDING');
+    expect(retry.problem?.code).toBe('RESEND_LEGACY_DROPPED');
+    expect(retry.accounts).toHaveLength(1);
     expect(writes).toEqual([]);
   });
   it('fetches canonical credentials if idempotent creation races a mobile revision advance', async () => {
@@ -792,9 +800,6 @@ describe('managed Threads synchronization', () => {
     expect((await manager.replace({ ...request, token: 'replacement' })).problem?.code).toBe(
       'DELETION_PENDING',
     );
-    expect(
-      (await manager.discardPending({ localId: initial.accounts[0].localId })).problem?.code,
-    ).toBe('DELETION_PENDING');
     expect((await manager.deleteAccount(request)).accounts).toEqual([]);
     expect(writes).toEqual(['POST', 'DELETE', 'DELETE']);
   });
@@ -813,11 +818,11 @@ describe('managed Threads synchronization', () => {
     expect(await store.read(scope, 'a')).toEqual([]);
     expect(writes).toEqual(['POST', 'DELETE']);
   });
-  it('cleans another-PC deletion by registration ID even when create success never reached this PC', async () => {
+  it('keeps nothing for a lost create that another place deleted before the next sync', async () => {
     const { manager, store, lose, writes, server, deleted } = await setup();
     lose(true);
-    const pending = await manager.register(input());
-    expect(pending.accounts[0].account).toBeNull();
+    const lost = await manager.register(input());
+    expect(lost.accounts).toEqual([]);
     const remote = [...server.values()][0].account;
     deleted.set(remote.id, {
       id: remote.id,
@@ -827,9 +832,7 @@ describe('managed Threads synchronization', () => {
     });
     server.delete(remote.id);
     lose(false);
-    const retry = await manager.retry({ localId: pending.accounts[0].localId });
-    expect(retry.status).toBe('ok');
-    expect(retry.accounts).toEqual([]);
+    expect((await manager.getAccounts()).accounts).toEqual([]);
     expect(await store.read(scope, 'a')).toEqual([]);
     expect(writes).toEqual(['POST']);
   });
@@ -976,7 +979,7 @@ describe('managed Threads synchronization', () => {
     expect((await store.read(scope, 'a'))[0].syncedToken).toBe(input().token);
     expect(JSON.stringify(result)).not.toMatch(/database-secret|private-token/);
   });
-  it('purges another-PC deletion on authenticated access while the account modal is closed without fetching credentials or replaying pending input', async () => {
+  it('purges another-PC deletion on authenticated access while the account modal is closed without fetching credentials', async () => {
     const { manager, store, client, server, deleted, fetcher, writes, reject } = await setup();
     const initial = await manager.register(input());
     const removed = initial.accounts[0].account!;
@@ -998,10 +1001,8 @@ describe('managed Threads synchronization', () => {
     });
     expect(await access.allowed()).toBe(true);
     await cleanup;
-    const retained = await store.read(scope, 'a');
-    expect(retained).toHaveLength(1);
-    expect(retained[0].pending?.token).toBe('private-token-unsent');
-    expect(retained[0].account).toBeNull();
+    // The unsent registration was never kept on this PC; only the deleted account is purged.
+    expect(await store.read(scope, 'a')).toEqual([]);
     expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/credential'))).toBe(false);
     expect(fetcher.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
     expect(writes).toEqual(['POST', 'POST']);
@@ -1165,7 +1166,7 @@ describe('managed Threads synchronization', () => {
     });
     expect(await store.read(scope, 'b')).toEqual([]);
   });
-  it('drops an in-flight success crossing logout and preserves only the original owner pending state', async () => {
+  it('drops an in-flight create success crossing logout without writing either owner', async () => {
     const { manager, client, fetcher, store } = await setup();
     const original = fetcher.getMockImplementation()!;
     let complete!: () => void;
@@ -1185,7 +1186,7 @@ describe('managed Threads synchronization', () => {
     const result = await posting;
     expect(result.problem?.code).toBe('AUTH_CHANGED');
     expect(result.accounts).toEqual([]);
-    expect((await store.read(scope, 'a'))[0].pending?.token).toBe(input().token);
+    expect(await store.read(scope, 'a')).toEqual([]);
     expect(await store.read(scope, 'b')).toEqual([]);
   });
 });
@@ -1304,6 +1305,41 @@ describe('PC token check and refresh', () => {
         .split('\n')
         .map((l) => JSON.parse(l).result),
     ).toEqual(['success', 'duplicate']);
+  });
+  it('refuses a registered token or account name before reserving or calling Meta', async () => {
+    const f = await setup();
+    await f.manager.register(input());
+    f.meta.debugToken.mockClear();
+    const sameToken = await f.manager.register({ ...input('456'), token: input().token });
+    expect(sameToken.problem?.code).toBe('DUPLICATE_ACCOUNT');
+    expect(sameToken.problem?.message).toContain('이미 등록된 토큰입니다(123 · 계정 123)');
+    const sameLabel = await f.manager.register({ ...input('456'), label: ' 계정 123 ' });
+    expect(sameLabel.problem?.message).toContain('같은 Threads 계정 이름');
+    expect(f.meta.debugToken).not.toHaveBeenCalled();
+    expect(f.reservations).toHaveLength(1);
+    expect(f.writes).toEqual(['POST']);
+    expect(sameLabel.accounts).toHaveLength(1);
+  });
+  it('refuses a replacement with the same or another account token before calling Meta', async () => {
+    const f = await setup();
+    const id = (await f.manager.register(input())).accounts[0].account!.id;
+    await f.manager.register(input('456'));
+    f.meta.debugToken.mockClear();
+    const same = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: input().token,
+    });
+    expect(same.problem?.code).toBe('SAME_TOKEN');
+    const other = await f.manager.replace({
+      accountId: id,
+      expectedRevision: 1,
+      token: input('456').token,
+    });
+    expect(other.problem?.code).toBe('DUPLICATE_ACCOUNT');
+    expect(other.problem?.message).toContain('456 · 계정 456');
+    expect(f.meta.debugToken).not.toHaveBeenCalled();
+    expect(f.writes).toEqual(['POST', 'POST']);
   });
   it('refuses during the server interval without reserving or calling Meta', async () => {
     const f = await setup();
@@ -1441,7 +1477,7 @@ describe('PC token check and refresh', () => {
     expect((await f.store.read(scope, 'a'))[0].syncedToken).toBe(input().token);
     expect(JSON.stringify(replaced)).not.toContain('secret-in-error');
   });
-  it('refuses a busy account before Meta and keeps a pending change the server refused as busy', async () => {
+  it('refuses a busy account before Meta and keeps the token when the server refuses a replacement as busy', async () => {
     const f = await setup();
     const id = (await f.manager.register(input())).accounts[0].account!.id;
     f.busy.add(id);
@@ -1459,9 +1495,9 @@ describe('PC token check and refresh', () => {
       code: 'ACCOUNT_BUSY',
       message: '휴대폰에서 이 계정으로 등록 중인 글이 있습니다. 등록이 끝난 뒤 다시 시도해 주세요.',
     });
-    expect(busy.accounts[0]).toMatchObject({ localState: 'pending', pendingReason: 'replace' });
-    expect((await f.manager.retry({ localId: busy.accounts[0].localId })).status).toBe('ok');
-    expect(f.server.get(id)!.token).toBe('new-token');
+    expect(busy.accounts[0]).toMatchObject({ localState: 'synced', pendingAction: null });
+    expect(f.server.get(id)!.token).toBe(input().token);
+    expect((await f.store.read(scope, 'a'))[0].pending).toBeNull();
   });
   it('re-checks the stored token and sends it again as a checked revision', async () => {
     const f = await setup();
@@ -1557,36 +1593,39 @@ describe('PC token check and refresh', () => {
     expect(f.meta.refreshToken).not.toHaveBeenCalled();
     expect(f.reservations).toHaveLength(1);
   });
-  it('keeps a refreshed token the server did not receive and refuses to discard it', async () => {
+  it('keeps a refreshed token the server did not receive until it is resent', async () => {
     const f = await nearExpiry();
     f.reject(true);
     const failed = await f.manager.refreshToken({ accountId: f.id });
     expect(failed.problem?.code).toBe('SERVICE_UNAVAILABLE');
     expect(failed.accounts[0]).toMatchObject({ localState: 'pending', pendingReason: 'refresh' });
     expect((await f.store.read(scope, 'a'))[0].pending?.token).toBe(f.refreshed);
-    const locked = await f.manager.discardPending({ localId: failed.accounts[0].localId });
-    expect(locked.problem).toEqual({
-      code: 'REFRESH_PENDING_LOCKED',
-      message: '갱신한 토큰은 취소할 수 없습니다. [저장 재시도]로 서버에 저장해 주세요.',
+    // Nothing else may replace the only copy of the new token while it is unsent.
+    const replaced = await f.manager.replace({
+      accountId: f.id,
+      expectedRevision: 1,
+      token: 'other-token',
     });
+    expect(replaced.problem?.code).toBe('REFRESH_PENDING_LOCKED');
     expect((await f.store.read(scope, 'a'))[0].pending?.token).toBe(f.refreshed);
     f.reject(false);
     const retried = await f.manager.retry({ localId: failed.accounts[0].localId });
     expect(retried.accounts[0]).toMatchObject({ localState: 'synced', pendingReason: null });
     expect(f.server.get(f.id)!.token).toBe(f.refreshed);
   });
-  it('allows discarding a refreshed token once the server has moved on', async () => {
+  it('follows the server on resend when it moved on before a refreshed token was sent', async () => {
     const f = await nearExpiry();
     f.reject(true);
     const failed = await f.manager.refreshToken({ accountId: f.id });
     f.reject(false);
-    f.server.get(f.id)!.token = 'other-pc-token';
+    f.server.get(f.id)!.token = 'phone-refreshed-token';
     f.server.get(f.id)!.account.tokenRevision = 2;
-    const discarded = await f.manager.discardPending({ localId: failed.accounts[0].localId });
-    expect(discarded.status).toBe('ok');
+    const resent = await f.manager.retry({ localId: failed.accounts[0].localId });
+    expect(resent.problem?.code).toBe('RESEND_SERVER_CHANGED');
+    expect(resent.accounts[0]).toMatchObject({ localState: 'synced', pendingAction: null });
     expect((await f.store.read(scope, 'a'))[0]).toMatchObject({
       pending: null,
-      syncedToken: 'other-pc-token',
+      syncedToken: 'phone-refreshed-token',
     });
   });
   it('still sends a refreshed token when this PC cannot store it, and warns when neither can', async () => {
@@ -1613,7 +1652,7 @@ describe('PC token check and refresh', () => {
     f.reject(true);
     const lost = await guarded.refreshToken({ accountId: f.id });
     expect(lost.problem?.code).toBe('TOKEN_REFRESH_UNSAVED');
-    expect(lost.problem?.message).toContain('[다시 확인]');
+    expect(lost.problem?.message).toContain('[갱신]을 다시 눌러');
     f.reject(false);
     // The server accepted it but this PC still cannot save: the next sync downloads the token.
     failFinalSave = true;
@@ -1635,22 +1674,24 @@ describe('PC token check and refresh', () => {
     const result = await f.manager.refreshToken({ accountId: f.id });
     expect(result.problem?.code).toBe('TOKEN_REFRESH_FAILED');
     expect(result.problem?.message).toContain('요청이 처리됐는지 알 수 없습니다');
-    expect(result.problem?.message).toContain('[다시 확인]');
+    expect(result.problem?.message).toContain('[갱신]을 다시 눌러');
     expect(f.writes).toEqual(['POST']);
     expect(f.outcomes).toEqual([]);
     expect(result.accounts[0].lastCheck).toMatchObject({ operation: 'refresh', result: 'timeout' });
   });
-  it('confirms a lost checked registration only if the server stored it as checked', async () => {
+  it('shows a lost registration as the server stored it on the next sync', async () => {
     const f = await setup();
     f.lose(true);
-    const failed = await f.manager.register(input());
+    await f.manager.register(input());
     f.lose(false);
     const row = [...f.server.values()][0];
     row.account.validationStatus = 'pending_validation';
     row.account.expiresAt = null;
-    const retried = await f.manager.retry({ localId: failed.accounts[0].localId });
-    expect(retried.problem?.code).toBe('STALE_CREDENTIAL');
-    expect(retried.accounts[0].localState).toBe('conflict');
+    const synced = await f.manager.getAccounts();
+    expect(synced.accounts[0]).toMatchObject({
+      localState: 'synced',
+      account: { validationStatus: 'pending_validation' },
+    });
     expect(f.writes).toEqual(['POST']);
   });
 });

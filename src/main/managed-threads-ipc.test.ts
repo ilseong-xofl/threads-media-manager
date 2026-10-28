@@ -12,7 +12,6 @@ it('rejects arbitrary account operations and extra arguments before any manager 
     recheck: vi.fn(),
     refreshToken: vi.fn(),
     retry: vi.fn(),
-    discardPending: vi.fn(),
   };
   for (const [channel, args] of [
     ['tmm:managed-threads:read-token', ['account']],
@@ -29,7 +28,6 @@ it('rejects arbitrary account operations and extra arguments before any manager 
     [IPC.refreshManagedThreadsToken, []],
     [IPC.refreshManagedThreadsToken, [{}, { ownerId: 'other-user' }]],
     [IPC.retryManagedThreadsAccount, []],
-    [IPC.discardPendingManagedThreadsAccount, []],
     ['tmm:managed-threads:status', [{ status: 'suspended' }]],
     ['tmm:managed-threads:transfer-request', [{}]],
     ['tmm:managed-threads:transfer-respond', [{ action: 'accept' }]],
@@ -56,7 +54,6 @@ it('dispatches an explicit account deletion through only the fixed delete channe
     recheck: vi.fn(),
     refreshToken: vi.fn(),
     retry: vi.fn(),
-    discardPending: vi.fn(),
     deleteAccount: vi.fn().mockResolvedValue(result),
   };
   const input = { accountId: 'account-1', expectedRevision: 2 };
@@ -64,7 +61,6 @@ it('dispatches an explicit account deletion through only the fixed delete channe
     await handleManagedThreadsRequest(IPC.deleteManagedThreadsAccount, [input], manager),
   ).toEqual(result);
   expect(manager.deleteAccount).toHaveBeenCalledExactlyOnceWith(input);
-  expect(manager.discardPending).not.toHaveBeenCalled();
 });
 
 it('dispatches token re-check and refresh only through their fixed channels', async () => {
@@ -84,7 +80,6 @@ it('dispatches token re-check and refresh only through their fixed channels', as
     recheck: vi.fn().mockResolvedValue(result),
     refreshToken: vi.fn().mockResolvedValue(result),
     retry: vi.fn(),
-    discardPending: vi.fn(),
   };
   const input = { accountId: 'account-1' };
   expect(

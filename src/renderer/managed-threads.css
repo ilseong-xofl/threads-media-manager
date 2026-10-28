@@ -90,6 +90,57 @@
   color: #8a93a1;
   font-size: 11px;
 }
+.managed-threads-selected-actions .managed-threads-refresh-action {
+  min-width: 68px;
+}
+.managed-threads-selected-actions .managed-threads-info-button {
+  min-height: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #b7bfcd;
+  border-radius: 50%;
+  background: white;
+  color: #7e8897;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+.managed-threads-recheck {
+  border: 1px solid #ecd7a8;
+  border-radius: 7px;
+  padding: 4px 11px;
+  background: #fff3dc;
+  color: #957033;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.managed-threads-recheck:disabled {
+  opacity: 0.55;
+}
+.managed-threads-field-note {
+  margin-left: 5px;
+  color: #a3abb8;
+  font-size: 11px;
+  font-weight: 400;
+}
+.managed-threads-cooldown-status {
+  margin-left: auto;
+  border-radius: 8px;
+  padding: 7px 11px;
+  background: #f3f2ff;
+  color: #8a93a1;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.managed-threads-cooldown-status strong {
+  margin-left: 4px;
+  color: #6d63db;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .managed-threads-table-wrap {
   overflow: auto;
   max-height: min(52vh, 480px);

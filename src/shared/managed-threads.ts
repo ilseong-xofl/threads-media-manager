@@ -118,7 +118,4 @@ export interface ManagedThreadsMethods {
   retryManagedThreadsAccount(
     input: PendingManagedThreadsAccountInput,
   ): Promise<ManagedThreadsResult>;
-  discardPendingManagedThreadsAccount(
-    input: PendingManagedThreadsAccountInput,
-  ): Promise<ManagedThreadsResult>;
 }
