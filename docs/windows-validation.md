@@ -13,6 +13,12 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
 
+## 2026-10-29 0.1.9 공개 완료
+
+- [0.1.9 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.9)를 14:02 KST에 공개했다. 앱 소스와 태그는 `285bf14bfb643606d2f1e03dc340ac007f47d0d9`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40819230929)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40820911478)이 검증된 파일 5개를 공개했다. 서비스 주소는 개발 서버이고 업데이트 목록(RELEASES)에 0.1.9가 있다.
+- 변경: 휴대폰이 서버에 시작을 기록하지 않게 되어(10-29) 시작된 모바일 글은 "모바일 게시 오류"로 표시한다. 서버가 계정 응답에서 `appId`·`appIdVerified`를 빼도 계정 동기화가 깨지지 않도록 두 값을 필수로 검사하지 않는다. 로컬 전체 검사: TypeScript 63개 파일 1,484개, Python 575개, 린트·타입·포맷 통과.
+- 실기: 사용자가 Windows PC를 0.1.9로 업데이트한 뒤 서버 `.20261029.2`(옛 경로 삭제, 계정 응답 정리)를 배포했다.
+
 ## 2026-10-29 0.1.8 공개 완료
 
 - [0.1.8 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.8)를 10:23 KST에 공개했다. 앱 소스와 태그는 `bf7572aa27c864280793991772ead61f1aa61c84`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40798119083)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40800110664)이 검증된 파일 5개(Setup.exe, RELEASES, full.nupkg, SHA256SUMS.txt, verification.json)를 공개했다.
