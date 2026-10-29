@@ -13,6 +13,12 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
 
+## 2026-10-29 0.1.8 공개 완료
+
+- [0.1.8 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.8)를 10:23 KST에 공개했다. 앱 소스와 태그는 `bf7572aa27c864280793991772ead61f1aa61c84`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40798119083)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40800110664)이 검증된 파일 5개(Setup.exe, RELEASES, full.nupkg, SHA256SUMS.txt, verification.json)를 공개했다.
+- 토큰 확인(`debug_token`)·갱신을 PC 프로그램 main 프로세스로 옮긴 버전이다. 서비스 주소는 개발 서버이고, 업데이트 피드가 0.1.7에 0.1.8을 제공한다.
+- 실기: 테스터가 Windows 0.1.8로 업데이트해 막혔던 계정의 [재확인]에 성공했다(Windows에서 PC→Meta 첫 실호출). 사용자가 Windows 0.1.8에서 모바일로 보낸 글을 새 모바일에서 원글 등록했다(10-29).
+
 ## 2026-10-20 0.1.7 공개 완료
 
 - [0.1.7 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.7)와 [Windows 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.7/ThreadsMediaManager-win32-x64-Setup.exe)을 게시했다. WebP 첨부가 있는 글을 `모바일로 보내기`로 보낼 때 항상 실패하던 문제를 고친 버전이다. WebP 변환을 앱에 포함된 Pillow로 옮겼다([전송 계약](mobile-publication-delivery.md)). 접속 서버는 0.1.6과 같은 개발 서버 `https://threads-admin-dev.ilscp.net`이다.
