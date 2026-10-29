@@ -27,7 +27,6 @@ const server = {
   appId: null,
   threadsUserId: null,
   validationStatus: 'pending_validation' as const,
-  appIdVerified: false,
   tokenRevision: 1,
   expiresAt: null,
   createdAt: '2026-10-19T00:00:00.000Z',
@@ -155,14 +154,6 @@ it('keeps same-name accounts separately visible', () => {
   ]);
   const html = render();
   expect((html.match(/>뷰티 계정<\/strong>/g) ?? []).length).toBe(2);
-});
-
-it('shows a stored actual Meta App ID only as read-only metadata when available', () => {
-  mock([{ ...row, appId: '123', account: { ...server, appId: '123' } }]);
-  const html = render();
-  expect(html).toContain('title="Meta App ID: 123"');
-  expect(html).toContain('App ID 123');
-  expect(html).not.toContain('inputMode');
 });
 
 it('keeps an unsent refresh apart as [갱신 재시도] and explains it without a cancel option', () => {

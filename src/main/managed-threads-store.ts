@@ -34,10 +34,10 @@ export function parseManagedAccount(value: unknown, ownerId: string): ManagedThr
     !validLabel(value.label) ||
     !validId(value.registrationId) ||
     !validLabel(value.appName) ||
-    !(value.appId === null || validAppId(value.appId)) ||
+    // The server stopped sending appId and appIdVerified after 0.1.8; a missing appId reads as null.
+    !(value.appId === undefined || value.appId === null || validAppId(value.appId)) ||
     !(value.threadsUserId === null || validAppId(value.threadsUserId)) ||
     !['pending_validation', 'reported_valid', 'invalid'].includes(String(value.validationStatus)) ||
-    typeof value.appIdVerified !== 'boolean' ||
     !validRevision(value.tokenRevision) ||
     !(value.expiresAt === null || validDate(value.expiresAt)) ||
     (value.lifecycleVersion !== undefined && !validRevision(value.lifecycleVersion)) ||
@@ -51,10 +51,9 @@ export function parseManagedAccount(value: unknown, ownerId: string): ManagedThr
     label: value.label,
     registrationId: value.registrationId,
     appName: value.appName,
-    appId: value.appId as string | null,
+    appId: (value.appId ?? null) as string | null,
     threadsUserId: value.threadsUserId as string | null,
     validationStatus: value.validationStatus as ManagedThreadsAccount['validationStatus'],
-    appIdVerified: value.appIdVerified,
     tokenRevision: value.tokenRevision,
     expiresAt: value.expiresAt as string | null,
     createdAt: value.createdAt,

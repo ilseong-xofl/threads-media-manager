@@ -251,14 +251,6 @@ export function ManagedThreadsAccountTable({
                 <span className={`managed-threads-status managed-threads-${row.localState}`}>
                   {row.pendingDeletion ? '삭제 결과 확인 필요' : localStatus[row.localState]}
                 </span>
-                {row.account?.appId && (
-                  <span
-                    className="managed-threads-cell-detail"
-                    title={`Meta App ID: ${row.account.appId}`}
-                  >
-                    App ID {row.account.appId}
-                  </span>
-                )}
               </td>
               <td>
                 <strong className="managed-threads-cell-title" title={row.label}>

@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenCipher } from './auth-token-store';
-import { EncryptedManagedThreadsStore, type ManagedThreadsRecord } from './managed-threads-store';
+import {
+  EncryptedManagedThreadsStore,
+  parseManagedAccount,
+  type ManagedThreadsRecord,
+} from './managed-threads-store';
 
 export class SecureTestCipher implements TokenCipher {
   private readonly key = randomBytes(32);
@@ -97,7 +101,6 @@ describe('encrypted managed account store', () => {
       appId: '123',
       threadsUserId: null,
       validationStatus: 'pending_validation',
-      appIdVerified: false,
       tokenRevision: 2,
       expiresAt: null,
       createdAt: '2026-10-19T00:00:00.000Z',
@@ -196,7 +199,6 @@ describe('encrypted managed account store', () => {
       appId: null,
       threadsUserId: null,
       validationStatus: 'pending_validation' as const,
-      appIdVerified: false,
       tokenRevision: 2,
       expiresAt: null,
       createdAt: '2026-10-19T00:00:00.000Z',
@@ -223,7 +225,6 @@ describe('encrypted managed account store', () => {
       appId: null,
       threadsUserId: '1234',
       validationStatus: 'reported_valid' as const,
-      appIdVerified: false,
       tokenRevision: 3,
       expiresAt: '2026-11-07T00:00:00.000Z',
       createdAt: '2026-10-19T00:00:00.000Z',
@@ -318,4 +319,24 @@ it('retires every v4 lifecycle intent without erasing tokens or existing create/
   expect(migrated.partitions[0].operations).toEqual([]);
   expect(migrated.partitions[0].records[0].pending.token).toBe('secret-legacy-pending');
   expect(JSON.stringify(migrated)).not.toContain('retired-');
+});
+
+it('reads a server account without appId and appIdVerified, which the server dropped after 0.1.8', () => {
+  const account = parseManagedAccount(
+    {
+      id: 'server-1',
+      ownerId: 'owner-1',
+      label: '뷰티 계정',
+      registrationId: 'registration-1',
+      appName: '뷰티 마케팅 앱',
+      threadsUserId: null,
+      validationStatus: 'pending_validation',
+      tokenRevision: 1,
+      expiresAt: null,
+      createdAt: '2026-10-19T00:00:00.000Z',
+    },
+    'owner-1',
+  );
+  expect(account.appId).toBeNull();
+  expect('appIdVerified' in account).toBe(false);
 });

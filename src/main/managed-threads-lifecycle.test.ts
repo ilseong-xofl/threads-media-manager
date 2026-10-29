@@ -24,7 +24,6 @@ async function setup() {
     appId: null,
     threadsUserId: null,
     validationStatus: 'pending_validation',
-    appIdVerified: false,
     tokenRevision: 1,
     expiresAt: null,
     createdAt: date,

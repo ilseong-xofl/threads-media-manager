@@ -178,7 +178,6 @@ async function setup() {
             validationStatus: checked
               ? ('reported_valid' as const)
               : ('pending_validation' as const),
-            appIdVerified: false,
             tokenRevision: 1,
             expiresAt: checked?.expiresAt ?? null,
             createdAt: '2026-10-19T00:00:00.000Z',
@@ -203,7 +202,6 @@ async function setup() {
         row.account.validationStatus = checked ? 'reported_valid' : 'pending_validation';
         row.account.threadsUserId = checked?.threadsUserId ?? row.account.threadsUserId;
         row.account.expiresAt = checked?.expiresAt ?? null;
-        row.account.appIdVerified = false;
       }
       if (loseResponse) throw new Error('network lost with secret-in-error');
       return json({ account: row.account, secret: 'must-never-leak' });
@@ -311,7 +309,6 @@ const legacyRemote = (token: string): { account: ManagedThreadsAccount; token: s
     appId: '123',
     threadsUserId: null,
     validationStatus: 'pending_validation',
-    appIdVerified: false,
     tokenRevision: 1,
     expiresAt: null,
     createdAt: '2026-10-19T00:00:00.000Z',
@@ -441,7 +438,6 @@ describe('managed Threads synchronization', () => {
     const initial = await manager.register({ ...input(), appName: '뷰티 앱' });
     const row = server.get(initial.accounts[0].account!.id)!;
     row.account.appId = '123456789';
-    row.account.appIdVerified = true;
     fetcher.mockClear();
     const refreshed = await manager.getAccounts();
     expect(refreshed.status).toBe('ok');
@@ -556,7 +552,6 @@ describe('managed Threads synchronization', () => {
       appId: null,
       threadsUserId: null,
       validationStatus: 'pending_validation',
-      appIdVerified: false,
       tokenRevision: 1,
       expiresAt: null,
       createdAt: '2026-10-19T00:00:00.000Z',

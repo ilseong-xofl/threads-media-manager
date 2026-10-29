@@ -37,7 +37,6 @@ const row: ManagedThreadsAccountRow = {
     appId: null,
     threadsUserId: null,
     validationStatus: 'pending_validation',
-    appIdVerified: false,
     tokenRevision: 1,
     expiresAt: null,
     createdAt: '2026-10-19T00:00:00.000Z',
@@ -224,10 +223,14 @@ describe('mobile publication presentation', () => {
     const html = renderPanel(
       mobile([{ ...publication, status: 'started', rootStatus: 'unknown' }]),
     );
-    expect(html).toContain('게시 결과 확인 필요');
+    expect(html).toContain('모바일 게시 오류');
     expect(html).not.toContain('게시 대기 회수');
     expect(html).not.toContain('원글 게시 완료');
     expect(html).toContain('등록 작업 삭제');
+    // A post Meta refused on the phone reads the same: the phone shows [재등록].
+    expect(
+      renderPanel(mobile([{ ...publication, status: 'started', rootStatus: 'failed' }])),
+    ).toContain('모바일 게시 오류');
   });
 
   it('offers task deletion for stuck work and unfinished replies, preserving completed history', () => {
@@ -252,7 +255,7 @@ describe('mobile publication presentation', () => {
       mobile([{ ...publication, status: 'cancelled', rootStatus: 'unknown' }]),
     );
     expect(html).toContain('등록 작업 삭제됨 · 원격 결과 미확인');
-    expect(html).not.toContain('휴대폰에서 게시 시작');
+    expect(html).not.toContain('모바일 게시 오류');
     expect(html).not.toContain('게시 대기 회수');
     expect(html).not.toMatch(/<button[^>]*>등록 작업 삭제<\/button>/);
   });

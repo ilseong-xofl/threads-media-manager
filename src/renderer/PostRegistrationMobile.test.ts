@@ -92,7 +92,6 @@ const account: ManagedThreadsAccountRow = {
     appId: null,
     threadsUserId: null,
     validationStatus: 'pending_validation',
-    appIdVerified: false,
     tokenRevision: 1,
     expiresAt: null,
     createdAt: '2026-10-19T00:00:00.000Z',

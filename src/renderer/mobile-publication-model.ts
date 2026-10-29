@@ -46,9 +46,8 @@ export function mobilePublicationStatus(item: MobilePublication) {
   }
   if (item.status === 'expired') return '게시 기한 만료';
   if (item.status === 'published') return '원글 게시 완료';
-  return ['unknown', 'uncertain'].includes(item.rootStatus)
-    ? '게시 결과 확인 필요'
-    : '휴대폰에서 게시 시작';
+  // Since 2026-10-29 the phone records no start, so a started post failed or got no answer.
+  return '모바일 게시 오류';
 }
 
 export function mobilePublicationCanRecall(item: MobilePublication) {

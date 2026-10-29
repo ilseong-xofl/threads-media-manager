@@ -8,7 +8,6 @@ export interface ManagedThreadsAccount {
   appId: string | null;
   threadsUserId: string | null;
   validationStatus: 'pending_validation' | 'reported_valid' | 'invalid';
-  appIdVerified: boolean;
   tokenRevision: number;
   expiresAt: string | null;
   createdAt: string;
