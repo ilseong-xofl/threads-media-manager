@@ -102,9 +102,9 @@ async function setup() {
   >;
   const drafts = (...texts: string[]): DailyDraft[] =>
     texts.map((text) => ({ text, translation: null }));
-  const generate = vi.fn<(persona: DailyPersona, recentPosts: string[]) => Promise<DailyDraft[]>>(
-    async () => drafts('첫 번째 글', '두 번째 글', '세 번째 글'),
-  );
+  const generate = vi.fn<
+    (persona: DailyPersona, recentPosts: string[], today: string) => Promise<DailyDraft[]>
+  >(async () => drafts('첫 번째 글', '두 번째 글', '세 번째 글'));
   const translate = vi.fn<(persona: DailyPersona, text: string) => Promise<string>>(
     async (_persona, text) => `뜻: ${text}`,
   );
@@ -213,6 +213,8 @@ describe('daily drafts', () => {
     expect(view.generatingPersonaId).toBeNull();
     expect(generate.mock.calls[1][1]).toEqual(['첫 번째 글', '두 번째 글', '세 번째 글']);
     expect(generate.mock.calls[1][0]).toMatchObject({ id: p.id, language: 'ko' });
+    // The writer gets the PC's calendar date for the season (the day depends on the time zone).
+    expect(generate.mock.calls[1][2]).toMatch(/^2026-11-1[67]$/);
   });
   it('reports a failed generation as finished, so the board can start another', async () => {
     const { daily, generate, persona, ok } = await setup();

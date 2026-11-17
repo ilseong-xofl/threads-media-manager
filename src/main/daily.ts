@@ -44,7 +44,7 @@ interface Options {
   store: Store;
   service: string;
   /** Writes three posts for the persona. Throws a ViewError the user can read. */
-  generate(persona: DailyPersona, recentPosts: string[]): Promise<DailyDraft[]>;
+  generate(persona: DailyPersona, recentPosts: string[], today: string): Promise<DailyDraft[]>;
   /** Says in Korean what one post of the persona says. Throws a ViewError the user can read. */
   translate(persona: DailyPersona, text: string): Promise<string>;
   /** Writes a Korean draft as a post in the persona's language. Throws a readable ViewError. */
@@ -66,6 +66,10 @@ const EMPTY: DailyView = {
   generatingPersonaId: null,
   translatingPostId: null,
 };
+
+/** The PC's calendar date. The writer only needs the time of year, so the time zone is no matter. */
+const localDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
 function fail(code: string, message: string): never {
   throw new ViewError(code, message);
@@ -433,7 +437,7 @@ export class DailyController {
             .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
             .slice(0, RECENT_POSTS)
             .map((post) => post.text);
-          drafts = await this.options.generate(persona, recent);
+          drafts = await this.options.generate(persona, recent, localDate(new Date(this.now())));
         } finally {
           // Every view built from here on, for success or failure, shows the work as over.
           this.generatingPersonaId = null;

@@ -33,6 +33,7 @@ const posts = [
   { text: '三つ目の投稿', korean: '세 번째 글' },
 ];
 const drafts = posts.map((post) => ({ text: post.text, translation: post.korean }));
+const today = '2026-11-18';
 const execution: CodexExecution = {
   command: '/synthetic/codex',
   args: ['-c', 'forced_login_method="chatgpt"'],
@@ -80,7 +81,7 @@ afterEach(() => vi.clearAllMocks());
 describe('daily post generation', () => {
   it('runs the app-managed CLI with text only and returns three posts', async () => {
     const { generator, requests } = setup();
-    await expect(generator.generate(persona, ['지난 글'])).resolves.toEqual(drafts);
+    await expect(generator.generate(persona, ['지난 글'], today)).resolves.toEqual(drafts);
     const [request] = requests;
     expect(request.command).toBe(execution.command);
     expect(request.env).toBe(execution.env);
@@ -93,9 +94,11 @@ describe('daily post generation', () => {
     // The persona text travels as data on stdin, never inside the instruction.
     expect(request.args.at(-1)).not.toContain('/private/secret');
     expect(JSON.parse(request.stdin)).toEqual({
+      today,
       persona: { name: persona.name, description: persona.description },
       recentPosts: ['지난 글'],
     });
+    expect(request.args.at(-1)).toContain('today is the current date');
     expect(request.args[request.args.indexOf('--output-schema') + 1]).toBe(
       join(request.cwd, 'schema.json'),
     );
@@ -118,6 +121,10 @@ describe('daily post generation', () => {
     expect(prompt('ko')).toContain('Korean Threads');
     expect(prompt('ko')).not.toContain('Japanese Threads');
     expect(prompt('ja')).not.toContain('Korean Threads');
+    // Only Japanese was given a post that asks nothing.
+    expect(prompt('ja')).toContain('a vent or a thought to oneself');
+    for (const language of ['ko', 'en'] as const)
+      expect(prompt(language)).not.toContain('a vent or a thought to oneself');
     // Every language keeps the rules about time-bound facts and the length limit.
     for (const language of ['ko', 'ja', 'en'] as const) {
       expect(prompt(language)).toContain('sold-out');
@@ -131,7 +138,7 @@ describe('daily post generation', () => {
       await writeFile(join(cwd, 'result.json'), JSON.stringify({ posts }));
       process.emit('close', 0);
     });
-    await generator.generate(persona, []);
+    await generator.generate(persona, [], today);
     expect(schema).toMatchObject({
       properties: {
         posts: {
@@ -151,7 +158,7 @@ describe('daily post generation', () => {
       await writeFile(join(cwd, 'result.json'), JSON.stringify({ posts: ['하나', '둘', '셋'] }));
       process.emit('close', 0);
     });
-    await expect(generator.generate({ ...persona, language: 'ko' }, [])).resolves.toEqual([
+    await expect(generator.generate({ ...persona, language: 'ko' }, [], today)).resolves.toEqual([
       { text: '하나', translation: null },
       { text: '둘', translation: null },
       { text: '셋', translation: null },
@@ -260,14 +267,14 @@ describe('daily post generation', () => {
       process.stderr.write('usage limit reached');
       process.emit('close', 1);
     });
-    await expect(limited.generator.generate(persona, [])).rejects.toMatchObject({
+    await expect(limited.generator.generate(persona, [], today)).rejects.toMatchObject({
       code: 'codex_limit',
     });
     const failed = setup((process) => {
       process.stderr.write('boom');
       process.emit('close', 1);
     });
-    const error = await failed.generator.generate(persona, []).catch((e: ViewError) => e);
+    const error = await failed.generator.generate(persona, [], today).catch((e: ViewError) => e);
     expect(error).toMatchObject({ code: 'daily_generation' });
     expect((error as ViewError).message).not.toContain('캡션');
     const signedOut = setup(undefined, {
@@ -275,7 +282,7 @@ describe('daily post generation', () => {
         throw new ViewError('codex_login', '설정에서 ChatGPT에 로그인한 뒤 캡션을 생성하세요.');
       },
     });
-    const login = await signedOut.generator.generate(persona, []).catch((e: ViewError) => e);
+    const login = await signedOut.generator.generate(persona, [], today).catch((e: ViewError) => e);
     expect(login).toMatchObject({ code: 'codex_login' });
     expect((login as ViewError).message).not.toContain('캡션');
     expect(signedOut.requests).toHaveLength(0);
@@ -291,11 +298,15 @@ describe('daily post generation', () => {
           };
         }),
     );
-    const first = generator.generate(persona, []).catch((e: ViewError) => e);
-    await expect(generator.generate(persona, [])).rejects.toMatchObject({ code: 'daily_busy' });
+    const first = generator.generate(persona, [], today).catch((e: ViewError) => e);
+    await expect(generator.generate(persona, [], today)).rejects.toMatchObject({
+      code: 'daily_busy',
+    });
     await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     await generator.shutdown();
     expect(await first).toMatchObject({ code: 'daily_generation_cancelled' });
-    await expect(generator.generate(persona, [])).rejects.toMatchObject({ code: 'daily_busy' });
+    await expect(generator.generate(persona, [], today)).rejects.toMatchObject({
+      code: 'daily_busy',
+    });
   });
 });

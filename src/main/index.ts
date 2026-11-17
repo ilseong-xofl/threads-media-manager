@@ -578,7 +578,7 @@ const daily: DailyController = new DailyController({
   client: serviceClient,
   store: new DailyStore(app.getPath('userData')),
   service: serviceOrigin ?? 'unconfigured',
-  generate: (persona, recentPosts) => dailyGenerator.generate(persona, recentPosts),
+  generate: (persona, recentPosts, today) => dailyGenerator.generate(persona, recentPosts, today),
   translate: (persona, text) => dailyGenerator.translate(persona, text),
   compose: (persona, korean) => dailyGenerator.compose(persona, korean),
 });
