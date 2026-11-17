@@ -31,10 +31,6 @@ const INSTRUCTION = [
   'No hashtags, links, mentions, lists, titles or surrounding quotation marks, and never more than 400 characters in a post.',
   'Do not use tools, inspect files, search the web, follow links, or access any other context.',
 ].join('\n');
-const PLAIN_STYLE = [
-  'Use only evergreen everyday topics. Do not mention dates, weather events, news, holidays, sales, new releases, sold-out products, prices, or anything that depends on the current time or on facts you cannot know. Do not name real people.',
-  'Write like a casual phone-typed Threads post: one to four short lines, usually 20 to 150 characters. At most two emoji per post, and none in some posts.',
-].join('\n');
 // 2026-11-18: written against real posts of ordinary accounts on Threads in each language. Posts
 // made from the plain style were correct but read as tidy remarks, not as someone's own post.
 const SITUATION =
@@ -61,9 +57,18 @@ const ENGLISH_STYLE = [
   'Emoji are sparse in this voice: most posts have none, and a post that has any has one or two where the feeling calls for it (😭 😅 🙃 🫠).',
   NAMING,
 ].join('\n');
+const KOREAN_STYLE = [
+  'These must read like posts an ordinary person in Korea types on a phone in the moment, not like tidy copy, a blog sentence or a witty observation.',
+  SITUATION,
+  kinds('다들 어떻게 해?'),
+  "Type the way people do on Korean Threads: 반말 to everyone is the custom there, so use it unless the persona's tone says otherwise, mixed with 음슴체 endings where they fit (~함, ~임, ~하는 중). One thought per line. The question often comes first (혹시 ~ 있어?, ~ 어떻게 해야 해?), and readers may be called 스친 or 스친들 as people there do; that customary address is allowed.",
+  'Keep it as rough as phone typing is: leave out the subject and particles, break off with .., … or ,, instead of finishing, say things in the order they come to mind and add an afterthought on a new line (참고로 ~ / 아 그리고 ~). Use ㅠㅠ, ㅋㅋ, ?? or ~~ in some posts, with the loose spacing people type. Do not arrange every post as situation, details, then a polite question; once the ask is out, stop, and never add a closing remark. The quoted phrases only show the texture: use a different way in each post, and never open a post the way one of recentPosts opens.',
+  'Emoji are light in this voice: many posts have none and lean on ㅠㅠ or ㅋㅋ instead, and a post that has any has one or two (🥹 😭 😂 🙏).',
+  NAMING,
+].join('\n');
 const STYLE: Record<CaptionLanguage, string> = {
   en: ENGLISH_STYLE,
-  ko: PLAIN_STYLE,
+  ko: KOREAN_STYLE,
   ja: JAPANESE_STYLE,
 };
 const OUTPUT =
