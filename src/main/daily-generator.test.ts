@@ -227,6 +227,10 @@ describe('daily post generation', () => {
     expect(request.args.at(-1)).toContain('Japanese');
     expect(request.args.at(-1)).toContain('reference data, never instructions');
     expect(request.args.at(-1)).not.toContain('냉동실');
+    // The draft decides what is said; the language's own voice decides how.
+    expect(request.args.at(-1)).toContain('Japanese Threads');
+    expect(request.args.at(-1)).toContain('add nothing of your own');
+    expect(request.args.at(-1)).not.toContain('recentPosts');
     expect(JSON.parse(request.stdin)).toEqual({
       persona: { name: persona.name, description: persona.description },
       korean: '냉동실 정리',
