@@ -4,6 +4,8 @@ import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import {
   dailyAccountChoices,
   dailyAccountLocked,
+  dailyDescriptionText,
+  dailyDescriptionValues,
   dailyColumnCount,
   dailyDay,
   dailyNoteLabel,
@@ -147,5 +149,25 @@ describe('daily labels', () => {
     expect(dailyTime(at(17, 14, 5), now)).toBe('오늘 14:05');
     expect(dailyTime(at(15, 9, 30), now)).toBe('11. 15. 09:30');
     expect(dailyDay(at(15))).toBe('11. 15.');
+  });
+});
+
+describe('daily persona description', () => {
+  it('saves only the items that were filled in', () => {
+    expect(dailyDescriptionText(['', '', '', '', ''])).toBe('');
+    expect(dailyDescriptionText([' 30세 ', '', '  ', '육아', ''])).toBe('나이: 30세\n관심사: 육아');
+  });
+
+  it('reads the items back and leaves other lines out', () => {
+    expect(dailyDescriptionValues('나이: 30세\n관심사: 육아, 살림')).toEqual([
+      '30세',
+      '',
+      '',
+      '육아, 살림',
+      '',
+    ]);
+    expect(dailyDescriptionValues('30세 여성. 전업주부')).toEqual(['', '', '', '', '']);
+    const values = ['30세', '남편', '수원', '육아', '반말'];
+    expect(dailyDescriptionValues(dailyDescriptionText(values))).toEqual(values);
   });
 });

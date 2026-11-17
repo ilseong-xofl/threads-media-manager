@@ -1,7 +1,6 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState, type FocusEvent, type KeyboardEvent } from 'react';
 import type { CaptionLanguage } from '../shared/contracts';
 import {
-  DAILY_DESCRIPTION_LIMIT,
   DAILY_NAME_LIMIT,
   type DailyPersona,
   type DailyPost,
@@ -9,7 +8,16 @@ import {
 } from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
-import { dailyAccountChoices, dailyAccountLocked, dailyAccountRow } from './daily-model';
+import {
+  DAILY_DESCRIPTION_LABELS,
+  dailyAccountChoices,
+  dailyAccountLocked,
+  dailyAccountRow,
+  dailyDescriptionText,
+  dailyDescriptionValues,
+  dailyPersonaExamples,
+  type DailyPersonaExample,
+} from './daily-model';
 import { mobilePublicationAccountLabel } from './mobile-publication-model';
 import './managed-threads.css';
 
@@ -18,6 +26,52 @@ const languages: { value: CaptionLanguage; label: string }[] = [
   { value: 'ja', label: '일본어' },
   { value: 'en', label: '영어' },
 ];
+
+/** Matches the length of the `daily-hint` animation in daily.css. */
+const HINT_CYCLE_MS = 4000;
+
+/** The example persona the empty fields show; it moves on each time the hint fades out. */
+function useDailyExample(active: boolean) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (!active || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = window.setInterval(
+      () => setIndex((value) => (value + 1) % dailyPersonaExamples.length),
+      HINT_CYCLE_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return dailyPersonaExamples[index]!;
+}
+
+/** Five items of this length and their names stay within the description limit. */
+const DESCRIPTION_VALUE_LIMIT = 300;
+
+/**
+ * Example text over an empty field (2026-11-17, after Suno's create form). It fades in and out
+ * until the field takes focus; then the example seen last stays as a placeholder that Tab accepts.
+ */
+function DailyHint({ moving, held, cycle }: { moving: string; held: string; cycle: string }) {
+  return (
+    <>
+      <span className="daily-hint daily-hint-moving" aria-hidden="true">
+        {/* The key changes with each example so the animation starts over. */}
+        <span key={cycle} className="daily-hint-text">
+          {moving}
+        </span>
+      </span>
+      <span className="daily-hint daily-hint-held" aria-hidden="true">
+        {held}
+        <span className="daily-hint-key">Tab</span>
+      </span>
+    </>
+  );
+}
+
+type HintField = 'name' | 'description';
+/** Tab alone accepts the example; with a modifier it keeps its usual meaning. */
+const acceptsExample = (event: KeyboardEvent) =>
+  event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
 
 export function DailyPersonaDialog({
   persona,
@@ -45,7 +99,11 @@ export function DailyPersonaDialog({
   const [name, setName] = useState(persona?.name ?? '');
   const [accountId, setAccountId] = useState(persona?.accountId ?? '');
   const [language, setLanguage] = useState<CaptionLanguage>(persona?.language ?? 'ko');
-  const [description, setDescription] = useState(persona?.description ?? '');
+  const [description, setDescription] = useState(() =>
+    dailyDescriptionValues(persona?.description ?? ''),
+  );
+  const setItem = (index: number, value: string) =>
+    setDescription(description.map((item, at) => (at === index ? value : item)));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // Until the account list arrives, neither the lock nor a removed account can be judged.
   const locked = !accountsLoaded || (!!persona && dailyAccountLocked(persona, posts, rows));
@@ -55,12 +113,23 @@ export function DailyPersonaDialog({
   const options = current && !choices.includes(current) ? [current, ...choices] : choices;
   const waiting =
     !!persona && posts.some((p) => p.personaId === persona.id && p.state === 'waiting');
+  const example = useDailyExample(!name || description.some((value) => !value));
+  // The example on screen as a field took focus; the other field keeps moving on.
+  const [held, setHeld] = useState<{ field: HintField; example: DailyPersonaExample } | null>(null);
+  const hold = (field: HintField) => ({
+    // Moving between the description items keeps the example they started with.
+    onFocus: () => setHeld((now) => (now?.field === field ? now : { field, example })),
+    onBlur: (event: FocusEvent<HTMLElement>) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setHeld(null);
+    },
+  });
+  const heldExample = (field: HintField) => (held?.field === field ? held.example : example);
   const selectable = options.some((row) => row.account!.id === accountId);
   const canSave =
     !busy &&
     accountsLoaded &&
     name.trim().length > 0 &&
-    description.trim().length > 0 &&
+    dailyDescriptionText(description).length > 0 &&
     selectable;
   return (
     <>
@@ -68,6 +137,8 @@ export function DailyPersonaDialog({
         title={persona ? '페르소나 설정' : '페르소나 만들기'}
         busy={busy}
         onClose={onClose}
+        // A new persona opens with no field focused so the example text is seen first.
+        focusInput={!!persona}
       >
         <form
           className="daily-form"
@@ -79,22 +150,35 @@ export function DailyPersonaDialog({
               name: name.trim(),
               accountId,
               language,
-              description,
+              description: dailyDescriptionText(description),
             }).then((saved) => {
               if (saved) onClose();
             });
           }}
         >
           <label htmlFor={`${id}-name`}>이름</label>
-          <input
-            id={`${id}-name`}
-            value={name}
-            maxLength={DAILY_NAME_LIMIT}
-            autoComplete="off"
-            placeholder="보드에 표시할 이름"
-            disabled={busy}
-            onChange={(event) => setName(event.target.value)}
-          />
+          <div className="daily-hint-field" {...hold('name')}>
+            <input
+              id={`${id}-name`}
+              value={name}
+              maxLength={DAILY_NAME_LIMIT}
+              autoComplete="off"
+              disabled={busy}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (name || !acceptsExample(event)) return;
+                event.preventDefault();
+                setName(heldExample('name').name);
+              }}
+            />
+            {!name && (
+              <DailyHint
+                moving={example.name}
+                held={heldExample('name').name}
+                cycle={example.name}
+              />
+            )}
+          </div>
           <label htmlFor={`${id}-account`}>연동 계정</label>
           <select
             id={`${id}-account`}
@@ -134,16 +218,38 @@ export function DailyPersonaDialog({
             ))}
           </select>
           <label htmlFor={`${id}-description`}>설명</label>
-          <textarea
-            id={`${id}-description`}
-            value={description}
-            rows={6}
-            maxLength={DAILY_DESCRIPTION_LIMIT}
-            placeholder="예: 30세 · 5살·4살 아들 둘 · 수원 거주 · 육아와 살림 고민이 많음 · 편한 반말"
-            disabled={busy}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-          <p className="daily-form-note">나이·가족·사는 곳·관심사·말투를 적어 주세요.</p>
+          <div className="daily-fields" {...hold('description')}>
+            {DAILY_DESCRIPTION_LABELS.map((label, index) => (
+              <label key={label} className="daily-field">
+                <span className="daily-field-name">{label}:</span>
+                <span className="daily-hint-field">
+                  <input
+                    id={index === 0 ? `${id}-description` : undefined}
+                    value={description[index]}
+                    maxLength={DESCRIPTION_VALUE_LIMIT}
+                    autoComplete="off"
+                    disabled={busy}
+                    onChange={(event) => setItem(index, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (description[index] || !acceptsExample(event)) return;
+                      event.preventDefault();
+                      setItem(index, heldExample('description').values[index]!);
+                    }}
+                  />
+                  {!description[index] && (
+                    <DailyHint
+                      moving={example.values[index]!}
+                      held={heldExample('description').values[index]!}
+                      cycle={example.name}
+                    />
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="daily-form-note">
+            항목 옆에 내용을 적어 주세요. 비워 둔 항목은 저장하지 않습니다.
+          </p>
           <div className="threads-actions managed-threads-dialog-actions daily-form-actions">
             {persona && (
               <button

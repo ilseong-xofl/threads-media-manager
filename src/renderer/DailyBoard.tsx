@@ -334,7 +334,11 @@ function PersonaColumn({
     !generating && groups.drafts.length + groups.waiting.length + groups.published.length === 0;
   const row = dailyAccountRow(persona.accountId, rows);
   const sendBlock = dailySendBlock(persona, rows, accountsLoaded);
-  const summary = persona.description.split('\n').find((line) => line.trim()) ?? '';
+  const summary = persona.description
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' · ');
   return (
     <section className="daily-column" aria-label={persona.name}>
       <div className="daily-column-head">

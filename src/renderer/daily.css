@@ -436,6 +436,128 @@ button.daily-card-text:disabled {
 .daily-form textarea:disabled {
   background: #f4f6f9;
 }
+/* The persona description: fixed item names, each with its own borderless input. */
+.daily-fields {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #dce1e8;
+  border-radius: 8px;
+  background: #fff;
+}
+.daily-fields:has(input:disabled) {
+  background: #f4f6f9;
+}
+.daily-fields:has(input:focus-visible) {
+  outline: 3px solid #9a9bea;
+  outline-offset: 3px;
+}
+.daily-form .daily-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+.daily-field-name {
+  flex: none;
+  min-width: 46px;
+  color: #5b6575;
+}
+.daily-field .daily-hint-field {
+  flex: 1;
+  min-width: 0;
+}
+.daily-fields input,
+.daily-fields input:disabled {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  min-height: 0;
+  background: transparent;
+  line-height: inherit;
+}
+.daily-fields input:focus-visible {
+  outline: none;
+}
+/* Example text that fades in and out over an empty field (2026-11-17, after Suno's create form). */
+.daily-hint-field {
+  position: relative;
+  display: grid;
+}
+.daily-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 13px;
+  font-size: 13px;
+  white-space: pre;
+  pointer-events: none;
+  transition: opacity 0.3s ease-in-out;
+}
+.daily-fields .daily-hint {
+  padding: 0;
+}
+.daily-hint-held {
+  color: #9aa3b0;
+  opacity: 0;
+}
+/* The description items hold their example together; only the focused one offers Tab. */
+.daily-hint-field:focus-within .daily-hint-moving,
+.daily-fields:focus-within .daily-hint-moving {
+  opacity: 0;
+}
+.daily-hint-field:focus-within .daily-hint-held,
+.daily-fields:focus-within .daily-hint-held {
+  opacity: 1;
+}
+.daily-hint-key {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid #dce1e8;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.daily-hint-field:not(:focus-within) .daily-hint-key {
+  display: none;
+}
+.daily-hint-text {
+  background: linear-gradient(90deg, #dce1e8 0%, #303b4b 50%, #dce1e8 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: daily-hint 4s ease-in-out both;
+}
+@keyframes daily-hint {
+  0% {
+    opacity: 0;
+    background-position: 100% 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    background-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .daily-hint-text {
+    background: none;
+    color: #8a93a1;
+    -webkit-text-fill-color: currentColor;
+    animation: none;
+  }
+}
 .daily-form-note {
   color: #8a93a1;
   font-size: 11px;

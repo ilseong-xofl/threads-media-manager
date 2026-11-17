@@ -128,3 +128,57 @@ export function dailyDay(value: string) {
 }
 
 export const dailyInitial = (name: string) => [...name.trim()][0] ?? '?';
+
+/** The fixed items of the persona description form. */
+export const DAILY_DESCRIPTION_LABELS = ['나이', '가족', '거주지', '관심사', '말투'];
+
+/** Example personas shown in the empty form; `values` follows `DAILY_DESCRIPTION_LABELS`. */
+export const dailyPersonaExamples = [
+  {
+    name: '연년생 아들맘',
+    values: ['30세', '남편, 5살·4살 아들', '수원', '육아, 살림, 아이 교육', '편한 반말, 솔직한 편'],
+  },
+  {
+    name: '자취 3년차 직장인',
+    values: [
+      '27세',
+      '혼자 삼, 고양이 한 마리',
+      '서울 마포구',
+      '퇴근 후 요리, 재테크',
+      '담담한 존댓말',
+    ],
+  },
+  {
+    name: '은퇴한 캠핑 아빠',
+    values: ['58세', '아내, 독립한 딸 하나', '강원 원주', '캠핑, 텃밭, 등산', '느긋한 존댓말'],
+  },
+  {
+    name: '새내기 대학생',
+    values: [
+      '20세',
+      '부모님, 고3 남동생',
+      '부산, 기숙사 생활',
+      '동아리, 알바, 맛집',
+      '발랄한 반말',
+    ],
+  },
+];
+
+export type DailyPersonaExample = (typeof dailyPersonaExamples)[number];
+
+/** The form values read back from a saved description; lines of no item are left out. */
+export function dailyDescriptionValues(description: string) {
+  const lines = description.split('\n');
+  return DAILY_DESCRIPTION_LABELS.map((label) => {
+    const line = lines.find((item) => item.startsWith(`${label}:`));
+    return line ? line.slice(label.length + 1).trim() : '';
+  });
+}
+
+/** The saved description: one `item: value` line for each item that was filled in. */
+export function dailyDescriptionText(values: string[]) {
+  return DAILY_DESCRIPTION_LABELS.flatMap((label, index) => {
+    const value = values[index]?.trim();
+    return value ? [`${label}: ${value}`] : [];
+  }).join('\n');
+}

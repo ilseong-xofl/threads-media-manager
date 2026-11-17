@@ -20,6 +20,7 @@ export function ManagedThreadsActionDialog({
   children,
   confirmation = false,
   returnFocusTo,
+  focusInput = true,
 }: {
   title: string;
   busy: boolean;
@@ -27,6 +28,8 @@ export function ManagedThreadsActionDialog({
   children: ReactNode;
   confirmation?: boolean;
   returnFocusTo?: HTMLElement | null;
+  /** False keeps the first field unfocused as the dialog opens. */
+  focusInput?: boolean;
 }) {
   const id = useId();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -39,7 +42,10 @@ export function ManagedThreadsActionDialog({
       openerRef.current ??
       (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     element?.showModal();
-    (element?.querySelector<HTMLInputElement>('input:not(:disabled)') ?? close.current)?.focus();
+    (
+      (focusInput ? element?.querySelector<HTMLInputElement>('input:not(:disabled)') : null) ??
+      close.current
+    )?.focus();
     return () => {
       element?.close();
       // React removes the child and re-enables its opener in the same commit. Native dialog
