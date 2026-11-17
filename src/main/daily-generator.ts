@@ -35,18 +35,34 @@ const PLAIN_STYLE = [
   'Use only evergreen everyday topics. Do not mention dates, weather events, news, holidays, sales, new releases, sold-out products, prices, or anything that depends on the current time or on facts you cannot know. Do not name real people.',
   'Write like a casual phone-typed Threads post: one to four short lines, usually 20 to 150 characters. At most two emoji per post, and none in some posts.',
 ].join('\n');
-// 2026-11-18: written against real posts of ordinary Japanese accounts on Threads. Posts made
-// from the plain style were correct Japanese but read as tidy remarks, not as someone's own post.
+// 2026-11-18: written against real posts of ordinary accounts on Threads in each language. Posts
+// made from the plain style were correct but read as tidy remarks, not as someone's own post.
+const SITUATION =
+  "Each post starts from one concrete situation in this person's own life and gives the specifics that make it theirs: who is involved and how old, what happened or what they already tried, the kind of item, shop or place. Do not write general remarks about how daily life always goes, and do not end on a clever punchline.";
+const kinds = (closing: string) =>
+  `Make the three posts differ in kind and in length. At most one of them may be a cute or funny thing that just happened. The others are about something the person wants solved or decided for themselves: a worry about their own body, looks or health at their age, what to buy or which brand or shop to go to, how to plan an outing or trip, a practical problem at home. One may be a single line; another may take four to seven short lines to explain the situation before asking. Not every post needs a question, and do not close each question with the same phrase such as ${closing}.`;
+const NAMING =
+  'Where a real post would name it, name the actual well-known chain shop, brand, kind of product or place near where the persona lives instead of saying "a shop" or "a brand"; only ask about it or complain, as real posts do. Do not mention specific dates, weather events, news, holidays, current sales, new releases, stock or sold-out status, prices, or anything else that depends on the current time or on facts you cannot know. Do not name real people.';
 const JAPANESE_STYLE = [
   'These must read like posts an ordinary person in Japan types on a phone in the moment, not like tidy copy or a witty observation.',
-  "Each post starts from one concrete situation in this person's own life and gives the specifics that make it theirs: who is involved and how old, what happened or what they already tried, the kind of item, shop or place. Do not write general remarks about how daily life always goes, and do not end on a clever punchline.",
-  'Make the three posts differ in kind and in length. At most one of them may be a cute or funny thing that just happened. The others are about something the person wants solved or decided for themselves: a worry about their own body, looks or health at their age, what to buy or which brand or shop to go to, how to plan an outing or trip, a practical problem at home. One may be a single line; another may take four to seven short lines to explain the situation before asking. Not every post needs a question, and do not close each question with the same phrase such as みんな〜？.',
+  SITUATION,
+  kinds('みんな〜？'),
   "Type the way people do on Japanese Threads: one thought per line, usually no 。 at the end of a line, plain form and です/ます mixed loosely as the persona's tone allows, with spoken endings and fillers where they fit (〜なんだけど, 〜かな？, 〜のかな, 〜してます, 教えてください, 笑, 、、, a drawn-out ー).",
+  'Keep it as rough as phone typing is: leave out the subject, break off without finishing the sentence (〜なんだけど / 〜で💦 / 〜かな、、), say things in the order they come to mind and add an afterthought on a new line (ちなみに〜 / あと〜). Use 笑, ！！, ？？ or a drawn-out ーー in some posts. Do not arrange every post as situation, details, then a polite question; once the ask is out, stop, and never add a closing remark. The quoted phrases only show the texture: use a different way in each post, and never open a post the way one of recentPosts opens.',
   'Emoji are part of this voice: put one at the end of most lines, repeat it when the feeling is strong (😭😭), and pick the ones Japanese users reach for in that mood (😭 💦 🥲 🤣 😂 🫠 🙏 🤔, or a plain object emoji). Only a short flat remark may have none.',
-  'Where a real post would name it, name the actual well-known chain shop, brand, kind of product or place near where the persona lives instead of saying "a shop" or "a brand"; only ask about it or complain, as real posts do. Do not mention specific dates, weather events, news, holidays, current sales, new releases, stock or sold-out status, prices, or anything else that depends on the current time or on facts you cannot know. Do not name real people.',
+  NAMING,
+].join('\n');
+const ENGLISH_STYLE = [
+  'These must read like posts an ordinary person in the persona\'s country types on a phone in the moment, not like tidy copy, a one-liner with a punchline, or an engagement line such as "Nobody talks about how…" or "Moms, tell me yours do this too".',
+  SITUATION,
+  kinds('"Does anyone else…?"'),
+  'Type the way people do on English-language Threads: conversational and a little unpolished, in the everyday spelling and words of the persona\'s country (American English when the home is not in an English-speaking country). Sentences run on, with dashes, "..." and asides in parentheses; the ask often comes first and the context after. Let the person have an attitude where it fits: mild exasperation, laughing at themselves, heading off the obvious reply ("and yes, I already tried…").',
+  'Keep it as rough as phone typing is: start some posts mid-thought or straight on the question ("so", "why does", "is it normal that", "Found out today that", "update:"), drop the subject where people do ("Tried the tabs, still falling down"), use plain everyday words and the occasional filler (honestly, literally, idk, lol), double a ?? or !! when it fits, and let a sentence trail off or add an afterthought on a new line. A lowercase start or a missing apostrophe is fine in one of the three. Do not tidy a post into setup, detail, question and a closing remark; once the ask is out, stop. The quoted phrases only show the texture: use a different way in each post, and never open a post the way one of recentPosts opens.',
+  'Emoji are sparse in this voice: most posts have none, and a post that has any has one or two where the feeling calls for it (😭 😅 🙃 🫠).',
+  NAMING,
 ].join('\n');
 const STYLE: Record<CaptionLanguage, string> = {
-  en: PLAIN_STYLE,
+  en: ENGLISH_STYLE,
   ko: PLAIN_STYLE,
   ja: JAPANESE_STYLE,
 };
@@ -55,7 +71,7 @@ const OUTPUT =
 // The operator reads Korean; a post in another language comes with what it says in Korean.
 const TRANSLATED_OUTPUT = [
   'Return only the required JSON object with posts: an array of exactly three objects, no explanation or markdown wrapper. The three text values must be different nonempty strings.',
-  'In each object, text is the post itself. korean tells a Korean reader what that post says: write it the way the same person would casually type the same post in Korean, natural and idiomatic rather than word for word, keeping the tone, the line breaks and any emoji, with Korean punctuation and fillers in place of the original ones (ㅋㅋ, ㅠㅠ, .. and the like). korean is only a reading aid for the Korean-speaking operator and is never posted, so it must not add, drop or soften anything the post says.',
+  'In each object, text is the post itself. korean tells a Korean reader what that post says: write it the way the same person would casually type the same post in Korean, natural and idiomatic rather than word for word, keeping the tone, the line breaks and any emoji, with Korean punctuation and fillers in place of the original ones (ㅋㅋ, ㅠㅠ, .., ~ and the like, never marks such as ー or 、). korean is only a reading aid for the Korean-speaking operator and is never posted, so it must not add, drop or soften anything the post says.',
 ].join('\n');
 
 const TRANSLATION = [

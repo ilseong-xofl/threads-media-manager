@@ -111,14 +111,14 @@ describe('daily post generation', () => {
     // A Korean persona needs no Korean rendering of its own posts.
     expect(daily.at(-1)).not.toContain('korean');
   });
-  it('gives Japanese its own writing style and leaves the other languages as they were', () => {
+  it('gives Japanese and English their own writing style and leaves Korean as it was', () => {
     const prompt = (language: 'ko' | 'ja' | 'en') => dailyArguments('/tmp/x', language).at(-1)!;
     expect(prompt('ja')).toContain('Japanese Threads');
-    expect(prompt('ja')).not.toContain('At most two emoji');
-    for (const language of ['ko', 'en'] as const) {
-      expect(prompt(language)).toContain('At most two emoji');
-      expect(prompt(language)).not.toContain('Japanese Threads');
-    }
+    expect(prompt('en')).toContain('English-language Threads');
+    expect(prompt('ko')).toContain('At most two emoji');
+    for (const language of ['ja', 'en'] as const)
+      expect(prompt(language)).not.toContain('At most two emoji');
+    expect(prompt('ko')).not.toContain('Threads:');
     // Every language keeps the rules about time-bound facts and the length limit.
     for (const language of ['ko', 'ja', 'en'] as const) {
       expect(prompt(language)).toContain('sold-out');
