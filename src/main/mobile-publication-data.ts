@@ -39,8 +39,9 @@ export function parseSource(v: unknown): MobilePublicationSource {
     commentUpdatedAt: v.commentUpdatedAt,
   };
 }
-export function parseMedia(v: unknown): MobilePublicationMedia[] {
-  if (!Array.isArray(v) || v.length < 1 || v.length > 20) return fail();
+/** `min` is 0 only for daily text posts; every library publication has media. */
+export function parseMedia(v: unknown, min = 1): MobilePublicationMedia[] {
+  if (!Array.isArray(v) || v.length < min || v.length > 20) return fail();
   const result = v.map((m, i): MobilePublicationMedia => {
     if (
       !isObject(m) ||
@@ -83,7 +84,7 @@ export function parseComment(v: unknown): MobilePublication['comment'] {
     return fail();
   return { caption: v.caption, link: v.link };
 }
-export function parsePublication(v: unknown): MobilePublication {
+export function parsePublication(v: unknown, minMedia = 1): MobilePublication {
   if (
     !isObject(v) ||
     !uuid(v.id) ||
@@ -112,17 +113,17 @@ export function parsePublication(v: unknown): MobilePublication {
     status: v.status as MobilePublication['status'],
     caption: v.caption,
     comment: parseComment(v.comment),
-    media: parseMedia(v.media),
+    media: parseMedia(v.media, minMedia),
     sentAt: v.sentAt,
     deadlineAt: v.deadlineAt,
     rootStatus: v.rootStatus,
     commentStatus: v.commentStatus,
   };
 }
-export function parsePublications(v: unknown): MobilePublication[] {
+export function parsePublications(v: unknown, minMedia = 1): MobilePublication[] {
   if (!isObject(v) || !Array.isArray(v.publications) || v.publications.length > 10000)
     return fail();
-  const rows = v.publications.map(parsePublication);
+  const rows = v.publications.map((p: unknown) => parsePublication(p, minMedia));
   if (
     new Set(rows.map((r) => r.id)).size !== rows.length ||
     new Set(rows.map((r) => r.requestId)).size !== rows.length
@@ -145,8 +146,8 @@ export function parseStatuses(v: unknown): MobilePublicationStatus[] {
       : fail(),
   );
 }
-export function parsePublicationResponse(v: unknown): MobilePublication {
-  return isObject(v) ? parsePublication(v.publication) : fail();
+export function parsePublicationResponse(v: unknown, minMedia = 1): MobilePublication {
+  return isObject(v) ? parsePublication(v.publication, minMedia) : fail();
 }
 
 export interface PublicationRequest {

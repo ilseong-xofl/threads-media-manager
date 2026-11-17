@@ -1,6 +1,7 @@
 import type { AppAuthState } from './service-auth';
 import type { ThreadsApiMethods } from './threads-api';
 import type { ManagedThreadsMethods } from './managed-threads';
+import type { DailyMethods } from './daily';
 import type {
   MobilePublicationMethods,
   MobilePublicationStatusesResult,
@@ -26,6 +27,14 @@ export const IPC = {
   retryMobilePublication: 'tmm:mobile-publications:retry',
   cancelPendingMobilePublication: 'tmm:mobile-publications:cancel-pending',
   recallMobilePublication: 'tmm:mobile-publications:recall',
+  daily: 'tmm:daily:state',
+  saveDailyPersona: 'tmm:daily:persona-save',
+  deleteDailyPersona: 'tmm:daily:persona-delete',
+  generateDailyPosts: 'tmm:daily:generate',
+  saveDailyPost: 'tmm:daily:post-save',
+  deleteDailyPost: 'tmm:daily:post-delete',
+  sendDailyPost: 'tmm:daily:send',
+  cancelDailySend: 'tmm:daily:cancel-send',
   capabilities: 'tmm:app:capabilities',
   reportUpdateBlocked: 'tmm:app:update-blocked',
   chatGptState: 'tmm:chatgpt:state',
@@ -240,7 +249,7 @@ export type ChatGptResult =
   | { status: 'error'; state: ChatGptState; problem: Problem };
 
 export interface ThreadsMediaApi
-  extends ThreadsApiMethods, ManagedThreadsMethods, MobilePublicationMethods {
+  extends ThreadsApiMethods, ManagedThreadsMethods, MobilePublicationMethods, DailyMethods {
   getMobilePublicationStatuses(): Promise<MobilePublicationStatusesResult>;
   getAuthState(): Promise<AppAuthState>;
   signIn(accountId: string, password: string): Promise<AppAuthState>;

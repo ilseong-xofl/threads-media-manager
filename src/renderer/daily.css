@@ -1,0 +1,455 @@
+.mode-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+}
+.library-heading .mode-tabs {
+  grid-column: 1;
+  grid-row: 1;
+}
+.mode-tabs button {
+  min-height: 0;
+  padding: 4px 0 10px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #667085;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  gap: 10px;
+}
+.mode-tabs button:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: #17202e;
+}
+.mode-tabs button[aria-pressed='true'] {
+  border-bottom-color: var(--accent);
+  color: #17202e;
+}
+.mode-tabs button > span {
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: #e9ebf1;
+  color: #566072;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.mode-tabs button[aria-pressed='true'] > span {
+  background: #eaeafa;
+  color: #4a4cc0;
+}
+
+.daily-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.daily-heading-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.daily-heading-copy p {
+  color: #5b6575;
+}
+button.daily-add-persona {
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.daily-add-persona .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.daily-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+button.daily-arrow {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-color: #dfe2ea;
+  border-radius: 12px;
+  color: #3d4757;
+}
+button.daily-arrow:disabled {
+  border-color: #e3e6ec;
+  background: #f0f1f5;
+  color: #98a1b0;
+  opacity: 1;
+}
+.daily-strip {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+.daily-strip-shown {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #c9caf0;
+  border-radius: 14px;
+  background: #fff;
+}
+button.daily-chip {
+  flex: none;
+  min-height: 44px;
+  padding: 5px 12px 5px 8px;
+  border-radius: 12px;
+  color: #3d4757;
+  font-size: 13px;
+  font-weight: 400;
+  gap: 8px;
+}
+button.daily-chip.is-shown {
+  min-height: 36px;
+  padding: 5px 12px 5px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: #eaeafa;
+  color: #17202e;
+  font-weight: 600;
+}
+.daily-chip-badge {
+  color: #4a4cc0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.daily-range {
+  flex: none;
+  color: #5b6575;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.daily-avatar {
+  display: grid;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #475569;
+  color: #fff;
+  font-weight: 600;
+  place-items: center;
+}
+.daily-avatar.is-small {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.daily-board {
+  width: 100%;
+}
+.daily-columns {
+  display: grid;
+  gap: 16px;
+}
+.daily-column {
+  display: flex;
+  min-width: 0;
+  height: max(460px, calc(100vh - 300px));
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  background: #eceef4;
+}
+.daily-column-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e0e3e9;
+  border-radius: 14px;
+  background: #fff;
+}
+.daily-persona {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.daily-persona-name {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.daily-persona-name strong {
+  font-size: 15px;
+  letter-spacing: -0.2px;
+}
+.daily-persona-name strong,
+.daily-persona-name span,
+.daily-persona-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.daily-persona-name span,
+.daily-persona-summary {
+  color: #5b6575;
+  font-size: 12px;
+}
+.daily-persona-summary {
+  line-height: 1.5;
+}
+button.daily-icon-button {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #5b6575;
+}
+.daily-card-actions button.daily-icon-button {
+  width: 36px;
+  height: 36px;
+}
+.daily-card-actions .daily-icon-button .icon {
+  width: 16px;
+  height: 16px;
+}
+button.daily-generate {
+  min-height: 40px;
+  border-color: #c9caf0;
+  border-radius: 11px;
+  background: #eaeafa;
+  color: #4a4cc0;
+  font-size: 14px;
+}
+button.daily-generate.is-first {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+button.daily-generate.is-first:hover:not(:disabled) {
+  border-color: #4f51c5;
+  background: #4f51c5;
+  color: #fff;
+}
+button.daily-generate:disabled {
+  border-color: #e0e3e9;
+  background: #f0f1f5;
+  color: #566072;
+  opacity: 1;
+}
+.daily-generate .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.daily-posts {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.daily-group-title {
+  padding: 8px 4px 0;
+  color: #566072;
+  font-size: 12px;
+  font-weight: 600;
+}
+.daily-group-title:first-child {
+  padding-top: 4px;
+}
+.daily-card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e0e3e9;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(25, 34, 49, 0.05);
+}
+.daily-card.is-waiting {
+  gap: 10px;
+  box-shadow: none;
+}
+.daily-card.is-published {
+  gap: 8px;
+  padding: 12px 14px;
+  border-color: #e3e6ec;
+  background: #f8f9fb;
+  box-shadow: none;
+}
+button.daily-card-text {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #17202e;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+button.daily-card-text:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  color: #4a4cc0;
+}
+button.daily-card-text:disabled {
+  opacity: 1;
+}
+.daily-card-body {
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.daily-card.is-published .daily-card-body {
+  color: #3d4757;
+  line-height: 1.55;
+}
+.daily-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.daily-card-footer > span,
+.daily-card-meta {
+  color: #5b6575;
+  font-size: 12px;
+}
+.daily-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.daily-card-note {
+  color: #b45309;
+  font-weight: 600;
+}
+.daily-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.daily-card-actions.is-end {
+  justify-content: flex-end;
+}
+.daily-card-actions button {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.daily-card-skeleton {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px;
+  border: 1px dashed #c9caf0;
+  border-radius: 14px;
+  background: #fff;
+}
+.daily-card-skeleton div {
+  height: 11px;
+  border-radius: 6px;
+  background: #e6e8f3;
+}
+.daily-card-skeleton div:nth-child(1) {
+  width: 92%;
+}
+.daily-card-skeleton div:nth-child(2) {
+  width: 78%;
+}
+.daily-card-skeleton div:nth-child(3) {
+  width: 46%;
+}
+.daily-column-empty {
+  display: grid;
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 24px;
+  color: #5b6575;
+  line-height: 1.6;
+  text-align: center;
+  place-items: center;
+}
+
+.daily-form {
+  display: grid;
+  gap: 8px;
+}
+.daily-form label {
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.daily-form input,
+.daily-form select,
+.daily-form textarea {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dce1e8;
+  border-radius: 8px;
+  background: #fff;
+  color: #303b4b;
+  font-size: 13px;
+}
+.daily-form textarea {
+  line-height: 1.6;
+  resize: vertical;
+}
+.daily-form input:disabled,
+.daily-form select:disabled,
+.daily-form textarea:disabled {
+  background: #f4f6f9;
+}
+.daily-form-note {
+  color: #8a93a1;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.daily-form-count {
+  color: #5b6575;
+  font-size: 12px;
+  text-align: right;
+}
+.daily-form-count.is-over {
+  color: #b55b5b;
+  font-weight: 600;
+}
+.daily-form-actions .daily-form-delete {
+  margin-right: auto;
+}

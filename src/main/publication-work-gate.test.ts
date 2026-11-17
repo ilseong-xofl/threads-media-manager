@@ -6,7 +6,7 @@ import { mobilePublicationBlocks } from './publication-work-gate';
 
 describe('publication and local mutation barrier', () => {
   it('allows simultaneous account/history reads but blocks account mutations, file edits and restores', () => {
-    for (const read of [IPC.mobilePublications, IPC.managedThreadsAccounts, IPC.current])
+    for (const read of [IPC.mobilePublications, IPC.managedThreadsAccounts, IPC.current, IPC.daily])
       expect(mobilePublicationBlocks(read, true)).toBe(false);
     for (const mutation of [
       IPC.deleteManagedThreadsAccount,
@@ -17,6 +17,10 @@ describe('publication and local mutation barrier', () => {
       IPC.deleteMedia,
       IPC.restoreDatabase,
       IPC.deletePostDraft,
+      IPC.sendDailyPost,
+      IPC.cancelDailySend,
+      IPC.generateDailyPosts,
+      IPC.saveDailyPersona,
     ])
       expect(mobilePublicationBlocks(mutation, true)).toBe(true);
   });

@@ -22,6 +22,14 @@ const api: ThreadsMediaApi = {
   cancelPendingMobilePublication: (input) =>
     ipcRenderer.invoke(IPC.cancelPendingMobilePublication, input),
   recallMobilePublication: (input) => ipcRenderer.invoke(IPC.recallMobilePublication, input),
+  getDaily: () => ipcRenderer.invoke(IPC.daily),
+  saveDailyPersona: (input) => ipcRenderer.invoke(IPC.saveDailyPersona, input),
+  deleteDailyPersona: (input) => ipcRenderer.invoke(IPC.deleteDailyPersona, input),
+  generateDailyPosts: (input) => ipcRenderer.invoke(IPC.generateDailyPosts, input),
+  saveDailyPost: (input) => ipcRenderer.invoke(IPC.saveDailyPost, input),
+  deleteDailyPost: (input) => ipcRenderer.invoke(IPC.deleteDailyPost, input),
+  sendDailyPost: (input) => ipcRenderer.invoke(IPC.sendDailyPost, input),
+  cancelDailySend: (input) => ipcRenderer.invoke(IPC.cancelDailySend, input),
   signIn: (accountId, password) => ipcRenderer.invoke(IPC.signIn, accountId, password),
   signOut: () => ipcRenderer.invoke(IPC.signOut),
   changePassword: (currentPassword, newPassword) =>

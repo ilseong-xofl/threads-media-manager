@@ -22,6 +22,10 @@ import { ServiceAccess } from './service-access';
 import { ManagedThreadsManager, tokenRefreshWindowDays } from './managed-threads';
 import { EncryptedManagedThreadsStore } from './managed-threads-store';
 import { handleManagedThreadsRequest } from './managed-threads-ipc';
+import { DailyController } from './daily';
+import { DailyGenerator } from './daily-generator';
+import { handleDailyRequest } from './daily-ipc';
+import { DailyStore } from './daily-store';
 import { createMetaTokenClient } from './meta-token-client';
 import { MetaTokenLog } from './meta-token-log';
 import squirrelStartup from 'electron-squirrel-startup';
@@ -268,8 +272,9 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
 const chatGpt: CodexConnection = new CodexConnection(
   join(app.getPath('userData'), 'codex'),
   undefined,
-  () => captions.active || content.active,
+  () => captions.active || content.active || dailyGenerator.active,
 );
+const dailyGenerator = new DailyGenerator(chatGpt);
 const captions = new CaptionGenerator(
   runtimeRoot,
   (root) => controller.refresh(root),
@@ -564,9 +569,16 @@ const mobilePublications: MobilePublicationsController = new MobilePublicationsC
     content.active ||
     chatGpt.active ||
     threads.active ||
+    daily.active ||
     managedAccountMutations > 0,
   prepareMedia: (root, ids, directory) =>
     prepareThreadsMedia(registry, root, ids, directory, webpToPng),
+});
+const daily: DailyController = new DailyController({
+  client: serviceClient,
+  store: new DailyStore(app.getPath('userData')),
+  service: serviceOrigin ?? 'unconfigured',
+  generate: (persona, recentPosts) => dailyGenerator.generate(persona, recentPosts),
 });
 async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
   try {
@@ -653,6 +665,7 @@ function updateBusy(): boolean {
     chatGpt.active ||
     maintenance.active ||
     threads.active ||
+    daily.active ||
     mobilePublications?.active
   );
 }
@@ -706,7 +719,7 @@ function createWindow(): void {
       explainManagedAccountWork();
       return;
     }
-    if (threads.active || mobilePublications?.active) {
+    if (threads.active || mobilePublications?.active || daily.busy) {
       event.preventDefault();
       explainActiveThreads();
       return;
@@ -731,6 +744,7 @@ function createWindow(): void {
           draftDeletions.active ||
           captions.active ||
           content.active ||
+          dailyGenerator.active ||
           chatGpt.active
         )) ||
       closing
@@ -748,6 +762,7 @@ function createWindow(): void {
       draftDeletions.shutdown(),
       captions.cancelAndWait(),
       content.cancelAndWait(),
+      dailyGenerator.cancelAndWait(),
       chatGpt.cancelAndWait(),
     ]).finally(() => {
       closing = true;
@@ -857,6 +872,11 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             [IPC.signIn, IPC.signOut, IPC.changePassword].some((c) => c === channel)
           )
             throw new Error('게시 대기 전송이 끝난 뒤 계정 작업을 진행하세요.');
+          if (
+            daily.active &&
+            [IPC.signIn, IPC.signOut, IPC.changePassword].some((c) => c === channel)
+          )
+            throw new Error('일상 글 작업이 끝난 뒤 계정 작업을 진행하세요.');
           if (channel === IPC.signIn || channel === IPC.changePassword) {
             if (args.length !== 2 || typeof args[0] !== 'string' || typeof args[1] !== 'string')
               throw new Error('Invalid auth input');
@@ -904,6 +924,19 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               managedAccountOperations -= 1;
               if (mutation) managedAccountMutations -= 1;
             }
+          }
+          if (channel.startsWith('tmm:daily:')) {
+            const result = await handleDailyRequest(channel, args, daily);
+            if (authMutation || requestAuthGeneration !== authGeneration)
+              throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+            if (
+              result.problem &&
+              ['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(result.problem.code)
+            )
+              await serviceAccess.check();
+            if (authMutation || requestAuthGeneration !== authGeneration)
+              throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+            return result;
           }
           await initializeLibrary();
           if (mobilePublicationBlocks(channel, mobilePublications.active))
@@ -1405,7 +1438,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       explainManagedAccountWork();
       return;
     }
-    if (threads.active || mobilePublications?.active) {
+    if (threads.active || mobilePublications?.active || daily.busy) {
       event.preventDefault();
       explainActiveThreads();
       return;
@@ -1430,6 +1463,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           draftDeletions.active ||
           captions.active ||
           content.active ||
+          dailyGenerator.active ||
           chatGpt.active
         )) ||
       closing
@@ -1447,6 +1481,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       draftDeletions.shutdown(),
       captions.shutdown(),
       content.shutdown(),
+      dailyGenerator.shutdown(),
       chatGpt.shutdown(),
     ]).finally(() => {
       closing = true;

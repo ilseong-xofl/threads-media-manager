@@ -9,6 +9,10 @@ export interface UpdateUiState {
   accountsOpen: boolean;
   contentPostKey: string | null;
   confirmDownload: boolean;
+  /** A persona, draft or confirmation window of the daily board is open. */
+  dailyDialogOpen: boolean;
+  /** A daily generation, send, cancel or other daily change has not returned yet. */
+  dailyWorking: boolean;
 }
 
 /** Keep open editors protected even before the user starts saving their work. */
@@ -23,7 +27,9 @@ export function updateBlockedByUi(state: UpdateUiState): boolean {
     state.settingsOpen ||
     state.accountsOpen ||
     state.contentPostKey !== null ||
-    state.confirmDownload
+    state.confirmDownload ||
+    state.dailyDialogOpen ||
+    state.dailyWorking
   );
 }
 

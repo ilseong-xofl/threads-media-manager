@@ -12,6 +12,8 @@ const idle: UpdateUiState = {
   accountsOpen: false,
   contentPostKey: null,
   confirmDownload: false,
+  dailyDialogOpen: false,
+  dailyWorking: false,
 };
 function deferred() {
   let resolve!: () => void;
@@ -35,6 +37,8 @@ describe('update restart protection', () => {
     ['account management with an unsaved token form', { accountsOpen: true }],
     ['AI draft dialog', { contentPostKey: 'post:1' }],
     ['download confirmation before its worker exists', { confirmDownload: true }],
+    ['daily persona, draft or confirmation window', { dailyDialogOpen: true }],
+    ['daily generation, send or cancel call', { dailyWorking: true }],
   ])('blocks during %s even while every main worker could still be idle', (_name, change) => {
     expect(updateBlockedByUi({ ...idle, ...change })).toBe(true);
   });

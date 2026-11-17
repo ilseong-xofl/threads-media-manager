@@ -45,6 +45,8 @@ import { useThreadsApi } from './use-threads-api';
 import { latestPublication } from './ThreadsPublicationPanel';
 import { createUpdateBlockReporter, updateBlockedByUi } from './update-blocker';
 import { createDownloadPolling, downloadPollingDelay } from './download-polling';
+import { DailyBoard } from './DailyBoard';
+import { useDaily } from './use-daily';
 
 const captionCacheKey = (root: string, postKey: string) => JSON.stringify([root, postKey]);
 
@@ -90,6 +92,9 @@ export function App({
   const [savingComment, setSavingComment] = useState(false);
   const commentPending = useRef(false);
   const [libraryTab, setLibraryTab] = useState<'source' | 'registered'>('source');
+  const [mode, setMode] = useState<'collection' | 'daily'>('collection');
+  const [dailyDialogOpen, setDailyDialogOpen] = useState(false);
+  const daily = useDaily(serviceAvailable);
   const [registration, setRegistration] = useState<{
     postKey: string;
     mode: 'view' | 'edit';
@@ -194,6 +199,8 @@ export function App({
       accountsOpen,
       contentPostKey,
       confirmDownload,
+      dailyDialogOpen,
+      dailyWorking: daily.working,
     });
   useLayoutEffect(() => {
     const reporter = createUpdateBlockReporter((blocked) =>
@@ -304,6 +311,7 @@ export function App({
     snapshot?.root,
     detail?.key,
     registrationPost?.key,
+    mode,
   ]);
   function resetList() {
     setPage(1);
@@ -737,6 +745,20 @@ export function App({
     setDateRange(defaultDateRange());
     resetList();
   }, [snapshot?.root]);
+  const modeTabs = (
+    <div className="mode-tabs" role="group" aria-label="업무 종류">
+      <button
+        type="button"
+        aria-pressed={mode === 'collection'}
+        onClick={() => setMode('collection')}
+      >
+        수집 <span>{savedPosts.length}</span>
+      </button>
+      <button type="button" aria-pressed={mode === 'daily'} onClick={() => setMode('daily')}>
+        일상 {daily.loaded && <span>{daily.view.personas.length}</span>}
+      </button>
+    </div>
+  );
   return (
     <div className="app">
       <header className="header">
@@ -748,49 +770,57 @@ export function App({
             <h1>Threads Media Manager</h1>
           </div>
           <div className="actions">
-            <button
-              className="refresh-button"
-              onClick={() => {
-                setStatusRequest((n) => n + 1);
-                void act(() => window.threadsMedia.refresh());
-              }}
-              disabled={
-                busy || downloading || !!exporting || localMutation || (!snapshot && !view.error)
-              }
-            >
-              <Icon name="refresh" />
-              {busy ? '읽는 중…' : '새로고침'}
-            </button>
-            <button
-              className={`download-button ${pendingPosts === 0 && !download.resumable && !downloadRecovery && !deletionRecovery ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
-              onClick={() => {
-                if (deletionRecovery) void deleteMedia();
-                else if (downloadRecovery)
-                  void downloadAction(() => window.threadsMedia.recoverDownloads());
-                else setConfirmDownload(true);
-              }}
-              disabled={
-                busy ||
-                downloading ||
-                !!exporting ||
-                localMutation ||
-                (!deletionRecovery &&
-                  !downloadRecovery &&
-                  !download.resumable &&
-                  pendingPosts === 0)
-              }
-            >
-              <Icon name="download" />
-              {deletionRecovery
-                ? '삭제 작업 복구'
-                : downloadRecovery
-                  ? '로컬 저장 복구'
-                  : download.resumable
-                    ? '이어서 다운로드'
-                    : pendingPosts > 0
-                      ? `다운로드 (${pendingPosts})`
-                      : '다운로드'}
-            </button>
+            {mode === 'collection' && (
+              <>
+                <button
+                  className="refresh-button"
+                  onClick={() => {
+                    setStatusRequest((n) => n + 1);
+                    void act(() => window.threadsMedia.refresh());
+                  }}
+                  disabled={
+                    busy ||
+                    downloading ||
+                    !!exporting ||
+                    localMutation ||
+                    (!snapshot && !view.error)
+                  }
+                >
+                  <Icon name="refresh" />
+                  {busy ? '읽는 중…' : '새로고침'}
+                </button>
+                <button
+                  className={`download-button ${pendingPosts === 0 && !download.resumable && !downloadRecovery && !deletionRecovery ? 'is-empty' : 'primary'} ${pendingPosts > 0 && !downloading ? 'has-pending' : ''}`}
+                  onClick={() => {
+                    if (deletionRecovery) void deleteMedia();
+                    else if (downloadRecovery)
+                      void downloadAction(() => window.threadsMedia.recoverDownloads());
+                    else setConfirmDownload(true);
+                  }}
+                  disabled={
+                    busy ||
+                    downloading ||
+                    !!exporting ||
+                    localMutation ||
+                    (!deletionRecovery &&
+                      !downloadRecovery &&
+                      !download.resumable &&
+                      pendingPosts === 0)
+                  }
+                >
+                  <Icon name="download" />
+                  {deletionRecovery
+                    ? '삭제 작업 복구'
+                    : downloadRecovery
+                      ? '로컬 저장 복구'
+                      : download.resumable
+                        ? '이어서 다운로드'
+                        : pendingPosts > 0
+                          ? `다운로드 (${pendingPosts})`
+                          : '다운로드'}
+                </button>
+              </>
+            )}
             <AppAccountMenu
               displayName={displayName}
               disabled={
@@ -799,7 +829,8 @@ export function App({
                 busy ||
                 downloading ||
                 !!exporting ||
-                localMutation
+                localMutation ||
+                daily.working
               }
               onAccounts={() => setAccountsOpen(true)}
               onSettings={() => setSettingsOpen(true)}
@@ -810,321 +841,332 @@ export function App({
         </div>
       </header>
       <main className="library-content">
-        <div className="library-heading">
-          <h2>
-            {libraryTab === 'source' ? '수집' : '등록'}{' '}
-            <span className="post-total">
-              {libraryTab === 'source' ? savedPosts.length : registeredPosts.length}
-            </span>
-          </h2>
-          <p>
-            {libraryTab === 'source'
-              ? '이미지와 영상을 한곳에서 살펴보세요.'
-              : '선택한 미디어와 캡션을 확인하고 수정하세요.'}
-          </p>
-          <div className="folder">
-            <Icon name="folder" />
-            <span title={snapshot?.root}>{snapshot?.root ?? '연결된 수집 폴더가 없습니다'}</span>
-          </div>
-          {snapshot && (
-            <span className="collection-updated">
-              {displayDate(snapshot.loadedAt)} {view.error ? '마지막 확인' : '갱신'}
-            </span>
-          )}
-        </div>
-        <div className="library-tabs-row">
-          <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
-            <button
-              type="button"
-              aria-pressed={libraryTab === 'source'}
-              onClick={() => {
-                setLibraryTab('source');
-                setAccount('');
-                setSelected(null);
-                resetList();
-              }}
-            >
-              수집 <span>{savedPosts.length}</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={libraryTab === 'registered'}
-              onClick={() => {
-                setLibraryTab('registered');
-                setAccount('');
-                setSelected(null);
-                resetList();
-              }}
-            >
-              등록 <span>{registeredPosts.length}</span>
-            </button>
-          </div>
-          {libraryTab === 'registered' && (
-            <button
-              type="button"
-              className="primary local-post-create"
-              disabled={
-                busy ||
-                downloading ||
-                !!exporting ||
-                localMutation ||
-                (!snapshot && !localPostRecovery) ||
-                (!!view.error && !localPostRecovery) ||
-                deletionRecovery ||
-                !!draftProblem
-              }
-              onClick={() => setLocalPostOpen(true)}
-            >
-              <Icon name="plus" /> 등록
-            </button>
-          )}
-        </div>
-        <div className="toolbar">
-          <div className="filters">
-            <label className="sr-only" htmlFor="account">
-              계정 필터
-            </label>
-            <div className="select-field">
-              <select
-                id="account"
-                disabled={downloading}
-                value={account}
-                onChange={(e) => {
-                  setAccount(e.target.value);
-                  resetList();
-                }}
-              >
-                <option value="">전체 계정</option>
-                {accounts.map((value) => (
-                  <option key={value} value={value}>
-                    {value === ':local:' ? '직접 작성' : `@${value}`}
-                  </option>
-                ))}
-              </select>
-              <Icon name="chevron" />
-            </div>
-          </div>
-          <div className="search-tools">
-            <div className="search-field">
-              <Icon name="search" />
-              <input
-                aria-label="게시글 검색"
-                placeholder="캡션, 계정 검색"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  resetList();
-                }}
-              />
-              {query && (
-                <button
-                  className="search-clear"
-                  aria-label="검색어 지우기"
-                  onClick={() => {
-                    setQuery('');
-                    resetList();
-                  }}
-                >
-                  <Icon name="close" />
-                </button>
+        {mode === 'collection' ? (
+          <>
+            <div className="library-heading">
+              {modeTabs}
+              <p>
+                {libraryTab === 'source'
+                  ? '이미지와 영상을 한곳에서 살펴보세요.'
+                  : '선택한 미디어와 캡션을 확인하고 수정하세요.'}
+              </p>
+              <div className="folder">
+                <Icon name="folder" />
+                <span title={snapshot?.root}>
+                  {snapshot?.root ?? '연결된 수집 폴더가 없습니다'}
+                </span>
+              </div>
+              {snapshot && (
+                <span className="collection-updated">
+                  {displayDate(snapshot.loadedAt)} {view.error ? '마지막 확인' : '갱신'}
+                </span>
               )}
             </div>
-            <div
-              className="date-range"
-              role="group"
-              aria-label={
-                libraryTab === 'registered' ? '등록 게시글 수정일 범위' : '게시글 등록일 범위'
-              }
-            >
-              <DatePicker
-                label={libraryTab === 'registered' ? '수정일 시작 날짜' : '등록일 시작 날짜'}
-                value={dateRange.from}
-                max={dateRange.to}
-                onChange={(from) => {
-                  setDateRange((range) => ({ ...range, from }));
-                  resetList();
-                }}
-              />
-              <span aria-hidden="true">~</span>
-              <DatePicker
-                label={libraryTab === 'registered' ? '수정일 종료 날짜' : '등록일 종료 날짜'}
-                value={dateRange.to}
-                min={dateRange.from}
-                onChange={(to) => {
-                  setDateRange((range) => ({ ...range, to }));
-                  resetList();
-                }}
-              />
-            </div>
-          </div>
-        </div>
-        {snapshot && (libraryTab === 'registered' || savedPosts.length > 0) ? (
-          <section className="post-library" aria-label="게시글 목록">
-            <div className="list-heading">
-              <span>{visible.length}개 게시글</span>
-              <span>최신순</span>
-            </div>
-            <div className="post-grid">
-              {shownPosts.map((post) =>
-                libraryTab === 'registered' ? (
-                  <RegisteredPostCard
-                    key={post.key}
-                    post={post}
-                    publication={latestPublication(threads.state, post.key, 'post')}
-                    replyPublication={latestPublication(threads.state, post.key, 'reply')}
-                    mobileStatus={
-                      mobileStatuses?.libraryId === view.snapshot?.libraryId
-                        ? mobileStatuses?.statuses.find(
-                            (s) =>
-                              s.postKey === post.key && s.draftCreatedAt === post.draft?.createdAt,
-                          )
-                        : undefined
-                    }
-                    ordinal={positions[`draft:${post.key}`]}
-                    onChange={(ordinal) => changePosition(`draft:${post.key}`, ordinal)}
-                    onOpen={() => setRegistration({ postKey: post.key, mode: 'view' })}
-                    onDelete={() =>
-                      void deletePostDraft({
-                        postKey: post.key,
-                        expectedRevision: post.draft!.revision,
-                      })
-                    }
-                    onExport={() => void exportPost(post.key, post.draft!.revision)}
-                    exporting={exporting === post.key}
-                    actionsDisabled={
-                      busy ||
-                      downloading ||
-                      !!exporting ||
-                      localMutation ||
-                      !!view.error ||
-                      deletionRecovery ||
-                      !!draftProblem ||
-                      threads.working
-                    }
-                  />
-                ) : (
-                  <PostCard
-                    key={post.key}
-                    post={post}
-                    ordinal={positions[post.key]}
-                    onChange={(ordinal) => changePosition(post.key, ordinal)}
-                    onOpen={() => setSelected(post.key)}
-                    onExport={() => void exportPost(post.key)}
-                    onDeletePost={() => void deleteMedia({ kind: 'post', postKey: post.key })}
-                    onDeleteEdit={(mediaId) =>
-                      void deleteMedia({ kind: 'edit', postKey: post.key, mediaId })
-                    }
-                    deleteDisabled={
-                      busy ||
-                      downloading ||
-                      !!exporting ||
-                      localMutation ||
-                      !!view.error ||
-                      deletionRecovery
-                    }
-                    exporting={exporting === post.key}
-                    exportDisabled={
-                      busy ||
-                      downloading ||
-                      !!exporting ||
-                      localMutation ||
-                      !!view.error ||
-                      deletionRecovery
-                    }
-                  />
-                ),
-              )}
-            </div>
-            {hasMore && <div ref={scrollSentinel} className="scroll-sentinel" aria-hidden="true" />}
-            {visible.length === 0 && (
-              <div className="empty">
-                <Icon name="search" />
-                <h3>
-                  {libraryTab === 'registered' && registeredPosts.length === 0
-                    ? '아직 등록한 게시글이 없습니다'
-                    : '검색 결과가 없습니다'}
-                </h3>
-                <p>
-                  {libraryTab === 'registered' && registeredPosts.length === 0
-                    ? '등록 버튼으로 내 파일과 캡션을 등록하거나 수집 목록에서 작성하세요.'
-                    : '다른 검색어, 계정 또는 날짜 범위로 다시 찾아보세요.'}
-                </p>
+            <div className="library-tabs-row">
+              <div className="library-tabs" role="group" aria-label="게시글 목록 종류">
                 <button
+                  type="button"
+                  aria-pressed={libraryTab === 'source'}
                   onClick={() => {
+                    setLibraryTab('source');
                     setAccount('');
-                    setQuery('');
-                    setDateRange(defaultDateRange());
+                    setSelected(null);
                     resetList();
                   }}
-                  disabled={downloading}
                 >
-                  필터 초기화
+                  수집 <span>{savedPosts.length}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={libraryTab === 'registered'}
+                  onClick={() => {
+                    setLibraryTab('registered');
+                    setAccount('');
+                    setSelected(null);
+                    resetList();
+                  }}
+                >
+                  등록 <span>{registeredPosts.length}</span>
                 </button>
               </div>
-            )}
-            <div className="list-controls">
-              {visible.length > 0 &&
-                (scrolling ? (
-                  <span className="scroll-count" role="status">
-                    {shownPosts.length} / {visible.length}개
-                  </span>
-                ) : (
-                  <Pagination
-                    page={paginated.page}
-                    totalPages={paginated.totalPages}
-                    onChange={changePage}
+              {libraryTab === 'registered' && (
+                <button
+                  type="button"
+                  className="primary local-post-create"
+                  disabled={
+                    busy ||
+                    downloading ||
+                    !!exporting ||
+                    localMutation ||
+                    (!snapshot && !localPostRecovery) ||
+                    (!!view.error && !localPostRecovery) ||
+                    deletionRecovery ||
+                    !!draftProblem
+                  }
+                  onClick={() => setLocalPostOpen(true)}
+                >
+                  <Icon name="plus" /> 등록
+                </button>
+              )}
+            </div>
+            <div className="toolbar">
+              <div className="filters">
+                <label className="sr-only" htmlFor="account">
+                  계정 필터
+                </label>
+                <div className="select-field">
+                  <select
+                    id="account"
+                    disabled={downloading}
+                    value={account}
+                    onChange={(e) => {
+                      setAccount(e.target.value);
+                      resetList();
+                    }}
+                  >
+                    <option value="">전체 계정</option>
+                    {accounts.map((value) => (
+                      <option key={value} value={value}>
+                        {value === ':local:' ? '직접 작성' : `@${value}`}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevron" />
+                </div>
+              </div>
+              <div className="search-tools">
+                <div className="search-field">
+                  <Icon name="search" />
+                  <input
+                    aria-label="게시글 검색"
+                    placeholder="캡션, 계정 검색"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      resetList();
+                    }}
                   />
-                ))}
-              <div className="select-field list-display-mode">
-                <select
-                  aria-label="게시글 표시 방식"
-                  value={listMode}
-                  onChange={(event) =>
-                    changeListMode(
-                      event.target.value === 'scroll'
-                        ? 'scroll'
-                        : event.target.value === '24'
-                          ? 24
-                          : 12,
-                    )
+                  {query && (
+                    <button
+                      className="search-clear"
+                      aria-label="검색어 지우기"
+                      onClick={() => {
+                        setQuery('');
+                        resetList();
+                      }}
+                    >
+                      <Icon name="close" />
+                    </button>
+                  )}
+                </div>
+                <div
+                  className="date-range"
+                  role="group"
+                  aria-label={
+                    libraryTab === 'registered' ? '등록 게시글 수정일 범위' : '게시글 등록일 범위'
                   }
                 >
-                  <option value={12}>12개</option>
-                  <option value={24}>24개</option>
-                  <option value="scroll">스크롤</option>
-                </select>
-                <Icon name="chevron" />
+                  <DatePicker
+                    label={libraryTab === 'registered' ? '수정일 시작 날짜' : '등록일 시작 날짜'}
+                    value={dateRange.from}
+                    max={dateRange.to}
+                    onChange={(from) => {
+                      setDateRange((range) => ({ ...range, from }));
+                      resetList();
+                    }}
+                  />
+                  <span aria-hidden="true">~</span>
+                  <DatePicker
+                    label={libraryTab === 'registered' ? '수정일 종료 날짜' : '등록일 종료 날짜'}
+                    value={dateRange.to}
+                    min={dateRange.from}
+                    onChange={(to) => {
+                      setDateRange((range) => ({ ...range, to }));
+                      resetList();
+                    }}
+                  />
+                </div>
               </div>
             </div>
-          </section>
-        ) : (
-          <section className="empty welcome">
-            <Icon name="layers" />
-            <h2>
-              {busy
-                ? '수집 자료를 불러오고 있습니다'
-                : snapshot
-                  ? '아직 저장한 게시글이 없습니다'
-                  : '작업 폴더를 선택하세요'}
-            </h2>
-            <p>
-              {snapshot
-                ? pendingPosts > 0
-                  ? '상단 다운로드 버튼을 눌러 이미지와 영상을 저장하세요.'
-                  : '수집한 자료를 저장한 뒤 새로고침하세요.'
-                : '설정에서 수집 플러그인으로 준비한 작업 폴더를 선택하세요.'}
-            </p>
-            {!snapshot && (
-              <button
-                className="primary"
-                onClick={() => setSettingsOpen(true)}
-                disabled={busy || downloading || maintaining}
-              >
-                <Icon name="settings" />
-                설정 열기
-              </button>
+            {snapshot && (libraryTab === 'registered' || savedPosts.length > 0) ? (
+              <section className="post-library" aria-label="게시글 목록">
+                <div className="list-heading">
+                  <span>{visible.length}개 게시글</span>
+                  <span>최신순</span>
+                </div>
+                <div className="post-grid">
+                  {shownPosts.map((post) =>
+                    libraryTab === 'registered' ? (
+                      <RegisteredPostCard
+                        key={post.key}
+                        post={post}
+                        publication={latestPublication(threads.state, post.key, 'post')}
+                        replyPublication={latestPublication(threads.state, post.key, 'reply')}
+                        mobileStatus={
+                          mobileStatuses?.libraryId === view.snapshot?.libraryId
+                            ? mobileStatuses?.statuses.find(
+                                (s) =>
+                                  s.postKey === post.key &&
+                                  s.draftCreatedAt === post.draft?.createdAt,
+                              )
+                            : undefined
+                        }
+                        ordinal={positions[`draft:${post.key}`]}
+                        onChange={(ordinal) => changePosition(`draft:${post.key}`, ordinal)}
+                        onOpen={() => setRegistration({ postKey: post.key, mode: 'view' })}
+                        onDelete={() =>
+                          void deletePostDraft({
+                            postKey: post.key,
+                            expectedRevision: post.draft!.revision,
+                          })
+                        }
+                        onExport={() => void exportPost(post.key, post.draft!.revision)}
+                        exporting={exporting === post.key}
+                        actionsDisabled={
+                          busy ||
+                          downloading ||
+                          !!exporting ||
+                          localMutation ||
+                          !!view.error ||
+                          deletionRecovery ||
+                          !!draftProblem ||
+                          threads.working
+                        }
+                      />
+                    ) : (
+                      <PostCard
+                        key={post.key}
+                        post={post}
+                        ordinal={positions[post.key]}
+                        onChange={(ordinal) => changePosition(post.key, ordinal)}
+                        onOpen={() => setSelected(post.key)}
+                        onExport={() => void exportPost(post.key)}
+                        onDeletePost={() => void deleteMedia({ kind: 'post', postKey: post.key })}
+                        onDeleteEdit={(mediaId) =>
+                          void deleteMedia({ kind: 'edit', postKey: post.key, mediaId })
+                        }
+                        deleteDisabled={
+                          busy ||
+                          downloading ||
+                          !!exporting ||
+                          localMutation ||
+                          !!view.error ||
+                          deletionRecovery
+                        }
+                        exporting={exporting === post.key}
+                        exportDisabled={
+                          busy ||
+                          downloading ||
+                          !!exporting ||
+                          localMutation ||
+                          !!view.error ||
+                          deletionRecovery
+                        }
+                      />
+                    ),
+                  )}
+                </div>
+                {hasMore && (
+                  <div ref={scrollSentinel} className="scroll-sentinel" aria-hidden="true" />
+                )}
+                {visible.length === 0 && (
+                  <div className="empty">
+                    <Icon name="search" />
+                    <h3>
+                      {libraryTab === 'registered' && registeredPosts.length === 0
+                        ? '아직 등록한 게시글이 없습니다'
+                        : '검색 결과가 없습니다'}
+                    </h3>
+                    <p>
+                      {libraryTab === 'registered' && registeredPosts.length === 0
+                        ? '등록 버튼으로 내 파일과 캡션을 등록하거나 수집 목록에서 작성하세요.'
+                        : '다른 검색어, 계정 또는 날짜 범위로 다시 찾아보세요.'}
+                    </p>
+                    <button
+                      onClick={() => {
+                        setAccount('');
+                        setQuery('');
+                        setDateRange(defaultDateRange());
+                        resetList();
+                      }}
+                      disabled={downloading}
+                    >
+                      필터 초기화
+                    </button>
+                  </div>
+                )}
+                <div className="list-controls">
+                  {visible.length > 0 &&
+                    (scrolling ? (
+                      <span className="scroll-count" role="status">
+                        {shownPosts.length} / {visible.length}개
+                      </span>
+                    ) : (
+                      <Pagination
+                        page={paginated.page}
+                        totalPages={paginated.totalPages}
+                        onChange={changePage}
+                      />
+                    ))}
+                  <div className="select-field list-display-mode">
+                    <select
+                      aria-label="게시글 표시 방식"
+                      value={listMode}
+                      onChange={(event) =>
+                        changeListMode(
+                          event.target.value === 'scroll'
+                            ? 'scroll'
+                            : event.target.value === '24'
+                              ? 24
+                              : 12,
+                        )
+                      }
+                    >
+                      <option value={12}>12개</option>
+                      <option value={24}>24개</option>
+                      <option value="scroll">스크롤</option>
+                    </select>
+                    <Icon name="chevron" />
+                  </div>
+                </div>
+              </section>
+            ) : (
+              <section className="empty welcome">
+                <Icon name="layers" />
+                <h2>
+                  {busy
+                    ? '수집 자료를 불러오고 있습니다'
+                    : snapshot
+                      ? '아직 저장한 게시글이 없습니다'
+                      : '작업 폴더를 선택하세요'}
+                </h2>
+                <p>
+                  {snapshot
+                    ? pendingPosts > 0
+                      ? '상단 다운로드 버튼을 눌러 이미지와 영상을 저장하세요.'
+                      : '수집한 자료를 저장한 뒤 새로고침하세요.'
+                    : '설정에서 수집 플러그인으로 준비한 작업 폴더를 선택하세요.'}
+                </p>
+                {!snapshot && (
+                  <button
+                    className="primary"
+                    onClick={() => setSettingsOpen(true)}
+                    disabled={busy || downloading || maintaining}
+                  >
+                    <Icon name="settings" />
+                    설정 열기
+                  </button>
+                )}
+              </section>
             )}
-          </section>
+          </>
+        ) : (
+          <DailyBoard
+            daily={daily}
+            heading={modeTabs}
+            serviceAvailable={serviceAvailable}
+            onDialogOpenChange={setDailyDialogOpen}
+          />
         )}
       </main>
       <footer>

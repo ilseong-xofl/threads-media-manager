@@ -41,6 +41,30 @@ it('exposes only fixed publication actions, never direct URL or file-path upload
   expect(Object.keys(api)).not.toContain('publicationRequest');
   expect(Object.keys(api)).not.toContain('uploadPublicationFile');
 });
+it('reaches daily posts only through fixed channels that carry no account token or URL', async () => {
+  await api.getDaily();
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.daily);
+  const persona = {
+    name: '이름',
+    accountId: 'account',
+    language: 'ko' as const,
+    description: '설명',
+  };
+  await api.saveDailyPersona(persona);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.saveDailyPersona, persona);
+  await api.generateDailyPosts({ personaId: 'persona' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.generateDailyPosts, {
+    personaId: 'persona',
+  });
+  await api.sendDailyPost({ postId: 'post' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.sendDailyPost, { postId: 'post' });
+  await api.cancelDailySend({ postId: 'post', abandon: true });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.cancelDailySend, {
+    postId: 'post',
+    abandon: true,
+  });
+  expect(IPC.daily).toBe('tmm:daily:state');
+});
 it('renames an account only through its fixed channel', async () => {
   const input = { accountId: 'account', label: '이름', appName: '앱' };
   await api.updateManagedThreadsAccount(input);
