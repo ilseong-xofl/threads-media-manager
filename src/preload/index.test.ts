@@ -56,6 +56,11 @@ it('reaches daily posts only through fixed channels that carry no account token 
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.generateDailyPosts, {
     personaId: 'persona',
   });
+  const added = { personaId: 'persona', text: '직접 쓴 글', fromKorean: true };
+  await api.addDailyPost(added);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.addDailyPost, added);
+  await api.translateDailyPost({ postId: 'post' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.translateDailyPost, { postId: 'post' });
   await api.sendDailyPost({ postId: 'post' });
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.sendDailyPost, { postId: 'post' });
   await api.cancelDailySend({ postId: 'post', abandon: true });

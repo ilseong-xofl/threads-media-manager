@@ -31,6 +31,8 @@ export const IPC = {
   saveDailyPersona: 'tmm:daily:persona-save',
   deleteDailyPersona: 'tmm:daily:persona-delete',
   generateDailyPosts: 'tmm:daily:generate',
+  translateDailyPost: 'tmm:daily:translate',
+  addDailyPost: 'tmm:daily:post-add',
   saveDailyPost: 'tmm:daily:post-save',
   deleteDailyPost: 'tmm:daily:post-delete',
   sendDailyPost: 'tmm:daily:send',

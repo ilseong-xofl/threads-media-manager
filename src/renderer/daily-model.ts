@@ -1,4 +1,4 @@
-import type { DailyPersona, DailyPost, DailyWaitingNote } from '../shared/daily';
+import type { DailyPersona, DailyPost, DailyView, DailyWaitingNote } from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import { mobileAccountChoices } from './mobile-publication-model';
 
@@ -125,6 +125,13 @@ export function dailyTime(value: string, now = new Date()) {
 export function dailyDay(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '' : `${date.getMonth() + 1}. ${date.getDate()}.`;
+}
+
+/** A post in another language whose Korean rendering is missing: edited, or made before them. */
+export function dailyNeedsTranslation(view: DailyView, postId: string) {
+  const post = view.posts.find((item) => item.id === postId);
+  const persona = post && view.personas.find((item) => item.id === post.personaId);
+  return !!persona && persona.language !== 'ko' && post.translation === null;
 }
 
 export const dailyInitial = (name: string) => [...name.trim()][0] ?? '?';

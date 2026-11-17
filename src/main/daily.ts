@@ -3,6 +3,7 @@ import type { CaptionLanguage } from '../shared/contracts';
 import {
   DAILY_DESCRIPTION_LIMIT,
   DAILY_NAME_LIMIT,
+  type DailyDraft,
   type DailyPersona,
   type DailyPost,
   type DailyResult,
@@ -14,6 +15,7 @@ import { ViewError } from './collection';
 import {
   DAILY_LIBRARY_ID,
   validDailyText,
+  validDailyTranslation,
   type DailyPartition,
   type DailyScope,
   type StoredDailyPost,
@@ -40,7 +42,11 @@ interface Options {
   store: Store;
   service: string;
   /** Writes three posts for the persona. Throws a ViewError the user can read. */
-  generate(persona: DailyPersona, recentPosts: string[]): Promise<string[]>;
+  generate(persona: DailyPersona, recentPosts: string[]): Promise<DailyDraft[]>;
+  /** Says in Korean what one post of the persona says. Throws a ViewError the user can read. */
+  translate(persona: DailyPersona, text: string): Promise<string>;
+  /** Writes a Korean draft as a post in the persona's language. Throws a readable ViewError. */
+  compose(persona: DailyPersona, korean: string): Promise<string>;
   now?: () => Date;
 }
 /** What the server last said about one send. Memory only; rebuilt by `state()`. */
@@ -52,7 +58,12 @@ interface Remote {
 
 const RECENT_POSTS = 30;
 const LANGUAGES: CaptionLanguage[] = ['ko', 'ja', 'en'];
-const EMPTY: DailyView = { personas: [], posts: [], generatingPersonaId: null };
+const EMPTY: DailyView = {
+  personas: [],
+  posts: [],
+  generatingPersonaId: null,
+  translatingPostId: null,
+};
 
 function fail(code: string, message: string): never {
   throw new ViewError(code, message);
@@ -114,14 +125,17 @@ export function dailyVerdict(post: StoredDailyPost, rows: MobilePublication[]): 
 export class DailyController {
   private mutating = false;
   private generatingPersonaId: string | null = null;
+  private translatingPostId: string | null = null;
+  private composing = false;
   private readonly remote = new Map<string, Remote>();
   constructor(private readonly options: Options) {}
   /** A send, cancel or save is talking to the server or the file. */
   get busy(): boolean {
     return this.mutating;
   }
+  /** ChatGPT is writing: posts, a Korean rendering, or a post from a Korean draft. */
   get generating(): boolean {
-    return this.generatingPersonaId !== null;
+    return this.generatingPersonaId !== null || this.translatingPostId !== null || this.composing;
   }
   get active(): boolean {
     return this.mutating || this.generating;
@@ -192,6 +206,7 @@ export class DailyController {
           id: post.id,
           personaId: post.personaId,
           text: post.text,
+          translation: post.translation ?? null,
           createdAt: post.createdAt,
         };
         if (post.published)
@@ -215,6 +230,7 @@ export class DailyController {
         };
       }),
       generatingPersonaId: this.generatingPersonaId,
+      translatingPostId: this.translatingPostId,
     };
   }
   /** Writes one server verdict into the stored post. The post may have changed meanwhile. */
@@ -396,7 +412,7 @@ export class DailyController {
 
   /** Long-running, so it does not hold the mutation lock. One generation at a time. */
   async generate(input: unknown): Promise<DailyResult> {
-    if (this.generatingPersonaId)
+    if (this.generating)
       return this.respond(() => fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'));
     if (!isObject(input) || !exactKeys(input, ['personaId']) || !uuid(input.personaId))
       return this.respond(invalid);
@@ -405,7 +421,7 @@ export class DailyController {
     try {
       return await this.respond(async (context) => {
         const scope = this.scope(context);
-        let texts: string[];
+        let drafts: DailyDraft[];
         try {
           const before = await this.options.store.read(scope);
           const persona = before.personas.find((p) => p.id === personaId);
@@ -415,23 +431,31 @@ export class DailyController {
             .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
             .slice(0, RECENT_POSTS)
             .map((post) => post.text);
-          texts = await this.options.generate(persona, recent);
+          drafts = await this.options.generate(persona, recent);
         } finally {
           // Every view built from here on, for success or failure, shows the work as over.
           this.generatingPersonaId = null;
         }
         this.assert(context);
-        if (!texts.length || !texts.every(validDailyText))
+        if (
+          !drafts.length ||
+          !drafts.every(
+            (draft) =>
+              validDailyText(draft.text) &&
+              (draft.translation === null || validDailyTranslation(draft.translation)),
+          )
+        )
           fail('daily_generation', '생성된 글의 형식을 확인하지 못했습니다. 다시 시도하세요.');
         const createdAt = this.now();
         return this.options.store.update(scope, (partition) => {
           if (!partition.personas.some((p) => p.id === personaId))
             fail('daily_persona', '페르소나를 찾을 수 없습니다.');
-          for (const text of texts)
+          for (const draft of drafts)
             partition.posts.push({
               id: randomUUID(),
               personaId,
-              text,
+              text: draft.text,
+              translation: draft.translation,
               createdAt,
               send: null,
               sentBefore: false,
@@ -445,6 +469,71 @@ export class DailyController {
     }
   }
 
+  /**
+   * Adds a draft the user wrote. A Korean draft for a persona of another language is written in
+   * that language first (long-running like `generate`) and kept as the post's Korean rendering.
+   */
+  async addPost(input: unknown): Promise<DailyResult> {
+    if (
+      !isObject(input) ||
+      !exactKeys(input, ['personaId', 'text', 'fromKorean']) ||
+      !uuid(input.personaId) ||
+      typeof input.text !== 'string' ||
+      typeof input.fromKorean !== 'boolean'
+    )
+      return this.respond(invalid);
+    if (this.generating)
+      return this.respond(() => fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'));
+    const personaId = input.personaId;
+    const written = input.text.trim();
+    const add = (scope: DailyScope, text: string, translation: string | null) => {
+      const createdAt = this.now();
+      return this.options.store.update(scope, (partition) => {
+        if (!partition.personas.some((p) => p.id === personaId))
+          fail('daily_persona', '페르소나를 찾을 수 없습니다.');
+        partition.posts.push({
+          id: randomUUID(),
+          personaId,
+          text,
+          translation,
+          createdAt,
+          send: null,
+          sentBefore: false,
+          published: null,
+        });
+        return partition;
+      });
+    };
+    if (!input.fromKorean)
+      return this.mutate(async (context) => {
+        if (!validDailyText(written)) fail('daily_text', '본문은 1~500자로 작성하세요.');
+        return add(this.scope(context), written, null);
+      });
+    this.composing = true;
+    try {
+      return await this.respond(async (context) => {
+        const scope = this.scope(context);
+        let text: string;
+        try {
+          if (!validDailyText(written)) fail('daily_text', '본문은 1~500자로 작성하세요.');
+          const before = await this.options.store.read(scope);
+          const persona = before.personas.find((p) => p.id === personaId);
+          if (!persona) return fail('daily_persona', '페르소나를 찾을 수 없습니다.');
+          if (persona.language === 'ko') return invalid();
+          text = await this.options.compose(persona, written);
+        } finally {
+          this.composing = false;
+        }
+        this.assert(context);
+        if (!validDailyText(text))
+          fail('daily_generation', '바꾼 글의 형식을 확인하지 못했습니다. 다시 시도하세요.');
+        return add(scope, text, written);
+      });
+    } finally {
+      this.composing = false;
+    }
+  }
+
   savePost(input: unknown): Promise<DailyResult> {
     return this.mutate(async (context) => {
       if (
@@ -454,6 +543,8 @@ export class DailyController {
         typeof input.text !== 'string'
       )
         return invalid();
+      // Nothing is edited while ChatGPT writes; the board does not open the editor either.
+      if (this.generating) fail('daily_busy', '글 생성이 끝난 뒤 수정하세요.');
       const text = input.text.trim();
       if (!validDailyText(text)) fail('daily_text', '본문은 1~500자로 작성하세요.');
       const postId = input.postId;
@@ -461,10 +552,55 @@ export class DailyController {
         const post = partition.posts.find((item) => item.id === postId);
         if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
         if (post.send || post.published) fail('daily_post_sent', '초안만 수정할 수 있습니다.');
+        // The Korean rendering described the old text; an edited post no longer has one.
+        if (post.text !== text) post.translation = null;
         post.text = text;
         return partition;
       });
     });
+  }
+
+  /**
+   * Writes the Korean rendering of a post in another language: after an edit dropped the old
+   * one, or for a post made before renderings existed. Long-running like `generate`.
+   */
+  async translatePost(input: unknown): Promise<DailyResult> {
+    if (this.generating)
+      return this.respond(() => fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'));
+    if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
+      return this.respond(invalid);
+    const postId = input.postId;
+    this.translatingPostId = postId;
+    try {
+      return await this.respond(async (context) => {
+        const scope = this.scope(context);
+        let text: string;
+        let translation: string;
+        try {
+          const before = await this.options.store.read(scope);
+          const post = before.posts.find((item) => item.id === postId);
+          if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
+          const persona = before.personas.find((p) => p.id === post.personaId);
+          if (!persona || persona.language === 'ko') return invalid();
+          text = post.text;
+          translation = await this.options.translate(persona, text);
+        } finally {
+          // Every view built from here on, for success or failure, shows the work as over.
+          this.translatingPostId = null;
+        }
+        this.assert(context);
+        if (!validDailyTranslation(translation))
+          fail('daily_generation', '한국어 뜻의 형식을 확인하지 못했습니다. 다시 시도하세요.');
+        return this.options.store.update(scope, (partition) => {
+          const post = partition.posts.find((item) => item.id === postId);
+          // A post edited or deleted meanwhile does not get the rendering of its old text.
+          if (post && post.text === text) post.translation = translation;
+          return partition;
+        });
+      });
+    } finally {
+      this.translatingPostId = null;
+    }
   }
 
   deletePost(input: unknown): Promise<DailyResult> {

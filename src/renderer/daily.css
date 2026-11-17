@@ -233,7 +233,13 @@ button.daily-icon-button {
   width: 16px;
   height: 16px;
 }
+.daily-column-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 button.daily-generate {
+  min-width: 0;
   min-height: 40px;
   border-color: #c9caf0;
   border-radius: 11px;
@@ -331,6 +337,31 @@ button.daily-card-text:disabled {
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* What a post in another language says, in Korean. */
+.daily-card-translation {
+  padding-top: 8px;
+  border-top: 1px dashed #dce1e8;
+  color: #5b6575;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+button.daily-card-translate {
+  align-self: flex-start;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #4a4cc0;
+  font-size: 12px;
+  font-weight: 500;
+}
+button.daily-card-translate:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+  text-decoration: underline;
 }
 .daily-card.is-published .daily-card-body {
   color: #3d4757;

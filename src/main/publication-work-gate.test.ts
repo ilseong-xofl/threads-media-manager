@@ -20,6 +20,8 @@ describe('publication and local mutation barrier', () => {
       IPC.sendDailyPost,
       IPC.cancelDailySend,
       IPC.generateDailyPosts,
+      IPC.translateDailyPost,
+      IPC.addDailyPost,
       IPC.saveDailyPersona,
     ])
       expect(mobilePublicationBlocks(mutation, true)).toBe(true);

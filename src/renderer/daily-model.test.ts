@@ -24,6 +24,7 @@ function post(id: string, change: Partial<DailyPost> = {}): DailyPost {
     id,
     personaId: 'p1',
     text: id,
+    translation: null,
     createdAt: at(1),
     state: 'draft',
     note: null,

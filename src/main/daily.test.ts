@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DailyPersona, DailyResult } from '../shared/daily';
+import type { DailyDraft, DailyPersona, DailyResult } from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
 import { DailyController } from './daily';
@@ -100,8 +100,16 @@ async function setup() {
     ServiceApiClient,
     'getBusinessContext' | 'assertBusinessContext' | 'publicationRequest' | 'managedThreadsRequest'
   >;
-  const generate = vi.fn<(persona: DailyPersona, recentPosts: string[]) => Promise<string[]>>(
-    async () => ['첫 번째 글', '두 번째 글', '세 번째 글'],
+  const drafts = (...texts: string[]): DailyDraft[] =>
+    texts.map((text) => ({ text, translation: null }));
+  const generate = vi.fn<(persona: DailyPersona, recentPosts: string[]) => Promise<DailyDraft[]>>(
+    async () => drafts('첫 번째 글', '두 번째 글', '세 번째 글'),
+  );
+  const translate = vi.fn<(persona: DailyPersona, text: string) => Promise<string>>(
+    async (_persona, text) => `뜻: ${text}`,
+  );
+  const compose = vi.fn<(persona: DailyPersona, korean: string) => Promise<string>>(
+    async (_persona, korean) => `EN: ${korean}`,
   );
   let tick = 0;
   const daily = new DailyController({
@@ -109,6 +117,8 @@ async function setup() {
     store: new DailyStore(userData),
     service: 'https://service.test',
     generate,
+    translate,
+    compose,
     now: () => new Date(Date.UTC(2026, 10, 17, 0, 0, tick++)),
   });
   const ok = (result: DailyResult) => {
@@ -130,6 +140,8 @@ async function setup() {
     server,
     publicationRequest,
     generate,
+    translate,
+    compose,
     userData,
     ok,
     persona,
@@ -193,7 +205,9 @@ describe('daily drafts', () => {
     const { daily, generate, persona, ok } = await setup();
     const p = await persona();
     ok(await daily.generate({ personaId: p.id }));
-    generate.mockResolvedValueOnce(['넷', '다섯', '여섯']);
+    generate.mockResolvedValueOnce(
+      ['넷', '다섯', '여섯'].map((text) => ({ text, translation: null })),
+    );
     const view = ok(await daily.generate({ personaId: p.id }));
     expect(view.posts.map((post) => post.state)).toEqual(Array(6).fill('draft'));
     expect(view.generatingPersonaId).toBeNull();
@@ -210,6 +224,142 @@ describe('daily drafts', () => {
     expect(failed.view.personas).toHaveLength(1);
     expect(daily.generating).toBe(false);
     expect(ok(await daily.generate({ personaId: p.id })).posts).toHaveLength(3);
+  });
+  it('keeps the Korean rendering of a post until its text is edited', async () => {
+    const { daily, generate, persona, ok, creates } = await setup();
+    const p = await persona();
+    generate.mockResolvedValueOnce([
+      { text: 'First post', translation: '첫 글' },
+      { text: 'Second post', translation: '둘째 글' },
+      { text: 'Third post', translation: '셋째 글' },
+    ]);
+    const view = ok(await daily.generate({ personaId: p.id }));
+    expect(view.posts.map((post) => post.translation)).toEqual(['첫 글', '둘째 글', '셋째 글']);
+    const [first, second] = view.posts;
+    const same = ok(await daily.savePost({ postId: first.id, text: ' First post ' }));
+    expect(same.posts.find((post) => post.id === first.id)?.translation).toBe('첫 글');
+    const edited = ok(await daily.savePost({ postId: second.id, text: 'Second post, edited' }));
+    expect(edited.posts.find((post) => post.id === second.id)?.translation).toBeNull();
+    // The rendering stays on this PC: the send request carries the post text only.
+    ok(await daily.send({ postId: first.id }));
+    expect(JSON.stringify(creates().at(-1))).not.toContain('첫 글');
+    generate.mockResolvedValueOnce([
+      { text: 'Fourth', translation: ' ' },
+      { text: 'Fifth', translation: '다섯째' },
+      { text: 'Sixth', translation: '여섯째' },
+    ]);
+    expect((await daily.generate({ personaId: p.id })).problem?.code).toBe('daily_generation');
+  });
+  it('writes the Korean rendering of a post in another language again', async () => {
+    const { daily, generate, translate, persona, ok } = await setup();
+    const korean = await persona();
+    const [koreanPost] = ok(await daily.generate({ personaId: korean.id })).posts;
+    expect((await daily.translatePost({ postId: koreanPost.id })).problem?.code).toBe(
+      'daily_input',
+    );
+    const english = ok(
+      await daily.savePersona({
+        name: 'Renter',
+        accountId: 'account-b',
+        language: 'en',
+        description: '나이: 27세',
+      }),
+    ).personas.find((p) => p.accountId === 'account-b')!;
+    generate.mockResolvedValueOnce([
+      { text: 'First post', translation: '첫 글' },
+      { text: 'Second post', translation: '둘째 글' },
+      { text: 'Third post', translation: '셋째 글' },
+    ]);
+    const post = ok(await daily.generate({ personaId: english.id })).posts.find(
+      (item) => item.text === 'First post',
+    )!;
+    ok(await daily.savePost({ postId: post.id, text: 'First post, edited' }));
+    const view = ok(await daily.translatePost({ postId: post.id }));
+    expect(view.posts.find((item) => item.id === post.id)?.translation).toBe(
+      '뜻: First post, edited',
+    );
+    expect(view.translatingPostId).toBeNull();
+    expect(translate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: english.id, language: 'en' }),
+      'First post, edited',
+    );
+    // A failure leaves the post without a rendering and the work marked as over.
+    ok(await daily.savePost({ postId: post.id, text: 'Edited again' }));
+    translate.mockRejectedValueOnce(new ViewError('codex_login', 'ChatGPT에 로그인하세요.'));
+    const failed = await daily.translatePost({ postId: post.id });
+    expect(failed.problem?.code).toBe('codex_login');
+    expect(failed.view.translatingPostId).toBeNull();
+    expect(failed.view.posts.find((item) => item.id === post.id)?.translation).toBeNull();
+    expect(daily.generating).toBe(false);
+    // The text changed while ChatGPT was writing: the rendering of the old text is not kept.
+    let finish!: (value: string) => void;
+    translate.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const pending = daily.translatePost({ postId: post.id });
+    await vi.waitFor(() => expect(translate).toHaveBeenCalledTimes(3));
+    expect(daily.generating).toBe(true);
+    expect((await daily.generate({ personaId: english.id })).problem?.code).toBe('daily_busy');
+    // Nothing is edited or written by hand while ChatGPT writes.
+    for (const refused of [
+      await daily.savePost({ postId: post.id, text: 'Edited a third time' }),
+      await daily.addPost({ personaId: english.id, text: 'By hand', fromKorean: false }),
+      await daily.addPost({ personaId: english.id, text: '손으로 쓴 글', fromKorean: true }),
+    ])
+      expect(refused.problem?.code).toBe('daily_busy');
+    finish('뜻: Edited again');
+    expect(ok(await pending).posts.find((item) => item.id === post.id)).toMatchObject({
+      text: 'Edited again',
+      translation: '뜻: Edited again',
+    });
+  });
+  it('adds a draft written by hand, as written or from Korean', async () => {
+    const { daily, compose, persona, ok } = await setup();
+    const korean = await persona();
+    const direct = ok(
+      await daily.addPost({ personaId: korean.id, text: '  손으로 쓴 글  ', fromKorean: false }),
+    );
+    expect(direct.posts).toMatchObject([
+      { personaId: korean.id, text: '손으로 쓴 글', translation: null, state: 'draft' },
+    ]);
+    // A Korean persona has nothing to be written into.
+    expect(
+      (await daily.addPost({ personaId: korean.id, text: '글', fromKorean: true })).problem?.code,
+    ).toBe('daily_input');
+    const english = ok(
+      await daily.savePersona({
+        name: 'Renter',
+        accountId: 'account-b',
+        language: 'en',
+        description: '나이: 27세',
+      }),
+    ).personas.find((p) => p.accountId === 'account-b')!;
+    const composed = ok(
+      await daily.addPost({ personaId: english.id, text: ' 냉동실 정리 ', fromKorean: true }),
+    );
+    expect(composed.posts.find((post) => post.personaId === english.id)).toMatchObject({
+      text: 'EN: 냉동실 정리',
+      translation: '냉동실 정리',
+      state: 'draft',
+    });
+    expect(compose).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: english.id, language: 'en' }),
+      '냉동실 정리',
+    );
+    for (const [input, code] of [
+      [{ personaId: english.id, text: '   ', fromKorean: false }, 'daily_text'],
+      [{ personaId: english.id, text: 'a'.repeat(501), fromKorean: true }, 'daily_text'],
+      [{ personaId: english.id, text: '글' }, 'daily_input'],
+      [{ personaId: randomUUID(), text: '글', fromKorean: false }, 'daily_persona'],
+    ] as const)
+      expect((await daily.addPost(input)).problem?.code).toBe(code);
+    compose.mockRejectedValueOnce(new ViewError('codex_login', 'ChatGPT에 로그인하세요.'));
+    const failed = await daily.addPost({ personaId: english.id, text: '글', fromKorean: true });
+    expect(failed.problem?.code).toBe('codex_login');
+    expect(failed.view.posts).toHaveLength(2);
+    expect(daily.generating).toBe(false);
+    compose.mockResolvedValueOnce('a'.repeat(501));
+    expect(
+      (await daily.addPost({ personaId: english.id, text: '글', fromKorean: true })).problem?.code,
+    ).toBe('daily_generation');
   });
   it('edits and deletes drafts only', async () => {
     const { daily, persona, draft, ok } = await setup();

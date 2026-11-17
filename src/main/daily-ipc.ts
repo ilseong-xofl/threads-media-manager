@@ -6,7 +6,9 @@ interface DailyActions {
   savePersona(input: unknown): Promise<DailyResult>;
   deletePersona(input: unknown): Promise<DailyResult>;
   generate(input: unknown): Promise<DailyResult>;
+  addPost(input: unknown): Promise<DailyResult>;
   savePost(input: unknown): Promise<DailyResult>;
+  translatePost(input: unknown): Promise<DailyResult>;
   deletePost(input: unknown): Promise<DailyResult>;
   send(input: unknown): Promise<DailyResult>;
   cancelSend(input: unknown): Promise<DailyResult>;
@@ -30,8 +32,12 @@ export function handleDailyRequest(
       return daily.deletePersona(args[0]);
     case IPC.generateDailyPosts:
       return daily.generate(args[0]);
+    case IPC.addDailyPost:
+      return daily.addPost(args[0]);
     case IPC.saveDailyPost:
       return daily.savePost(args[0]);
+    case IPC.translateDailyPost:
+      return daily.translatePost(args[0]);
     case IPC.deleteDailyPost:
       return daily.deletePost(args[0]);
     case IPC.sendDailyPost:

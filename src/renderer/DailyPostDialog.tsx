@@ -1,41 +1,87 @@
 import { useId, useState } from 'react';
-import { DAILY_TEXT_LIMIT, dailyTextLength, type DailyPost } from '../shared/daily';
+import type { CaptionLanguage } from '../shared/contracts';
+import {
+  DAILY_TEXT_LIMIT,
+  dailyTextLength,
+  type DailyPersona,
+  type DailyPost,
+} from '../shared/daily';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
 import './managed-threads.css';
 
+const languageNames: Record<CaptionLanguage, string> = {
+  ko: '한국어',
+  ja: '일본어',
+  en: '영어',
+};
+
+/** Edits a draft, or with no `post` writes a new one for the persona by hand. */
 export function DailyPostDialog({
   post,
+  persona,
   busy,
+  composing = false,
   onSave,
   onClose,
 }: {
-  post: DailyPost;
+  post: DailyPost | null;
+  persona: DailyPersona;
   busy: boolean;
-  onSave(text: string): Promise<boolean>;
+  /** The Korean draft is being written in the persona's language. */
+  composing?: boolean;
+  /** `fromKorean`: the text is Korean and the persona posts in another language. */
+  onSave(text: string, fromKorean: boolean): Promise<boolean>;
   onClose(): void;
 }) {
   const id = useId();
-  const [text, setText] = useState(post.text);
+  const [text, setText] = useState(post?.text ?? '');
+  const [language, setLanguage] = useState<CaptionLanguage>(persona.language);
   const length = dailyTextLength(text);
   const valid = dailyTextLength(text.trim()) >= 1 && length <= DAILY_TEXT_LIMIT;
+  const fromKorean = !post && persona.language !== 'ko' && language === 'ko';
+  const personaLanguage = languageNames[persona.language];
+  const working = busy || composing;
   return (
-    <ManagedThreadsActionDialog title="초안 수정" busy={busy} onClose={onClose}>
+    <ManagedThreadsActionDialog
+      title={post ? '초안 수정' : '수동 등록'}
+      busy={working}
+      onClose={onClose}
+    >
       <form
         className="daily-form"
         onSubmit={(event) => {
           event.preventDefault();
-          if (busy || !valid) return;
-          void onSave(text).then((saved) => {
+          if (working || !valid) return;
+          void onSave(text, fromKorean).then((saved) => {
             if (saved) onClose();
           });
         }}
       >
+        {!post && persona.language !== 'ko' && (
+          <>
+            <label htmlFor={`${id}-language`}>작성 언어</label>
+            <select
+              id={`${id}-language`}
+              value={language}
+              disabled={working}
+              onChange={(event) => setLanguage(event.target.value as CaptionLanguage)}
+            >
+              <option value={persona.language}>{personaLanguage}</option>
+              <option value="ko">한국어</option>
+            </select>
+            <p className="daily-form-note">
+              {fromKorean
+                ? `한국어로 쓰면 ${personaLanguage} 글로 바꿔 초안에 넣습니다. 쓴 내용은 한국어 뜻으로 함께 보입니다.`
+                : `쓴 그대로 초안에 넣고 한국어 뜻을 만듭니다. ${personaLanguage} 작문이 어렵다면 한국어를 고르세요.`}
+            </p>
+          </>
+        )}
         <label htmlFor={`${id}-text`}>본문</label>
         <textarea
           id={`${id}-text`}
           value={text}
           rows={8}
-          disabled={busy}
+          disabled={working}
           aria-describedby={`${id}-count`}
           onChange={(event) => setText(event.target.value)}
         />
@@ -45,12 +91,18 @@ export function DailyPostDialog({
         >
           {length} / {DAILY_TEXT_LIMIT}
         </p>
+        {post?.translation && (
+          <>
+            <p className="daily-card-translation">{post.translation}</p>
+            <p className="daily-form-note">본문을 고쳐 저장하면 한국어 뜻을 다시 만듭니다.</p>
+          </>
+        )}
         <div className="threads-actions managed-threads-dialog-actions">
-          <button type="button" disabled={busy} onClick={onClose}>
+          <button type="button" disabled={working} onClick={onClose}>
             취소
           </button>
-          <button type="submit" className="primary" disabled={busy || !valid}>
-            {busy ? '저장 중…' : '저장'}
+          <button type="submit" className="primary" disabled={working || !valid}>
+            {composing ? `${personaLanguage}로 바꾸는 중…` : busy ? '저장 중…' : '저장'}
           </button>
         </div>
       </form>

@@ -579,6 +579,8 @@ const daily: DailyController = new DailyController({
   store: new DailyStore(app.getPath('userData')),
   service: serviceOrigin ?? 'unconfigured',
   generate: (persona, recentPosts) => dailyGenerator.generate(persona, recentPosts),
+  translate: (persona, text) => dailyGenerator.translate(persona, text),
+  compose: (persona, korean) => dailyGenerator.compose(persona, korean),
 });
 async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
   try {

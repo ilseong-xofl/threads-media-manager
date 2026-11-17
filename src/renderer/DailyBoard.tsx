@@ -33,6 +33,7 @@ const CANCEL_WARNING =
 type Dialog =
   | { kind: 'persona'; personaId: string | null }
   | { kind: 'post'; postId: string }
+  | { kind: 'write'; personaId: string }
   | { kind: 'cancel'; postId: string };
 
 export function DailyBoard({
@@ -81,9 +82,13 @@ export function DailyBoard({
       ? (personas.find((persona) => persona.id === dialog.personaId) ?? null)
       : null;
   const dialogPost =
-    dialog && dialog.kind !== 'persona'
+    dialog?.kind === 'post' || dialog?.kind === 'cancel'
       ? (posts.find((post) => post.id === dialog.postId) ?? null)
       : null;
+  const postPersona = personas.find(
+    (persona) =>
+      persona.id === (dialog?.kind === 'write' ? dialog.personaId : dialogPost?.personaId),
+  );
   const closeDialog = () => setDialog(null);
   let dialogElement: ReactNode = null;
   if (dialog?.kind === 'persona' && (dialog.personaId === null || dialogPersona)) {
@@ -100,12 +105,24 @@ export function DailyBoard({
         onClose={closeDialog}
       />
     );
-  } else if (dialog?.kind === 'post' && dialogPost?.state === 'draft') {
+  } else if (dialog?.kind === 'post' && dialogPost?.state === 'draft' && postPersona) {
     dialogElement = (
       <DailyPostDialog
         post={dialogPost}
+        persona={postPersona}
         busy={daily.busy}
         onSave={(text) => daily.savePost(dialogPost.id, text)}
+        onClose={closeDialog}
+      />
+    );
+  } else if (dialog?.kind === 'write' && postPersona) {
+    dialogElement = (
+      <DailyPostDialog
+        post={null}
+        persona={postPersona}
+        busy={daily.busy}
+        composing={daily.composing}
+        onSave={(text, fromKorean) => daily.addPost(postPersona.id, text, fromKorean)}
         onClose={closeDialog}
       />
     );
@@ -248,6 +265,7 @@ export function DailyBoard({
                 rows={accounts.accounts}
                 accountsLoaded={accounts.loaded}
                 onSettings={() => setDialog({ kind: 'persona', personaId: persona.id })}
+                onWrite={() => setDialog({ kind: 'write', personaId: persona.id })}
                 onEdit={(post) => setDialog({ kind: 'post', postId: post.id })}
                 onCancel={cancelSend}
               />
@@ -316,6 +334,7 @@ function PersonaColumn({
   rows,
   accountsLoaded,
   onSettings,
+  onWrite,
   onEdit,
   onCancel,
 }: {
@@ -325,11 +344,14 @@ function PersonaColumn({
   rows: ManagedThreadsAccountRow[];
   accountsLoaded: boolean;
   onSettings(): void;
+  onWrite(): void;
   onEdit(post: DailyPost): void;
   onCancel(post: DailyPost): void;
 }) {
   const groups = groupDailyPosts(daily.view.posts, persona.id);
   const generating = daily.generatingPersonaId === persona.id;
+  // ChatGPT writes one thing at a time, and no post is written or edited by hand meanwhile.
+  const { writing } = daily;
   const empty =
     !generating && groups.drafts.length + groups.waiting.length + groups.published.length === 0;
   const row = dailyAccountRow(persona.accountId, rows);
@@ -364,21 +386,32 @@ function PersonaColumn({
             {summary}
           </p>
         )}
-        <button
-          type="button"
-          className={`daily-generate ${empty ? 'is-first' : ''}`}
-          disabled={!daily.loaded || daily.generatingPersonaId !== null}
-          onClick={() => void daily.generate(persona.id)}
-        >
-          {generating ? (
-            '글 만드는 중…'
-          ) : (
-            <>
-              <Icon name="edit" />
-              {empty ? '첫 글 생성' : '글 생성'}
-            </>
-          )}
-        </button>
+        <div className="daily-column-actions">
+          <button
+            type="button"
+            className="daily-generate"
+            disabled={!daily.loaded || daily.busy || writing}
+            onClick={onWrite}
+          >
+            <Icon name="edit" />
+            수동 등록
+          </button>
+          <button
+            type="button"
+            className={`daily-generate ${empty ? 'is-first' : ''}`}
+            disabled={!daily.loaded || writing}
+            onClick={() => void daily.generate(persona.id)}
+          >
+            {generating ? (
+              '글 만드는 중…'
+            ) : (
+              <>
+                <Icon name="sparkles" />
+                {empty ? '첫 글 생성' : '글 생성'}
+              </>
+            )}
+          </button>
+        </div>
       </div>
       {empty ? (
         <div className="daily-column-empty">이 페르소나의 글이 여기에 쌓입니다.</div>
@@ -403,11 +436,27 @@ function PersonaColumn({
                     type="button"
                     className="daily-card-text"
                     aria-label="초안 수정"
-                    disabled={daily.busy}
+                    disabled={daily.busy || writing}
                     onClick={() => onEdit(post)}
                   >
                     {post.text}
                   </button>
+                  {post.translation ? (
+                    <p className="daily-card-translation">{post.translation}</p>
+                  ) : daily.translatingPostId === post.id ? (
+                    <p className="daily-card-translation">한국어 뜻 만드는 중…</p>
+                  ) : (
+                    persona.language !== 'ko' && (
+                      <button
+                        type="button"
+                        className="daily-card-translate"
+                        disabled={!daily.loaded || writing}
+                        onClick={() => void daily.translate(post.id)}
+                      >
+                        한국어 뜻 보기
+                      </button>
+                    )
+                  )}
                   <div className="daily-card-footer">
                     <span>{dailyTime(post.createdAt)} 생성</span>
                     <div className="daily-card-actions">
@@ -443,6 +492,9 @@ function PersonaColumn({
                 return (
                   <article key={post.id} className="daily-card is-waiting">
                     <p className="daily-card-body">{post.text}</p>
+                    {post.translation && (
+                      <p className="daily-card-translation">{post.translation}</p>
+                    )}
                     <div className="daily-card-meta">
                       {post.sentAt && <span>{dailyTime(post.sentAt)} 보냄</span>}
                       {note && <span className="daily-card-note">{note}</span>}
@@ -474,6 +526,7 @@ function PersonaColumn({
               {groups.published.map((post) => (
                 <article key={post.id} className="daily-card is-published">
                   <p className="daily-card-body">{post.text}</p>
+                  {post.translation && <p className="daily-card-translation">{post.translation}</p>}
                   <div className="daily-card-meta">
                     <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
                   </div>

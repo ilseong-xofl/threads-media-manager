@@ -8,6 +8,7 @@ const view = (name: string, generatingPersonaId: string | null = null): DailyVie
   ],
   posts: [],
   generatingPersonaId,
+  translatingPostId: null,
 });
 const ok = (name: string): DailyResult => ({ status: 'ok', view: view(name), problem: null });
 function deferred<T>() {
@@ -25,7 +26,9 @@ function setup() {
     saveDailyPersona: vi.fn().mockResolvedValue(ok('saved')),
     deleteDailyPersona: vi.fn().mockResolvedValue(ok('deleted')),
     generateDailyPosts: vi.fn().mockResolvedValue(ok('generated')),
+    addDailyPost: vi.fn().mockResolvedValue(ok('added')),
     saveDailyPost: vi.fn().mockResolvedValue(ok('post')),
+    translateDailyPost: vi.fn().mockResolvedValue(ok('translated')),
     deleteDailyPost: vi.fn().mockResolvedValue(ok('post-deleted')),
     sendDailyPost: vi.fn().mockResolvedValue(ok('sent')),
     cancelDailySend: vi.fn().mockResolvedValue(ok('cancelled')),
@@ -78,6 +81,85 @@ describe('daily board requests', () => {
     ]);
   });
 
+  it('writes the Korean rendering again after a post in another language is edited', async () => {
+    const { api, controller } = setup();
+    controller.setEnabled(true);
+    await settle();
+    const edited = (language: 'ko' | 'en', translation: string | null): DailyResult => ({
+      status: 'ok',
+      problem: null,
+      view: {
+        ...view('post'),
+        personas: [{ ...view('post').personas[0], id: 'p1', language }],
+        posts: [
+          {
+            id: 'post-1',
+            personaId: 'p1',
+            text: 'Edited',
+            translation,
+            createdAt: '2026-11-17',
+            state: 'draft',
+            note: null,
+            started: false,
+            sentAt: null,
+          },
+        ],
+      },
+    });
+    // Unchanged text keeps its rendering, and a Korean persona never has one.
+    api.saveDailyPost.mockResolvedValueOnce(edited('en', '고친 글'));
+    expect(await controller.savePost('post-1', 'Edited')).toBe(true);
+    api.saveDailyPost.mockResolvedValueOnce(edited('ko', null));
+    expect(await controller.savePost('post-1', '고침')).toBe(true);
+    await settle();
+    expect(api.translateDailyPost).not.toHaveBeenCalled();
+    const translated = deferred<DailyResult>();
+    api.translateDailyPost.mockReturnValueOnce(translated.promise);
+    api.saveDailyPost.mockResolvedValueOnce(edited('en', null));
+    expect(await controller.savePost('post-1', 'Edited')).toBe(true);
+    expect(api.translateDailyPost).toHaveBeenCalledExactlyOnceWith({ postId: 'post-1' });
+    expect(controller.getSnapshot()).toMatchObject({ busy: false, translating: 'post-1' });
+    // ChatGPT writes one thing at a time.
+    expect(await controller.generate('p1')).toBe(false);
+    translated.resolve(edited('en', '고친 글'));
+    await settle();
+    expect(controller.getSnapshot().translating).toBeNull();
+    expect(controller.getSnapshot().view.posts[0].translation).toBe('고친 글');
+    // A post written by hand in the persona's language gets its rendering the same way.
+    controller.setEnabled(false);
+    controller.setEnabled(true);
+    await settle();
+    api.translateDailyPost.mockClear();
+    api.addDailyPost.mockResolvedValueOnce(edited('en', null));
+    expect(await controller.addPost('p1', 'Edited', false)).toBe(true);
+    expect(api.addDailyPost).toHaveBeenLastCalledWith({
+      personaId: 'p1',
+      text: 'Edited',
+      fromKorean: false,
+    });
+    expect(api.translateDailyPost).toHaveBeenCalledExactlyOnceWith({ postId: 'post-1' });
+    await settle();
+  });
+  it('has a Korean draft written in the persona language as one long call', async () => {
+    const { api, controller } = setup();
+    controller.setEnabled(true);
+    await settle();
+    const composed = deferred<DailyResult>();
+    api.addDailyPost.mockReturnValueOnce(composed.promise);
+    const adding = controller.addPost('p1', '한국어로 쓴 글', true);
+    expect(controller.getSnapshot()).toMatchObject({ busy: false, composing: true });
+    expect(await controller.generate('p1')).toBe(false);
+    expect(await controller.addPost('p1', '또 다른 글', true)).toBe(false);
+    composed.resolve(ok('added'));
+    expect(await adding).toBe(true);
+    expect(controller.getSnapshot().composing).toBe(false);
+    expect(api.addDailyPost).toHaveBeenCalledExactlyOnceWith({
+      personaId: 'p1',
+      text: '한국어로 쓴 글',
+      fromKorean: true,
+    });
+    expect(api.translateDailyPost).not.toHaveBeenCalled();
+  });
   it('runs one change at a time but lets the board change while posts are generated', async () => {
     const { api, controller } = setup();
     controller.setEnabled(true);

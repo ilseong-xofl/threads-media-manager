@@ -4,6 +4,7 @@ export const DAILY_NAME_LIMIT = 40;
 export const DAILY_DESCRIPTION_LIMIT = 2000;
 /** Threads text limit, counted in code points like the existing publication checks. */
 export const DAILY_TEXT_LIMIT = 500;
+export const DAILY_TRANSLATION_LIMIT = 1000;
 
 /** One fictional author. It is bound to exactly one managed Threads account. */
 export interface DailyPersona {
@@ -28,6 +29,8 @@ export interface DailyPost {
   id: string;
   personaId: string;
   text: string;
+  /** What a post written in another language says, in Korean. Shown on this PC only, never sent. */
+  translation: string | null;
   createdAt: string;
   state: DailyPostState;
   /** Waiting posts only. null means the phone has not started it. */
@@ -38,11 +41,19 @@ export interface DailyPost {
   sentAt: string | null;
 }
 
+/** One written post as the generator returns it. */
+export interface DailyDraft {
+  text: string;
+  translation: string | null;
+}
+
 export interface DailyView {
   personas: DailyPersona[];
   posts: DailyPost[];
   /** The persona whose posts are being generated right now, if any. */
   generatingPersonaId: string | null;
+  /** The post whose Korean rendering is being written right now, if any. */
+  translatingPostId: string | null;
 }
 
 export interface DailyResult {
@@ -69,6 +80,12 @@ export interface SaveDailyPostInput {
   postId: string;
   text: string;
 }
+export interface AddDailyPostInput {
+  personaId: string;
+  text: string;
+  /** The text is a Korean draft to be written in the persona's language first. */
+  fromKorean: boolean;
+}
 export interface CancelDailySendInput {
   postId: string;
   /** Required when the phone already tried (`DailyPost.started`); the user confirmed the warning. */
@@ -82,7 +99,11 @@ export interface DailyMethods {
   deleteDailyPersona(input: DailyPersonaInput): Promise<DailyResult>;
   /** Adds three drafts written for the persona. */
   generateDailyPosts(input: DailyPersonaInput): Promise<DailyResult>;
+  /** Adds one draft the user wrote: as written, or from Korean into the persona's language. */
+  addDailyPost(input: AddDailyPostInput): Promise<DailyResult>;
   saveDailyPost(input: SaveDailyPostInput): Promise<DailyResult>;
+  /** Writes what a post in another language says in Korean, for a post that has no rendering. */
+  translateDailyPost(input: DailyPostInput): Promise<DailyResult>;
   deleteDailyPost(input: DailyPostInput): Promise<DailyResult>;
   /** Sends a draft to the phone, or repeats an unconfirmed send unchanged. */
   sendDailyPost(input: DailyPostInput): Promise<DailyResult>;

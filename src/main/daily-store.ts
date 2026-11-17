@@ -5,6 +5,7 @@ import {
   DAILY_DESCRIPTION_LIMIT,
   DAILY_NAME_LIMIT,
   DAILY_TEXT_LIMIT,
+  DAILY_TRANSLATION_LIMIT,
   dailyTextLength,
   type DailyPersona,
 } from '../shared/daily';
@@ -26,6 +27,8 @@ export interface StoredDailyPost {
   id: string;
   personaId: string;
   text: string;
+  /** Korean rendering of a post generated in another language. Absent in files written before it. */
+  translation?: string | null;
   createdAt: string;
   send: StoredDailySend | null;
   /** A cancelled send of this post still exists on the server and may yet be posted. */
@@ -52,6 +55,12 @@ export const validDailyText = (value: unknown): value is string =>
   typeof value === 'string' &&
   value.trim().length > 0 &&
   dailyTextLength(value) <= DAILY_TEXT_LIMIT &&
+  !value.includes('\0');
+
+export const validDailyTranslation = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.trim().length > 0 &&
+  dailyTextLength(value) <= DAILY_TRANSLATION_LIMIT &&
   !value.includes('\0');
 
 function validRequest(v: unknown, postId: string): v is PublicationRequest {
@@ -93,6 +102,9 @@ function validPost(v: unknown): v is StoredDailyPost {
     uuid(v.id) &&
     uuid(v.personaId) &&
     validDailyText(v.text) &&
+    (v.translation === undefined ||
+      v.translation === null ||
+      validDailyTranslation(v.translation)) &&
     timestamp(v.createdAt) &&
     typeof v.sentBefore === 'boolean' &&
     (v.send === null ||
