@@ -4,6 +4,16 @@ export const DAILY_NAME_LIMIT = 40;
 export const DAILY_DESCRIPTION_LIMIT = 2000;
 /** Threads text limit, counted in code points like the existing publication checks. */
 export const DAILY_TEXT_LIMIT = 500;
+/**
+ * How long a Korean draft may be when it is written into the persona's language (2026-11-18).
+ * English comes out about twice as long; past 200 characters the result was squeezed into terse
+ * fragments to stay within a post. Japanese comes out shorter than the Korean.
+ */
+export const DAILY_KOREAN_DRAFT_LIMIT: Record<CaptionLanguage, number> = {
+  ko: DAILY_TEXT_LIMIT,
+  ja: DAILY_TEXT_LIMIT,
+  en: 200,
+};
 export const DAILY_TRANSLATION_LIMIT = 1000;
 
 /** One fictional author. It is bound to exactly one managed Threads account. */

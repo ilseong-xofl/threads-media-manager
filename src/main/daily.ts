@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { CaptionLanguage } from '../shared/contracts';
 import {
   DAILY_DESCRIPTION_LIMIT,
+  DAILY_KOREAN_DRAFT_LIMIT,
   DAILY_NAME_LIMIT,
   type DailyDraft,
   type DailyPersona,
@@ -9,6 +10,7 @@ import {
   type DailyResult,
   type DailyView,
   type DailyWaitingNote,
+  dailyTextLength,
 } from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
@@ -520,6 +522,9 @@ export class DailyController {
           const persona = before.personas.find((p) => p.id === personaId);
           if (!persona) return fail('daily_persona', '페르소나를 찾을 수 없습니다.');
           if (persona.language === 'ko') return invalid();
+          const limit = DAILY_KOREAN_DRAFT_LIMIT[persona.language];
+          if (dailyTextLength(written) > limit)
+            fail('daily_text', `한국어 본문은 ${limit}자까지 쓸 수 있습니다.`);
           text = await this.options.compose(persona, written);
         } finally {
           this.composing = false;

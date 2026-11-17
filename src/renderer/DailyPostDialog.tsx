@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import type { CaptionLanguage } from '../shared/contracts';
 import {
+  DAILY_KOREAN_DRAFT_LIMIT,
   DAILY_TEXT_LIMIT,
   dailyTextLength,
   type DailyPersona,
@@ -36,9 +37,11 @@ export function DailyPostDialog({
   const id = useId();
   const [text, setText] = useState(post?.text ?? '');
   const [language, setLanguage] = useState<CaptionLanguage>(persona.language);
-  const length = dailyTextLength(text);
-  const valid = dailyTextLength(text.trim()) >= 1 && length <= DAILY_TEXT_LIMIT;
   const fromKorean = !post && persona.language !== 'ko' && language === 'ko';
+  // A Korean draft grows when it is written in some languages, so it gets a shorter limit.
+  const limit = fromKorean ? DAILY_KOREAN_DRAFT_LIMIT[persona.language] : DAILY_TEXT_LIMIT;
+  const length = dailyTextLength(text);
+  const valid = dailyTextLength(text.trim()) >= 1 && length <= limit;
   const personaLanguage = languageNames[persona.language];
   const working = busy || composing;
   return (
@@ -71,7 +74,11 @@ export function DailyPostDialog({
             </select>
             <p className="daily-form-note">
               {fromKorean
-                ? `한국어로 쓰면 ${personaLanguage} 글로 바꿔 초안에 넣습니다. 쓴 내용은 한국어 뜻으로 함께 보입니다.`
+                ? `한국어로 쓰면 ${personaLanguage} 글로 바꿔 초안에 넣습니다. 쓴 내용은 한국어 뜻으로 함께 보입니다.${
+                    limit < DAILY_TEXT_LIMIT
+                      ? ` ${personaLanguage}로 바꾸면 길이가 두 배쯤 늘어 ${limit}자까지 쓸 수 있습니다.`
+                      : ''
+                  }`
                 : `쓴 그대로 초안에 넣고 한국어 뜻을 만듭니다. ${personaLanguage} 작문이 어렵다면 한국어를 고르세요.`}
             </p>
           </>
@@ -85,11 +92,8 @@ export function DailyPostDialog({
           aria-describedby={`${id}-count`}
           onChange={(event) => setText(event.target.value)}
         />
-        <p
-          id={`${id}-count`}
-          className={`daily-form-count ${length > DAILY_TEXT_LIMIT ? 'is-over' : ''}`}
-        >
-          {length} / {DAILY_TEXT_LIMIT}
+        <p id={`${id}-count`} className={`daily-form-count ${length > limit ? 'is-over' : ''}`}>
+          {length} / {limit}
         </p>
         {post?.translation && (
           <>

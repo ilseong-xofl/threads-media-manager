@@ -347,14 +347,19 @@ describe('daily drafts', () => {
     for (const [input, code] of [
       [{ personaId: english.id, text: '   ', fromKorean: false }, 'daily_text'],
       [{ personaId: english.id, text: 'a'.repeat(501), fromKorean: true }, 'daily_text'],
+      // English comes out about twice as long, so its Korean draft is held to 200 characters.
+      [{ personaId: english.id, text: '가'.repeat(201), fromKorean: true }, 'daily_text'],
       [{ personaId: english.id, text: '글' }, 'daily_input'],
       [{ personaId: randomUUID(), text: '글', fromKorean: false }, 'daily_persona'],
     ] as const)
       expect((await daily.addPost(input)).problem?.code).toBe(code);
+    expect(compose).toHaveBeenCalledOnce();
+    ok(await daily.addPost({ personaId: english.id, text: '가'.repeat(200), fromKorean: true }));
+    ok(await daily.addPost({ personaId: english.id, text: 'a'.repeat(201), fromKorean: false }));
     compose.mockRejectedValueOnce(new ViewError('codex_login', 'ChatGPT에 로그인하세요.'));
     const failed = await daily.addPost({ personaId: english.id, text: '글', fromKorean: true });
     expect(failed.problem?.code).toBe('codex_login');
-    expect(failed.view.posts).toHaveLength(2);
+    expect(failed.view.posts).toHaveLength(4);
     expect(daily.generating).toBe(false);
     compose.mockResolvedValueOnce('a'.repeat(501));
     expect(
