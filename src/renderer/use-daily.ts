@@ -34,7 +34,13 @@ export function createDailyController(
   effects: { notify(message: string, error?: boolean): void },
 ) {
   let state: DailyViewState = {
-    view: { personas: [], posts: [], generatingPersonaId: null, translatingPostId: null },
+    view: {
+      personas: [],
+      posts: [],
+      generatingPersonaId: null,
+      translatingPostId: null,
+      unsyncedPersonas: 0,
+    },
     loaded: false,
     busy: false,
     generating: null,

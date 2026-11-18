@@ -26,6 +26,7 @@ import { exactKeys, isObject, parseManagedAccount, validId } from './managed-thr
 import {
   parsePublicationResponse,
   parsePublications,
+  timestamp,
   uuid,
   type PublicationRequest,
 } from './mobile-publication-data';
@@ -33,7 +34,11 @@ import { ServiceApiError, type ServiceApiClient, type ServiceBusinessContext } f
 
 type Client = Pick<
   ServiceApiClient,
-  'getBusinessContext' | 'assertBusinessContext' | 'publicationRequest' | 'managedThreadsRequest'
+  | 'getBusinessContext'
+  | 'assertBusinessContext'
+  | 'publicationRequest'
+  | 'managedThreadsRequest'
+  | 'personaRequest'
 >;
 interface Store {
   read(scope: DailyScope): Promise<DailyPartition>;
@@ -65,7 +70,45 @@ const EMPTY: DailyView = {
   posts: [],
   generatingPersonaId: null,
   translatingPostId: null,
+  unsyncedPersonas: 0,
 };
+/**
+ * The server has nowhere to keep personas: an older build without the routes, or one whose table
+ * is not created. A persona the server never held (`synced` is not true) may then be changed on
+ * this PC alone, because nothing there can differ and the next sync uploads it; the PC must work
+ * whichever of the two is updated first. A persona the server did hold is never changed here
+ * alone: its server copy would win at the next sync and undo the change.
+ */
+const noPersonaStore = (error: unknown) =>
+  error instanceof ServiceApiError &&
+  (error.code === 'MIGRATION_REQUIRED' ||
+    (error.code === 'PERSONA_REQUEST_FAILED' && error.status === 404));
+/** What the server keeps of a persona. Posts and their Korean renderings stay on this PC. */
+const PERSONA_FIELDS = ['name', 'accountId', 'language', 'description', 'createdAt'] as const;
+/** One persona as the server sends it, or null when it is not one. */
+function remotePersona(value: unknown): DailyPersona | null {
+  if (
+    !isObject(value) ||
+    !uuid(value.id) ||
+    typeof value.name !== 'string' ||
+    !value.name ||
+    value.name.length > DAILY_NAME_LIMIT ||
+    !validId(value.accountId) ||
+    !LANGUAGES.includes(value.language as CaptionLanguage) ||
+    typeof value.description !== 'string' ||
+    value.description.length > DAILY_DESCRIPTION_LIMIT ||
+    !timestamp(value.createdAt)
+  )
+    return null;
+  return {
+    id: value.id,
+    name: value.name,
+    accountId: value.accountId,
+    language: value.language as CaptionLanguage,
+    description: value.description,
+    createdAt: value.createdAt,
+  };
+}
 
 /** The PC's calendar date. The writer only needs the time of year, so the time zone is no matter. */
 const localDate = (date: Date) =>
@@ -134,10 +177,14 @@ export class DailyController {
   private translatingPostId: string | null = null;
   private composing = false;
   private readonly remote = new Map<string, Remote>();
+  /** A sync with the server that is under way; changes wait for it. */
+  private syncing: Promise<void> | null = null;
+  /** Server personas the last sync left out because another persona here uses their account. */
+  private conflicts = 0;
   constructor(private readonly options: Options) {}
-  /** A send, cancel or save is talking to the server or the file. */
+  /** A send, cancel, save or sync is talking to the server or the file. */
   get busy(): boolean {
-    return this.mutating;
+    return this.mutating || this.syncing !== null;
   }
   /** ChatGPT is writing: posts, a Korean rendering, or a post from a Korean draft. */
   get generating(): boolean {
@@ -197,8 +244,101 @@ export class DailyController {
       return fail('INVALID_RESPONSE', '계정 목록을 확인하지 못했습니다.');
     }
   }
+  private async personas(
+    context: ServiceBusinessContext,
+    operation: Parameters<Client['personaRequest']>[1],
+    id?: string,
+    body?: unknown,
+  ) {
+    this.assert(context);
+    const response = await this.options.client.personaRequest(context, operation, id, body);
+    this.assert(context);
+    return response;
+  }
+  /**
+   * Brings this PC's personas and the server's together (2026-11-18). The file stays complete, so
+   * everything else keeps reading it; the server copy is what the phone and another PC see.
+   * - only on the server: taken into the file (a new PC);
+   * - only here: created on the server, which never overwrites an id it already has (the first
+   *   move of older data, a restored file, a server database that was reset);
+   * - on both: the server's fields win, and fields this version does not know are kept.
+   * A server that cannot be read leaves the file as it is. Only a changed sign-in throws.
+   */
+  private async sync(context: ServiceBusinessContext): Promise<void> {
+    const scope = this.scope(context);
+    this.conflicts = 0;
+    /** A failed call leaves things as they are, but a sign-in the server refuses must surface. */
+    const tolerate = (error: unknown) => {
+      this.assert(context);
+      if (error instanceof ServiceApiError && error.code === 'AUTH_REQUIRED') throw error;
+    };
+    let remote: DailyPersona[];
+    try {
+      const raw = await this.personas(context, 'list');
+      const rows = isObject(raw) && Array.isArray(raw.personas) ? raw.personas : null;
+      const parsed = rows?.map(remotePersona);
+      if (!parsed || parsed.some((persona) => !persona)) return;
+      remote = parsed as DailyPersona[];
+    } catch (error) {
+      return tolerate(error);
+    }
+    const onServer = new Set(remote.map((persona) => persona.id));
+    const before = await this.options.store.read(scope);
+    for (const persona of before.personas.filter((p) => !onServer.has(p.id)))
+      try {
+        const { id, name, accountId, language, description, createdAt } = persona;
+        await this.personas(context, 'create', undefined, {
+          id,
+          name,
+          accountId,
+          language,
+          description,
+          createdAt,
+        });
+        onServer.add(id);
+      } catch (error) {
+        // It stays on this PC and is counted as unsynced; the next sync tries again.
+        tolerate(error);
+      }
+    /** Applies the server's personas; says how many it left out and whether anything changed. */
+    const take = (partition: DailyPartition) => {
+      let conflicts = 0;
+      let changed = false;
+      for (const theirs of remote) {
+        if (
+          partition.personas.some((p) => p.accountId === theirs.accountId && p.id !== theirs.id)
+        ) {
+          conflicts += 1;
+          continue;
+        }
+        const mine = partition.personas.find((p) => p.id === theirs.id);
+        if (!mine) partition.personas.push({ ...theirs });
+        else if (PERSONA_FIELDS.every((field) => mine[field] === theirs[field])) continue;
+        else for (const field of PERSONA_FIELDS) Object.assign(mine, { [field]: theirs[field] });
+        changed = true;
+      }
+      for (const mine of partition.personas) {
+        const synced = onServer.has(mine.id);
+        if ((mine.synced === true) === synced) continue;
+        mine.synced = synced;
+        changed = true;
+      }
+      return { conflicts, changed };
+    };
+    const first = take(structuredClone(before));
+    let conflicts = first.conflicts;
+    // The file is written only when something really differs: this runs at every look.
+    if (first.changed)
+      await this.options.store.update(scope, (partition) => {
+        ({ conflicts } = take(partition));
+        return partition;
+      });
+    this.conflicts = conflicts;
+  }
   private view(partition: DailyPartition): DailyView {
     return {
+      unsyncedPersonas:
+        partition.personas.filter((persona) => persona.synced !== true).length + this.conflicts,
       personas: partition.personas.map((persona) => ({
         id: persona.id,
         name: persona.name,
@@ -326,13 +466,26 @@ export class DailyController {
     if (this.mutating)
       return this.respond(() => fail('daily_busy', '진행 중인 작업이 끝난 뒤 시도하세요.'));
     this.mutating = true;
-    return this.respond(action).finally(() => {
+    return this.respond(async (context) => {
+      // A sync that is under way finishes first, so the two never write the file at once.
+      await this.syncing?.catch(() => {});
+      return action(context);
+    }).finally(() => {
       this.mutating = false;
     });
   }
 
   state(): Promise<DailyResult> {
-    return this.respond((context) => this.refresh(context));
+    return this.respond(async (context) => {
+      // A change in progress has the file; this read then shows what is stored.
+      if (!this.mutating) {
+        this.syncing ??= this.sync(context).finally(() => {
+          this.syncing = null;
+        });
+        await this.syncing;
+      }
+      return this.refresh(context);
+    });
   }
 
   savePersona(input: unknown): Promise<DailyResult> {
@@ -368,21 +521,12 @@ export class DailyController {
       const accounts = await this.accounts(context);
       if (!accounts.some((account) => account.id === accountId))
         fail('daily_account', '본인이 등록한 게시 계정을 선택하세요.');
-      const createdAt = this.now();
-      return this.options.store.update(this.scope(context), (partition) => {
+      const scope = this.scope(context);
+      /** The rules this PC keeps; returns the stored persona when one is being changed. */
+      const allowed = (partition: DailyPartition) => {
         if (partition.personas.some((p) => p.accountId === accountId && p.id !== personaId))
           fail('daily_account_taken', '다른 페르소나가 이미 쓰고 있는 계정입니다.');
-        if (!personaId) {
-          partition.personas.push({
-            id: randomUUID(),
-            name,
-            accountId,
-            language,
-            description,
-            createdAt,
-          });
-          return partition;
-        }
+        if (!personaId) return null;
         const persona = partition.personas.find((p) => p.id === personaId);
         if (!persona) return fail('daily_persona', '페르소나를 찾을 수 없습니다.');
         if (
@@ -391,7 +535,36 @@ export class DailyController {
           accounts.some((account) => account.id === persona.accountId)
         )
           fail('daily_account_locked', '글이 있는 페르소나는 연동 계정을 바꿀 수 없습니다.');
-        Object.assign(persona, { name, accountId, language, description });
+        return persona;
+      };
+      const stored = allowed(await this.options.store.read(scope));
+      const id = stored?.id ?? randomUUID();
+      const createdAt = stored?.createdAt ?? this.now();
+      const fields = { name, accountId, language, description };
+      // The server first, then this PC: the phone must never lag behind what the board shows.
+      let synced = true;
+      try {
+        const create = () =>
+          this.personas(context, 'create', undefined, { id, ...fields, createdAt });
+        if (!stored) await create();
+        else
+          await this.personas(context, 'update', id, fields).catch((error) =>
+            error instanceof ServiceApiError && error.code === 'PERSONA_NOT_FOUND'
+              ? create()
+              : Promise.reject(error),
+          );
+      } catch (error) {
+        if (!noPersonaStore(error) || stored?.synced === true) {
+          // The answer may have been lost after the server saved it; show what is really there.
+          await this.sync(context).catch(() => {});
+          throw error;
+        }
+        synced = false;
+      }
+      return this.options.store.update(scope, (partition) => {
+        const persona = allowed(partition);
+        if (persona) Object.assign(persona, fields, { synced });
+        else partition.personas.push({ id, ...fields, createdAt, synced });
         return partition;
       });
     });
@@ -404,11 +577,21 @@ export class DailyController {
       const personaId = input.personaId;
       if (this.generatingPersonaId === personaId)
         fail('daily_busy', '글 생성이 끝난 뒤 삭제하세요.');
-      return this.options.store.update(this.scope(context), (partition) => {
-        if (!partition.personas.some((p) => p.id === personaId))
-          fail('daily_persona', '페르소나를 찾을 수 없습니다.');
+      const scope = this.scope(context);
+      const allowed = (partition: DailyPartition) => {
+        const persona = partition.personas.find((p) => p.id === personaId);
+        if (!persona) return fail('daily_persona', '페르소나를 찾을 수 없습니다.');
         if (partition.posts.some((post) => post.personaId === personaId && post.send))
           fail('daily_persona_waiting', '휴대폰 대기 중인 글을 먼저 취소하세요.');
+        return persona;
+      };
+      const stored = allowed(await this.options.store.read(scope));
+      // The server first: a persona left only there would come back at the next sync anyway.
+      await this.personas(context, 'delete', personaId).catch((error) =>
+        noPersonaStore(error) && stored.synced !== true ? undefined : Promise.reject(error),
+      );
+      return this.options.store.update(scope, (partition) => {
+        allowed(partition);
         partition.personas = partition.personas.filter((p) => p.id !== personaId);
         partition.posts = partition.posts.filter((post) => post.personaId !== personaId);
         return partition;

@@ -36,10 +36,17 @@ export interface StoredDailyPost {
   /** Final. Set once any send of this post reached Threads. */
   published: { sentAt: string | null } | null;
 }
+/**
+ * A persona as this PC keeps it. `synced` (2026-11-18) is true once the server is known to hold
+ * it; absent in files written before personas were kept on the server.
+ */
+export interface StoredDailyPersona extends DailyPersona {
+  synced?: boolean;
+}
 export interface DailyPartition {
   service: string;
   ownerId: string;
-  personas: DailyPersona[];
+  personas: StoredDailyPersona[];
   posts: StoredDailyPost[];
 }
 export interface DailyFile {

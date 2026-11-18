@@ -193,6 +193,12 @@ export function DailyBoard({
           페르소나
         </button>
       </div>
+      {daily.view.unsyncedPersonas > 0 && (
+        <p className="daily-sync-note" role="status">
+          서버에서 확인하지 못한 페르소나가 {daily.view.unsyncedPersonas}개 있습니다. 휴대폰에는
+          보이지 않을 수 있습니다.
+        </p>
+      )}
       {personas.length > 0 && (
         <div className="daily-strip-row">
           <button

@@ -64,6 +64,12 @@ export interface DailyView {
   generatingPersonaId: string | null;
   /** The post whose Korean rendering is being written right now, if any. */
   translatingPostId: string | null;
+  /**
+   * Personas the server is not known to hold (2026-11-18): the phone shows a persona only when
+   * the server has it. Counts this PC's personas the last sync could not confirm or upload, and
+   * server personas it could not take in because their account is used by another one here.
+   */
+  unsyncedPersonas: number;
 }
 
 export interface DailyResult {

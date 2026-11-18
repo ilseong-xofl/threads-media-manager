@@ -9,6 +9,7 @@ const view = (name: string, generatingPersonaId: string | null = null): DailyVie
   posts: [],
   generatingPersonaId,
   translatingPostId: null,
+  unsyncedPersonas: 0,
 });
 const ok = (name: string): DailyResult => ({ status: 'ok', view: view(name), problem: null });
 function deferred<T>() {

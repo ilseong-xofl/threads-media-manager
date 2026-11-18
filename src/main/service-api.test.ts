@@ -47,6 +47,50 @@ describe('service login boundary reused from local-video-manager', () => {
       expect(() => client.assertBusinessContext(context)).toThrow();
     },
   );
+  it('reaches personas only on fixed paths and keeps the codes the board explains', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));
+    const client = new ServiceApiClient('https://admin.example.test', store('session'), fetcher);
+    const context = await client.getBusinessContext();
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const fields = { name: '아들맘', accountId: 'account-a', language: 'ko', description: '' };
+    const last = () => [fetcher.mock.lastCall![1]?.method, String(fetcher.mock.lastCall![0])];
+    fetcher.mockResolvedValueOnce(json({ personas: [] }));
+    await expect(client.personaRequest(context, 'list')).resolves.toEqual({ personas: [] });
+    expect(last()).toEqual(['GET', 'https://admin.example.test/api/v1/personas']);
+    fetcher.mockResolvedValueOnce(json({ persona: {} }));
+    await client.personaRequest(context, 'create', undefined, { id, ...fields });
+    expect(last()).toEqual(['POST', 'https://admin.example.test/api/v1/personas']);
+    fetcher.mockResolvedValueOnce(json({ persona: {} }));
+    await client.personaRequest(context, 'update', id, fields);
+    expect(last()).toEqual(['PUT', `https://admin.example.test/api/v1/personas/${id}`]);
+    expect(fetcher.mock.lastCall![1]?.body).toBe(JSON.stringify(fields));
+    fetcher.mockResolvedValueOnce(json({}));
+    await client.personaRequest(context, 'delete', id);
+    expect(last()).toEqual(['DELETE', `https://admin.example.test/api/v1/personas/${id}`]);
+    const sent = fetcher.mock.calls.length;
+    for (const call of [
+      () => client.personaRequest(context, 'update', '../accounts', fields),
+      () => client.personaRequest(context, 'delete', id, fields),
+      () => client.personaRequest(context, 'list', id),
+      () => client.personaRequest(context, 'create', undefined, 'text'),
+      () => client.personaRequest(context, 'purge' as 'delete', id),
+    ])
+      await expect(call()).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(fetcher).toHaveBeenCalledTimes(sent);
+    for (const [status, code, expected] of [
+      [409, 'PERSONA_ACCOUNT_TAKEN', 'PERSONA_ACCOUNT_TAKEN'],
+      [404, 'PERSONA_NOT_FOUND', 'PERSONA_NOT_FOUND'],
+      [503, 'MIGRATION_REQUIRED', 'MIGRATION_REQUIRED'],
+      [500, 'UNEXPECTED_ERROR', 'SERVICE_UNAVAILABLE'],
+    ] as const) {
+      fetcher.mockResolvedValueOnce(json({ error: { code, message: 'private detail' } }, status));
+      const failure = (await client
+        .personaRequest(context, 'update', id, fields)
+        .catch((error: unknown) => error)) as Error;
+      expect(failure).toMatchObject({ code: expected });
+      expect(failure.message).not.toContain('private detail');
+    }
+  });
   it('limits publication calls to fixed JSON endpoints and preserves storage failures separately from service access', async () => {
     const tokens = store('signed-session');
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));

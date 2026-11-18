@@ -36,7 +36,57 @@ async function setup() {
   roots.push(userData);
   const rows: MobilePublication[] = [];
   const accounts = [account('account-a'), account('account-b')];
-  const server = { offline: false };
+  const server = {
+    offline: false,
+    /** Only the persona routes fail: 'down' as an outage, 'migration' as a missing table. */
+    personas: 'up' as 'up' | 'down' | 'migration',
+    /** The next create is stored and its answer lost. */
+    loseAnswer: false,
+    /** Holds the next persona list until released, to look at a sync under way. */
+    hold: null as Promise<void> | null,
+  };
+  /** The personas the server holds. */
+  const remote: DailyPersona[] = [];
+  const personaRequest = vi.fn(
+    async (_context: unknown, operation: string, id?: string, body?: unknown) => {
+      if (server.offline || server.personas === 'down')
+        throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+      if (server.personas === 'migration')
+        throw new ServiceApiError('서버 업데이트가 필요합니다.', 'MIGRATION_REQUIRED', 503);
+      const taken = (accountId: string, self: string) =>
+        remote.some((row) => row.accountId === accountId && row.id !== self);
+      if (operation === 'list') {
+        await server.hold;
+        return { personas: remote.map((row) => ({ ...row, updatedAt: row.createdAt })) };
+      }
+      if (operation === 'create') {
+        const input = body as DailyPersona;
+        const existing = remote.find((row) => row.id === input.id);
+        if (existing) return { persona: existing };
+        if (taken(input.accountId, input.id))
+          throw new ServiceApiError('쓰는 계정입니다.', 'PERSONA_ACCOUNT_TAKEN', 409);
+        remote.push({ ...input });
+        if (server.loseAnswer) {
+          server.loseAnswer = false;
+          throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+        }
+        return { persona: input };
+      }
+      const row = remote.find((item) => item.id === id);
+      if (operation === 'update') {
+        if (!row) throw new ServiceApiError('없습니다.', 'PERSONA_NOT_FOUND', 404);
+        const input = body as Pick<DailyPersona, 'accountId'>;
+        if (taken(input.accountId, row.id))
+          throw new ServiceApiError('쓰는 계정입니다.', 'PERSONA_ACCOUNT_TAKEN', 409);
+        return { persona: Object.assign(row, body) };
+      }
+      if (operation === 'delete') {
+        if (row) remote.splice(remote.indexOf(row), 1);
+        return {};
+      }
+      throw new Error(`unexpected ${operation}`);
+    },
+  );
   const publicationRequest = vi.fn(
     async (_context: unknown, operation: string, id?: string, body?: unknown) => {
       if (server.offline)
@@ -96,9 +146,14 @@ async function setup() {
     assertBusinessContext: vi.fn(),
     managedThreadsRequest: vi.fn(async () => ({ accounts })),
     publicationRequest,
+    personaRequest,
   } as unknown as Pick<
     ServiceApiClient,
-    'getBusinessContext' | 'assertBusinessContext' | 'publicationRequest' | 'managedThreadsRequest'
+    | 'getBusinessContext'
+    | 'assertBusinessContext'
+    | 'publicationRequest'
+    | 'managedThreadsRequest'
+    | 'personaRequest'
   >;
   const drafts = (...texts: string[]): DailyDraft[] =>
     texts.map((text) => ({ text, translation: null }));
@@ -138,6 +193,8 @@ async function setup() {
     rows,
     accounts,
     server,
+    remote,
+    personaRequest,
     publicationRequest,
     generate,
     translate,
@@ -149,6 +206,278 @@ async function setup() {
     creates,
   };
 }
+
+describe('personas kept on the server', () => {
+  const file = async (userData: string) =>
+    JSON.parse(await readFile(join(userData, DAILY_FILE_NAME), 'utf8')).partitions[0];
+  const calls = (mock: { mock: { calls: unknown[][] } }, operation: string) =>
+    mock.mock.calls.filter((call) => call[1] === operation);
+
+  it('saves and deletes on the server first, and leaves this PC alone when the server refuses', async () => {
+    const { daily, remote, server, userData, ok, persona } = await setup();
+    const mom = await persona();
+    expect(remote).toEqual([mom]);
+    ok(
+      await daily.savePersona({
+        personaId: mom.id,
+        name: '연년생 아들맘',
+        accountId: 'account-a',
+        language: 'en',
+        description: '45세',
+      }),
+    );
+    expect(remote[0]).toMatchObject({ id: mom.id, name: '연년생 아들맘', language: 'en' });
+    expect(remote[0].createdAt).toBe(mom.createdAt);
+    server.personas = 'down';
+    const refused = await daily.savePersona({
+      personaId: mom.id,
+      name: '바뀐 이름',
+      accountId: 'account-a',
+      language: 'en',
+      description: '45세',
+    });
+    expect(refused.problem?.code).toBe('SERVICE_UNAVAILABLE');
+    expect(refused.view.personas[0].name).toBe('연년생 아들맘');
+    expect((await daily.deletePersona({ personaId: mom.id })).problem?.code).toBe(
+      'SERVICE_UNAVAILABLE',
+    );
+    expect((await file(userData)).personas).toHaveLength(1);
+    server.personas = 'up';
+    expect(ok(await daily.deletePersona({ personaId: mom.id })).personas).toEqual([]);
+    expect(remote).toEqual([]);
+  });
+
+  it('moves the personas only this PC has to the server once, without rewriting them', async () => {
+    const { daily, remote, personaRequest, userData, ok, persona, accounts } = await setup();
+    const mom = await persona();
+    const gone = await persona('account-b', '없어진 계정');
+    // Older data: the server has never seen them, and one account has since been deleted.
+    remote.length = 0;
+    accounts.pop();
+    const before = await readFile(join(userData, DAILY_FILE_NAME), 'utf8');
+    const view = ok(await daily.state());
+    expect(remote).toEqual([mom, gone]);
+    expect(view.personas).toEqual([mom, gone]);
+    expect(view.unsyncedPersonas).toBe(0);
+    expect(await readFile(join(userData, DAILY_FILE_NAME), 'utf8')).toBe(before);
+    personaRequest.mockClear();
+    ok(await daily.state());
+    expect(calls(personaRequest, 'create')).toHaveLength(0);
+  });
+
+  it('takes in the server personas on a new PC and does not write the file again after that', async () => {
+    const { daily, remote, userData, ok } = await setup();
+    remote.push({
+      id: randomUUID(),
+      name: '서버 페르소나',
+      accountId: 'account-a',
+      language: 'ja',
+      description: '',
+      createdAt: '2026-11-01T00:00:00.000Z',
+    });
+    expect(ok(await daily.state()).personas).toEqual(remote);
+    expect((await file(userData)).personas).toEqual([{ ...remote[0], synced: true }]);
+    expect((await daily.persona('account-a'))?.name).toBe('서버 페르소나');
+    const update = vi.spyOn(DailyStore.prototype, 'update');
+    ok(await daily.state());
+    expect(update).not.toHaveBeenCalled();
+    update.mockRestore();
+  });
+
+  it('follows the server where both have a persona, keeping fields it does not know, and never overwrites the server from an old file', async () => {
+    const { daily, remote, personaRequest, userData, ok, persona } = await setup();
+    const mom = await persona();
+    const path = join(userData, DAILY_FILE_NAME);
+    const stored = JSON.parse(await readFile(path, 'utf8'));
+    stored.partitions[0].personas[0].future = { kept: true };
+    await writeFile(path, JSON.stringify(stored));
+    // The server copy was edited after this file was written (a restored backup, another PC).
+    remote[0] = { ...mom, name: '서버에서 고친 이름', description: '서버 설명' };
+    personaRequest.mockClear();
+    expect(ok(await daily.state()).personas[0]).toEqual(remote[0]);
+    expect((await file(userData)).personas[0]).toEqual({
+      ...remote[0],
+      synced: true,
+      future: { kept: true },
+    });
+    expect(calls(personaRequest, 'create')).toHaveLength(0);
+    expect(calls(personaRequest, 'update')).toHaveLength(0);
+  });
+
+  it.each(['down', 'migration'] as const)(
+    'keeps working from the file while the persona routes are %s, and says the phone may not see them',
+    async (state) => {
+      const { daily, remote, server, ok, persona, draft } = await setup();
+      const mom = await persona();
+      server.personas = state;
+      remote.length = 0;
+      const view = ok(await daily.state());
+      expect(view.personas).toEqual([mom]);
+      // Confirmed when it was saved, so an outage alone does not raise the notice.
+      expect(view.unsyncedPersonas).toBe(0);
+      expect((await daily.persona('account-a'))?.id).toBe(mom.id);
+      expect((await draft(mom.id)).text).toBe('첫 번째 글');
+      server.personas = 'up';
+      expect(ok(await daily.state()).unsyncedPersonas).toBe(0);
+      expect(remote).toEqual([mom]);
+    },
+  );
+
+  it('counts the personas of a file written before the server kept them, until they are uploaded', async () => {
+    const { daily, remote, server, userData, ok, persona } = await setup();
+    const mom = await persona();
+    // A file from the version before this one: no mark, and the server has nothing.
+    const path = join(userData, DAILY_FILE_NAME);
+    const stored = JSON.parse(await readFile(path, 'utf8'));
+    delete stored.partitions[0].personas[0].synced;
+    await writeFile(path, JSON.stringify(stored));
+    remote.length = 0;
+    server.personas = 'migration';
+    expect(ok(await daily.state()).unsyncedPersonas).toBe(1);
+    server.personas = 'up';
+    expect(ok(await daily.state()).unsyncedPersonas).toBe(0);
+    expect(remote).toEqual([mom]);
+    expect((await file(userData)).personas[0].synced).toBe(true);
+  });
+
+  it('never changes on this PC alone a persona the server has held', async () => {
+    const { daily, remote, server, personaRequest, userData, ok, persona } = await setup();
+    const mom = await persona();
+    const missing = () =>
+      personaRequest.mockRejectedValueOnce(
+        new ServiceApiError('저장하지 못했습니다.', 'PERSONA_REQUEST_FAILED', 404),
+      );
+    // The server was rolled back to a build without the routes; its data is still there.
+    missing();
+    const edited = await daily.savePersona({
+      personaId: mom.id,
+      name: '롤백 중에 고친 이름',
+      accountId: 'account-a',
+      language: 'ko',
+      description: '30세',
+    });
+    expect(edited.problem?.code).toBe('PERSONA_REQUEST_FAILED');
+    missing();
+    expect((await daily.deletePersona({ personaId: mom.id })).problem?.code).toBe(
+      'PERSONA_REQUEST_FAILED',
+    );
+    server.personas = 'migration';
+    expect((await daily.deletePersona({ personaId: mom.id })).problem?.code).toBe(
+      'MIGRATION_REQUIRED',
+    );
+    server.personas = 'up';
+    expect(ok(await daily.state()).personas).toEqual([mom]);
+    expect((await file(userData)).personas[0]).toEqual({ ...mom, synced: true });
+    expect(remote).toEqual([mom]);
+  });
+
+  it('surfaces a sign-in the server refuses instead of answering from the file', async () => {
+    const { daily, personaRequest, persona } = await setup();
+    await persona();
+    personaRequest.mockRejectedValueOnce(
+      new ServiceApiError('서비스에 다시 로그인해 주세요.', 'AUTH_REQUIRED', 403),
+    );
+    expect((await daily.state()).problem?.code).toBe('AUTH_REQUIRED');
+  });
+
+  it('keeps changes on this PC while the server has no persona storage, and uploads them later', async () => {
+    const { daily, remote, server, personaRequest, ok, persona } = await setup();
+    // An older server: the table is missing, or the routes are (a bare 404).
+    server.personas = 'migration';
+    const mom = await persona();
+    personaRequest.mockRejectedValueOnce(
+      new ServiceApiError('저장하지 못했습니다.', 'PERSONA_REQUEST_FAILED', 404),
+    );
+    const view = ok(
+      await daily.savePersona({
+        personaId: mom.id,
+        name: '서버 없이 고친 이름',
+        accountId: 'account-a',
+        language: 'ko',
+        description: '30세',
+      }),
+    );
+    expect(view.personas[0].name).toBe('서버 없이 고친 이름');
+    expect(view.unsyncedPersonas).toBe(1);
+    const other = await persona('account-b', '지울 페르소나');
+    expect(ok(await daily.deletePersona({ personaId: other.id })).personas).toHaveLength(1);
+    expect(remote).toEqual([]);
+    server.personas = 'up';
+    expect(ok(await daily.state()).unsyncedPersonas).toBe(0);
+    expect(remote).toEqual([{ ...mom, name: '서버 없이 고친 이름', description: '30세' }]);
+  });
+
+  it('shows a persona the server saved although its answer was lost', async () => {
+    const { daily, remote, server } = await setup();
+    server.loseAnswer = true;
+    const result = await daily.savePersona({
+      name: '아들맘',
+      accountId: 'account-a',
+      language: 'ko',
+      description: '30세',
+    });
+    expect(result.problem?.code).toBe('SERVICE_UNAVAILABLE');
+    expect(result.view.personas).toEqual(remote);
+    expect(remote).toHaveLength(1);
+    expect(result.view.unsyncedPersonas).toBe(0);
+  });
+
+  it('creates a changed persona the server has lost instead of failing', async () => {
+    const { daily, remote, ok, persona } = await setup();
+    const mom = await persona();
+    remote.length = 0;
+    ok(
+      await daily.savePersona({
+        personaId: mom.id,
+        name: '다시 올린 이름',
+        accountId: 'account-a',
+        language: 'ko',
+        description: '30세',
+      }),
+    );
+    expect(remote).toEqual([{ ...mom, name: '다시 올린 이름', description: '30세' }]);
+  });
+
+  it('leaves out a server persona whose account another persona here uses, and counts both', async () => {
+    const { daily, remote, ok, persona } = await setup();
+    const mine = await persona();
+    // Another PC bound the same account to a different persona and this one was removed there.
+    remote.splice(0, 1, { ...mine, id: randomUUID(), name: '다른 PC의 페르소나' });
+    const view = ok(await daily.state());
+    expect(view.personas).toEqual([mine]);
+    expect(view.unsyncedPersonas).toBe(2);
+    expect(remote).toHaveLength(1);
+  });
+
+  it('holds changes until a sync under way has finished, and counts as busy meanwhile', async () => {
+    const { daily, remote, server, ok, persona } = await setup();
+    const mom = await persona();
+    let release = () => {};
+    server.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const looking = daily.state();
+    await vi.waitFor(() => expect(daily.busy).toBe(true));
+    const deleting = daily.deletePersona({ personaId: mom.id });
+    server.hold = null;
+    release();
+    ok(await looking);
+    expect(ok(await deleting).personas).toEqual([]);
+    expect(remote).toEqual([]);
+    expect(daily.busy).toBe(false);
+  });
+
+  it('ignores a persona list it cannot trust', async () => {
+    const { daily, personaRequest, ok, persona } = await setup();
+    const mom = await persona();
+    personaRequest.mockResolvedValueOnce({
+      personas: [
+        { ...mom, updatedAt: mom.createdAt, name: '믿을 수 없는 값', language: 'fr' as 'ko' },
+      ],
+    });
+    expect(ok(await daily.state()).personas).toEqual([mom]);
+  });
+});
 
 describe('daily personas', () => {
   it('binds one account to one persona and refuses accounts the user does not own', async () => {

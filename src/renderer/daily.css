@@ -59,6 +59,15 @@
 .daily-heading-copy p {
   color: #5b6575;
 }
+/* The server does not hold every persona shown here; the phone reads only the server. */
+.daily-sync-note {
+  margin: -6px 0 16px;
+  padding: 9px 13px;
+  border-radius: 10px;
+  background: #fff4dc;
+  color: #8c6a1f;
+  font-size: 13px;
+}
 button.daily-add-persona {
   min-height: 44px;
   padding: 10px 16px;
