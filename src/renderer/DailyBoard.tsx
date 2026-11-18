@@ -22,6 +22,7 @@ import {
   groupDailyPosts,
 } from './daily-model';
 import './daily.css';
+import './mobile-publications.css';
 import './managed-threads.css';
 
 const COLUMN_MIN_WIDTH = 300;
@@ -34,7 +35,8 @@ type Dialog =
   | { kind: 'persona'; personaId: string | null }
   | { kind: 'post'; postId: string }
   | { kind: 'write'; personaId: string }
-  | { kind: 'cancel'; postId: string };
+  | { kind: 'cancel'; postId: string }
+  | { kind: 'send'; postId: string };
 
 export function DailyBoard({
   daily,
@@ -82,7 +84,7 @@ export function DailyBoard({
       ? (personas.find((persona) => persona.id === dialog.personaId) ?? null)
       : null;
   const dialogPost =
-    dialog?.kind === 'post' || dialog?.kind === 'cancel'
+    dialog?.kind === 'post' || dialog?.kind === 'cancel' || dialog?.kind === 'send'
       ? (posts.find((post) => post.id === dialog.postId) ?? null)
       : null;
   const postPersona = personas.find(
@@ -150,6 +152,45 @@ export function DailyBoard({
             }
           >
             {daily.busy ? '취소하는 중…' : '보내기 취소'}
+          </button>
+        </div>
+      </ManagedThreadsActionDialog>
+    );
+  } else if (dialog?.kind === 'send' && dialogPost?.state === 'draft' && postPersona) {
+    // 2026-11-18, the user's call: a draft is not sent by one click; the account and text are
+    // shown first, like the send dialog of a collected post.
+    const row = dailyAccountRow(postPersona.accountId, accounts.accounts);
+    dialogElement = (
+      <ManagedThreadsActionDialog
+        title="모바일로 보내기"
+        busy={daily.busy}
+        confirmation
+        onClose={closeDialog}
+      >
+        <div className="mobile-publication-dialog-body">
+          <p className="mobile-publication-account-field">
+            <span className="mobile-publication-account-label">보낼 계정</span>
+            <strong>
+              {row ? dailyAccountName(row) : '계정 없음'} ({postPersona.name})
+            </strong>
+          </p>
+          <p className="daily-send-text">{dialogPost.text}</p>
+          <p>
+            이 글을 휴대폰 대기로 보냅니다. 등록 기한은 7일이며, 실제 등록은 이 계정의 휴대폰에서
+            합니다.
+          </p>
+        </div>
+        <div className="threads-actions managed-threads-dialog-actions">
+          <button type="button" disabled={daily.busy} onClick={closeDialog}>
+            취소
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={daily.busy}
+            onClick={() => void daily.send(dialogPost.id).then(closeDialog)}
+          >
+            {daily.busy ? '보내는 중…' : '이 계정으로 보내기'}
           </button>
         </div>
       </ManagedThreadsActionDialog>
@@ -273,6 +314,7 @@ export function DailyBoard({
                 onSettings={() => setDialog({ kind: 'persona', personaId: persona.id })}
                 onWrite={() => setDialog({ kind: 'write', personaId: persona.id })}
                 onEdit={(post) => setDialog({ kind: 'post', postId: post.id })}
+                onSend={(post) => setDialog({ kind: 'send', postId: post.id })}
                 onCancel={cancelSend}
               />
             ))}
@@ -342,6 +384,7 @@ function PersonaColumn({
   onSettings,
   onWrite,
   onEdit,
+  onSend,
   onCancel,
 }: {
   persona: DailyPersona;
@@ -352,6 +395,7 @@ function PersonaColumn({
   onSettings(): void;
   onWrite(): void;
   onEdit(post: DailyPost): void;
+  onSend(post: DailyPost): void;
   onCancel(post: DailyPost): void;
 }) {
   const groups = groupDailyPosts(daily.view.posts, persona.id);
@@ -480,7 +524,7 @@ function PersonaColumn({
                         className="primary daily-card-send"
                         disabled={daily.busy || !!sendBlock}
                         title={sendBlock ?? undefined}
-                        onClick={() => void daily.send(post.id)}
+                        onClick={() => onSend(post)}
                       >
                         모바일로 보내기
                       </button>

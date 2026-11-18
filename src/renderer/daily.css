@@ -59,6 +59,18 @@
 .daily-heading-copy p {
   color: #5b6575;
 }
+/* The text about to be sent, shown as it is in the confirmation. */
+.mobile-publication-dialog-body > p.daily-send-text {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid #e0e4eb;
+  border-radius: 12px;
+  background: #eef1f6;
+  color: #252b3b;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
 /* The server does not hold every persona shown here; the phone reads only the server. */
 .daily-sync-note {
   margin: -6px 0 16px;
