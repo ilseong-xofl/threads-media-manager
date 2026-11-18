@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CollectionView, PostDraft, SavePostDraftInput } from '../shared/contracts';
 import { PostDraftController, parsePostDraftInput, parsePostDraftResult } from './post-draft';
 import { validPostDraft } from '../shared/post-draft';
+import { ViewError } from './collection';
 
 const id = 'a'.repeat(32);
 const second = 'b'.repeat(32);
@@ -10,6 +11,8 @@ const input = (): SavePostDraftInput => ({
   caption: '새 캡션',
   mediaIds: [second, id],
   expectedRevision: null,
+  accountId: 'account-a',
+  translation: null,
 });
 const draft = (): PostDraft => ({
   caption: '새 캡션',
@@ -103,6 +106,10 @@ describe('post registration IPC', () => {
     { caption: 'x'.repeat(10001) },
     { caption: 'a\0b' },
     { root: '/another-root' },
+    { accountId: '' },
+    { accountId: 'has space' },
+    { translation: '   ' },
+    { translation: '가'.repeat(1001) },
   ])('rejects malformed request %j', (change) =>
     expect(() => parsePostDraftInput({ ...input(), ...change })).toThrow(),
   );
@@ -120,6 +127,47 @@ describe('post registration IPC', () => {
         ),
       ).toThrow();
   });
+  it('checks the account before the save and records it after, without undoing a saved draft', async () => {
+    const refresh = vi.fn().mockResolvedValueOnce(view()).mockResolvedValue(view(draft()));
+    const launch = vi.fn(() => ({ result: Promise.resolve(draft()), cancel: vi.fn() }));
+    const before = vi.fn<
+      (view: CollectionView, post: unknown, input: SavePostDraftInput) => Promise<void>
+    >(async () => {});
+    const after = vi.fn(async () => true);
+    const chosen = { ...input(), accountId: 'account-b', translation: '뜻' };
+    const saved = await new PostDraftController(refresh, launch, undefined, before, after).save(
+      '/collection',
+      chosen,
+    );
+    expect(saved).toMatchObject({ status: 'saved', noteSaved: true });
+    expect(before.mock.calls[0][2]).toEqual(chosen);
+    expect(after).toHaveBeenCalledExactlyOnceWith(expect.anything(), draft(), chosen);
+    // A refused account stops the save before the worker starts.
+    const refused = vi.fn(async () => {
+      throw new ViewError('draft_account_locked', '이미 보낸 글은 계정을 바꿀 수 없습니다.');
+    });
+    const blockedLaunch = vi.fn();
+    const blocked = await new PostDraftController(
+      async () => view(),
+      blockedLaunch,
+      undefined,
+      refused,
+      after,
+    ).save('/collection', chosen);
+    expect(blocked).toMatchObject({ status: 'error', problem: { code: 'draft_account_locked' } });
+    expect(blockedLaunch).not.toHaveBeenCalled();
+    // The draft is committed; a note that cannot be written only clears the flag.
+    for (const failing of [async () => false, async () => Promise.reject(new Error('disk'))]) {
+      const result = await new PostDraftController(
+        vi.fn().mockResolvedValueOnce(view()).mockResolvedValue(view(draft())),
+        () => ({ result: Promise.resolve(draft()), cancel: vi.fn() }),
+        undefined,
+        before,
+        failing,
+      ).save('/collection', chosen);
+      expect(result).toMatchObject({ status: 'saved', noteSaved: false, draft: draft() });
+    }
+  });
   it('allows empty media-only caption and rejects duplicate persisted references', () => {
     expect(validPostDraft({ ...draft(), caption: '' })).toBe(true);
     expect(validPostDraft({ ...draft(), mediaIds: [id, id] })).toBe(false);
@@ -136,7 +184,14 @@ describe('post registration IPC', () => {
       expect(result.view.snapshot?.posts[0].draft).toEqual(draft());
       expect(result.view.error?.code).toBe('draft_refresh_failed');
     }
-    expect(launch).toHaveBeenCalledExactlyOnceWith({ root: '/collection', ...input() });
+    // The account and the Korean rendering never reach the library worker.
+    expect(launch).toHaveBeenCalledExactlyOnceWith({
+      root: '/collection',
+      postKey: input().postKey,
+      caption: input().caption,
+      mediaIds: input().mediaIds,
+      expectedRevision: null,
+    });
   });
   it('blocks concurrent operations and corrupt persisted drafts before writing', async () => {
     const launch = vi.fn(() => ({ result: Promise.resolve(draft()), cancel: vi.fn() }));

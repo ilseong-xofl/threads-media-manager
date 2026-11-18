@@ -6,6 +6,7 @@ import type {
   MobilePublicationStatusesResult,
   MobilePublicationsResult,
   SendMobilePublicationInput,
+  PendingMobilePublication,
 } from '../shared/mobile-publications';
 import { validPostDraft } from '../shared/post-draft';
 import { postDraftExportIssue } from '../shared/post-export';
@@ -60,6 +61,16 @@ interface Options {
   localBusy(): boolean;
   prepareMedia(root: string, ids: string[], directory: string): Promise<ThreadsUploadFile[]>;
   upload?: typeof uploadPublicationFile;
+  /** Checks that a send goes to the account the post was written for (2026-11-18). */
+  notes?: {
+    confirmSendAccount(
+      context: ServiceBusinessContext,
+      libraryId: string,
+      post: Post,
+      accountId: string,
+      history: { publications: MobilePublication[]; pending: PendingMobilePublication[] },
+    ): Promise<void>;
+  };
 }
 const terminal = (p: MobilePublication) => p.status !== 'uploading';
 function fail(code: string, message: string): never {
@@ -236,6 +247,28 @@ export class MobilePublicationsController {
       return { status: 'error', statuses: [], problem: safeProblem(error) };
     }
   }
+  /** Read-only: what was sent for a post. It touches no journal, so it takes no work lock. */
+  async history(libraryId: string, key: string) {
+    const context = await this.options.client.getBusinessContext();
+    const publications = await this.list(context, libraryId, key);
+    const journal = await this.journal();
+    this.assert(context);
+    return {
+      publications,
+      pending: journal.pending
+        .filter(
+          (e) =>
+            this.scoped(e, context) &&
+            e.request.source.libraryId === libraryId &&
+            e.request.source.postKey === key,
+        )
+        .map((e) => ({
+          requestId: e.request.requestId,
+          accountId: e.request.accountId,
+          source: e.request.source,
+        })),
+    };
+  }
   get(input: unknown) {
     return this.run(async (context) => {
       if (!isObject(input) || !exactKeys(input, ['postKey']) || !postKey(input.postKey))
@@ -361,6 +394,18 @@ export class MobilePublicationsController {
         .map((a) => parseManagedAccount(a, context.ownerId))
         .find((a) => a.id === expected.accountId);
       if (!account) fail('mobile_publication_account', '본인이 등록한 게시 계정을 선택하세요.');
+      if (this.options.notes)
+        await this.options.notes.confirmSendAccount(
+          context,
+          source.libraryId,
+          post,
+          expected.accountId,
+          {
+            publications: await this.list(context, source.libraryId, source.postKey),
+            // A pending send of this post was refused above.
+            pending: [],
+          },
+        );
       const requestId = randomUUID();
       const directory = await publicationWorkDirectory(this.options.userData, requestId);
       try {

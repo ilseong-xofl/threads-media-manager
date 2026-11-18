@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { DailyPersona } from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
@@ -6,11 +7,12 @@ import { Icon } from './Icon';
 import { displayDate } from './view-model';
 import type { MobilePublicationsUi } from './use-mobile-publications';
 import {
-  mobileAccountChoices,
+  accountPersona,
   mobilePublicationAccountLabel,
   mobilePublicationCanAbandon,
   mobilePublicationCanRecall,
   mobilePublicationStatus,
+  mobileSendAccountProblem,
 } from './mobile-publication-model';
 import './managed-threads.css';
 import './mobile-publications.css';
@@ -204,6 +206,9 @@ export function MobilePublicationPanel({
 
 export function MobilePublicationSendDialog({
   accounts,
+  accountId,
+  autoAssigned,
+  personas,
   busy,
   mediaCount,
   includesComment,
@@ -212,6 +217,10 @@ export function MobilePublicationSendDialog({
   onClose,
 }: {
   accounts: ManagedThreadsAccountRow[];
+  /** The account the post is written for; the dialog does not choose one. */
+  accountId: string | null;
+  autoAssigned: boolean;
+  personas: DailyPersona[];
   busy: boolean;
   mediaCount: number;
   includesComment: boolean;
@@ -219,43 +228,21 @@ export function MobilePublicationSendDialog({
   onSend(accountId: string): Promise<boolean>;
   onClose(): void;
 }) {
-  const choices = mobileAccountChoices(accounts);
   // A refreshed token not yet on the server is the account's only valid copy: keep it off phones.
-  const sendable = choices.filter((item) => !item.pendingAction);
-  const [accountId, setAccountId] = useState(() => sendable[0]?.account?.id ?? '');
-  const selectedAccountId = sendable.some((item) => item.account?.id === accountId)
-    ? accountId
-    : (sendable[0]?.account?.id ?? '');
+  const problem = mobileSendAccountProblem(accountId, accounts);
+  const persona = accountPersona(accountId, personas);
   return (
     <ManagedThreadsActionDialog title="모바일로 보내기" busy={busy} onClose={onClose}>
       <div className="mobile-publication-dialog-body">
-        <div className="mobile-publication-account-field">
-          <label className="mobile-publication-account-label" htmlFor="mobile-publication-account">
-            게시할 Threads 계정
-          </label>
-          <select
-            id="mobile-publication-account"
-            value={selectedAccountId}
-            disabled={busy || !choices.length}
-            onChange={(event) => setAccountId(event.target.value)}
-          >
-            {!choices.length && <option value="">등록된 계정이 없습니다</option>}
-            {choices.map((item) => (
-              <option
-                key={item.account!.id}
-                value={item.account!.id}
-                disabled={!!item.pendingAction}
-              >
-                {mobilePublicationAccountLabel(item.account!.id, accounts)}
-                {item.pendingAction ? ' (갱신 재시도 필요)' : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-        {!choices.length && <p>계정 관리에서 계정을 등록해 주세요.</p>}
-        {sendable.length < choices.length && (
-          <p>갱신 재시도가 필요한 계정은 계정 관리에서 [갱신 재시도]를 마친 뒤 보낼 수 있습니다.</p>
-        )}
+        <p className="mobile-publication-account-field">
+          <span className="mobile-publication-account-label">보낼 계정</span>
+          <strong>
+            {accountId === null ? '계정 없음' : mobilePublicationAccountLabel(accountId, accounts)}
+            {persona ? ` (${persona.name})` : ''}
+          </strong>
+          {autoAssigned && <span className="registration-account-auto">자동 지정</span>}
+        </p>
+        {problem && <p className="mobile-publication-history-note">{problem}</p>}
         <p>
           저장된 본문과 미디어 {mediaCount}개를 선택한 순서대로 보냅니다.
           {includesComment ? ' 준비한 댓글도 함께 보냅니다.' : ''}
@@ -282,14 +269,15 @@ export function MobilePublicationSendDialog({
           <button
             type="button"
             className="primary"
-            disabled={busy || !selectedAccountId}
-            onClick={() =>
-              void onSend(selectedAccountId).then((ok) => {
-                if (ok) onClose();
-              })
-            }
+            disabled={busy || !!problem || accountId === null}
+            onClick={() => {
+              if (accountId !== null)
+                void onSend(accountId).then((ok) => {
+                  if (ok) onClose();
+                });
+            }}
           >
-            {busy ? '전송 중…' : '선택한 계정으로 보내기'}
+            {busy ? '전송 중…' : '이 계정으로 보내기'}
           </button>
         </div>
       </div>

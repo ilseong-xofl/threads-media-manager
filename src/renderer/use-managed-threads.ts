@@ -16,6 +16,8 @@ export interface ManagedThreadsViewState {
   accounts: ManagedThreadsAccountRow[];
   busy: boolean;
   loaded: boolean;
+  /** The last account list read failed, so an empty list does not mean "no accounts". */
+  failed: boolean;
   /** Local-clock time when the next Meta token request is allowed; 0 when it already is. */
   cooldownUntil: number;
   refreshWindowDays: number;
@@ -34,6 +36,7 @@ export function createManagedThreadsController(
     ...emptyMetadata,
     busy: false,
     loaded: false,
+    failed: false,
     refreshWindowDays: 14,
   };
   let enabled = false;
@@ -50,7 +53,7 @@ export function createManagedThreadsController(
     reportedBusy = value;
     effects.onSyncing(value);
   }
-  async function run(action: () => Promise<ManagedThreadsResult>, message?: string) {
+  async function run(action: () => Promise<ManagedThreadsResult>, message?: string, read = false) {
     if (!enabled || pending) return false;
     const request = generation;
     pending = true;
@@ -65,6 +68,8 @@ export function createManagedThreadsController(
       update({
         accounts: authChanged ? [] : result.accounts,
         loaded: true,
+        // A failed write keeps the read state; only a read decides whether the list is known.
+        failed: result.status === 'ok' ? false : read || state.failed,
         cooldownUntil: Number.isFinite(wait) && wait > 0 ? Date.now() + wait * 1000 : 0,
         refreshWindowDays: result.refreshWindowDays,
       });
@@ -77,7 +82,7 @@ export function createManagedThreadsController(
       return true;
     } catch {
       if (enabled && request === generation) {
-        update({ loaded: true });
+        update({ loaded: true, ...(read ? { failed: true } : {}) });
         effects.notify('계정 정보를 확인하지 못했습니다. 서버 연결을 확인해 주세요.', true);
       }
       return false;
@@ -93,6 +98,7 @@ export function createManagedThreadsController(
     return run(
       () => api.getManagedThreadsAccounts(),
       showNotice ? '서버의 최신 계정 정보를 이 PC와 동기화했습니다.' : undefined,
+      true,
     );
   }
   return {
@@ -108,7 +114,7 @@ export function createManagedThreadsController(
       enabled = value;
       generation += 1;
       if (!value) {
-        update({ ...emptyMetadata, loaded: false, busy: false });
+        update({ ...emptyMetadata, loaded: false, failed: false, busy: false });
         reportBusy(false);
       } else {
         if (pending) {

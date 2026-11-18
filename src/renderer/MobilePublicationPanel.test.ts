@@ -5,8 +5,13 @@ import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { MobilePublicationPanel, MobilePublicationSendDialog } from './MobilePublicationPanel';
 import {
+  decidePostAccount,
   mobileAccountChoices,
   mobilePublicationAccountLabel,
+  mobilePublicationLocksAccount,
+  postAccountOptionLabel,
+  postAccountSaveProblem,
+  sameRegistrationHistory,
   mobilePublicationCanAbandon,
   mobilePublicationCanRecall,
   mobilePublicationLocksComment,
@@ -87,10 +92,13 @@ function renderPanel(state: MobilePublicationsUi) {
 }
 
 describe('mobile publication presentation', () => {
-  it('selects the only account by default and warns when sending a new snapshot from an old post', () => {
+  it('shows the post account read-only and warns when sending a new snapshot from an old post', () => {
     const html = renderToStaticMarkup(
       createElement(MobilePublicationSendDialog, {
         accounts: [row],
+        accountId: 'account-one',
+        autoAssigned: false,
+        personas: [],
         busy: false,
         mediaCount: 3,
         includesComment: true,
@@ -100,32 +108,35 @@ describe('mobile publication presentation', () => {
       }),
     );
     expect(html).toContain('<dialog');
-    expect(html).toContain(
-      '<option value="account-one" selected="">뷰티 앱 · @beauty_one</option>',
-    );
+    expect(html).toContain('보낼 계정');
     expect(html).toContain('뷰티 앱 · @beauty_one');
+    expect(html).not.toContain('<select');
+    expect(html).not.toContain('자동 지정');
     expect(html).toContain('미디어 3개를 선택한 순서대로');
     expect(html).toContain('준비한 댓글도 함께');
     expect(html).toContain('이전 전송 또는 게시 이력');
-    expect(html).toContain('선택한 계정으로 보내기');
+    expect(html).toContain('이 계정으로 보내기');
     expect(html).not.toContain('class="primary" disabled=""');
     expect(html).toContain('전송 완료 후 게시 기한은 7일입니다.');
-    expect(html).not.toContain('multiple');
     expect(html).not.toContain('토큰');
   });
 
-  it('sorts accounts by registration time and selects the oldest without reordering the source', () => {
-    const newer = {
-      ...row,
-      localId: 'local-newer',
-      appName: '새 앱',
-      label: 'new_account',
-      account: { ...row.account!, id: 'account-newer', createdAt: '2026-10-20T00:00:00.000Z' },
-    };
-    const accounts = [newer, row];
+  it('names the persona and marks an account nobody chose', () => {
     const html = renderToStaticMarkup(
       createElement(MobilePublicationSendDialog, {
-        accounts,
+        accounts: [row],
+        accountId: 'account-one',
+        autoAssigned: true,
+        personas: [
+          {
+            id: 'persona-one',
+            name: '하루',
+            accountId: 'account-one',
+            language: 'en',
+            description: '',
+            createdAt: '2026-11-01T00:00:00.000Z',
+          },
+        ],
         busy: false,
         mediaCount: 1,
         includesComment: false,
@@ -134,23 +145,19 @@ describe('mobile publication presentation', () => {
         onClose: vi.fn(),
       }),
     );
-    expect(mobileAccountChoices(accounts)).toEqual([row, newer]);
-    expect(accounts).toEqual([newer, row]);
-    expect(html).toContain('<option value="account-one" selected="">');
-    expect(html.indexOf('value="account-one"')).toBeLessThan(html.indexOf('value="account-newer"'));
+    expect(html).toContain('뷰티 앱 · @beauty_one (하루)');
+    expect(html).toContain('자동 지정');
+    expect(html).not.toContain('class="primary" disabled=""');
   });
 
-  it('keeps an account with an unsent refresh visible but unselectable until it is retried', () => {
-    const unsent = {
-      ...row,
-      pendingAction: 'replace' as const,
-      pendingReason: 'refresh' as const,
-      localState: 'pending' as const,
-    };
-    const send = (accounts: (typeof row)[]) =>
+  it('blocks sending with a reason when the account is gone, being deleted or awaits a refresh', () => {
+    const send = (accounts: ManagedThreadsAccountRow[], accountId: string | null = 'account-one') =>
       renderToStaticMarkup(
         createElement(MobilePublicationSendDialog, {
           accounts,
+          accountId,
+          autoAssigned: false,
+          personas: [],
           busy: false,
           mediaCount: 1,
           includesComment: false,
@@ -159,34 +166,21 @@ describe('mobile publication presentation', () => {
           onClose: vi.fn(),
         }),
       );
-    const only = send([unsent]);
-    expect(only).toContain('<option value="account-one" disabled="">');
-    expect(only).toContain('(갱신 재시도 필요)');
-    expect(only).toContain('[갱신 재시도]를 마친 뒤 보낼 수 있습니다');
-    expect(only).toContain('class="primary" disabled=""');
-    const other = {
-      ...row,
-      localId: 'local-two',
-      account: { ...row.account!, id: 'account-two', createdAt: '2026-10-20T00:00:00.000Z' },
-    };
-    expect(send([unsent, other])).toContain('<option value="account-two" selected="">');
-  });
-
-  it('disables sending and the selector when there are no registered accounts', () => {
-    const html = renderToStaticMarkup(
-      createElement(MobilePublicationSendDialog, {
-        accounts: [],
-        busy: false,
-        mediaCount: 1,
-        includesComment: false,
-        hasHistory: false,
-        onSend: vi.fn(),
-        onClose: vi.fn(),
-      }),
-    );
-    expect(html).toContain('<select id="mobile-publication-account" disabled="">');
-    expect(html).toContain('등록된 계정이 없습니다');
-    expect(html).toContain('class="primary" disabled=""');
+    const cases: [ManagedThreadsAccountRow[], string | null, string][] = [
+      [[], 'account-one', '보낼 계정을 찾지 못했습니다'],
+      [[row], null, '보낼 계정을 찾지 못했습니다'],
+      [[{ ...row, pendingDeletion: true }], 'account-one', '삭제하고 있어'],
+      [
+        [{ ...row, pendingAction: 'replace', pendingReason: 'refresh', localState: 'pending' }],
+        'account-one',
+        '[갱신 재시도]를 마친 뒤 보낼 수 있습니다',
+      ],
+    ];
+    for (const [accounts, accountId, reason] of cases) {
+      const html = send(accounts, accountId);
+      expect(html).toContain(reason);
+      expect(html).toContain('class="primary" disabled=""');
+    }
   });
 
   it('allows server-registered unvalidated accounts, but excludes local-only and pending deletion rows', () => {
@@ -340,5 +334,143 @@ describe('mobile publication presentation', () => {
     expect(html).toContain('휴대폰에서 원글 게시 후 별도로 게시');
     expect(html).toContain('댓글 정보 수정');
     expect(html).not.toContain('API 업로드');
+  });
+});
+
+describe('the account a registered post is written for', () => {
+  const created = publication.source.draftCreatedAt;
+  const other = {
+    ...row,
+    localId: 'local-two',
+    appName: '둘째 앱',
+    label: 'second',
+    account: { ...row.account!, id: 'account-two', createdAt: '2026-10-20T00:00:00.000Z' },
+  };
+  const sent = (extra: Partial<MobilePublication>) => ({ ...publication, ...extra });
+  const pendingSend = (accountId: string, draftCreatedAt = created) => ({
+    requestId: 'pending',
+    accountId,
+    source: { ...publication.source, draftCreatedAt },
+  });
+
+  it('counts only history of the same registration', () => {
+    const again = '2026-11-01T00:00:00.000Z';
+    const old = sent({ accountId: 'account-two', status: 'published', rootStatus: 'published' });
+    expect(sameRegistrationHistory([old], [pendingSend('account-two')], again)).toEqual({
+      publications: [],
+      pending: [],
+    });
+    expect(mobilePublicationLocksAccount([old], [pendingSend('account-two')], again)).toBeNull();
+    expect(decidePostAccount([old], [], again, null, [row, other])).toEqual({
+      accountId: 'account-one',
+      source: 'auto',
+      locked: false,
+    });
+    expect(mobilePublicationLocksAccount([old], [], created)).toBe('account-two');
+    expect(mobilePublicationLocksAccount([old], [], null)).toBeNull();
+  });
+
+  it('locks while sending, waiting or once the root may have reached Threads, even if cancelled', () => {
+    const locks = (item: MobilePublication) => mobilePublicationLocksAccount([item], [], created);
+    expect(mobilePublicationLocksAccount([], [pendingSend('account-two')], created)).toBe(
+      'account-two',
+    );
+    for (const status of ['uploading', 'ready', 'started', 'published'] as const)
+      expect(locks(sent({ status }))).toBe('account-one');
+    for (const rootStatus of ['sending', 'unknown', 'uncertain', 'published'])
+      expect(locks(sent({ status: 'cancelled', rootStatus }))).toBe('account-one');
+    for (const rootStatus of ['queued', 'failed']) {
+      expect(locks(sent({ status: 'cancelled', rootStatus }))).toBeNull();
+      expect(locks(sent({ status: 'expired', rootStatus }))).toBeNull();
+    }
+  });
+
+  it('decides by locking history, then the recorded account, then the first sendable account', () => {
+    const locked = sent({ accountId: 'account-two', status: 'cancelled', rootStatus: 'unknown' });
+    expect(decidePostAccount([locked], [], created, 'account-one', [row, other])).toEqual({
+      accountId: 'account-two',
+      source: 'history',
+      locked: true,
+    });
+    const recalled = sent({ accountId: 'account-two', status: 'cancelled', rootStatus: 'queued' });
+    expect(decidePostAccount([recalled], [], created, 'account-one', [row, other])).toEqual({
+      accountId: 'account-one',
+      source: 'note',
+      locked: false,
+    });
+    // A recorded account that is gone stays the post's account so the screen can say so.
+    expect(decidePostAccount([], [], created, 'account-gone', [row])).toMatchObject({
+      accountId: 'account-gone',
+      source: 'note',
+    });
+    // Registration time orders the accounts, not the server's list order.
+    expect(decidePostAccount([], [], created, null, [other, row])).toEqual({
+      accountId: 'account-one',
+      source: 'auto',
+      locked: false,
+    });
+    expect(mobileAccountChoices([other, row])).toEqual([row, other]);
+    const refreshing = {
+      ...row,
+      pendingAction: 'replace' as const,
+      pendingReason: 'refresh' as const,
+    };
+    expect(decidePostAccount([], [], created, null, [refreshing, other]).accountId).toBe(
+      'account-two',
+    );
+    expect(decidePostAccount([], [], created, null, [refreshing]).accountId).toBe('account-one');
+    expect(decidePostAccount([], [], null, null, [])).toEqual({
+      accountId: null,
+      source: 'auto',
+      locked: false,
+    });
+  });
+
+  it('labels accounts with their persona and requires an existing account to save', () => {
+    const persona = {
+      id: 'persona-one',
+      name: '하루',
+      accountId: 'account-two',
+      language: 'ja' as const,
+      description: '',
+      createdAt: '2026-11-01T00:00:00.000Z',
+    };
+    expect(postAccountOptionLabel(row, [persona])).toBe('뷰티 앱 · @beauty_one');
+    expect(postAccountOptionLabel(other, [persona])).toBe('둘째 앱 · @second — 하루');
+    expect(postAccountSaveProblem(null, [row])).toContain('계정을 고르세요');
+    expect(postAccountSaveProblem('account-gone', [row])).toContain('다른 계정을 고르세요');
+    expect(postAccountSaveProblem('account-one', [{ ...row, pendingDeletion: true }])).toContain(
+      '다른 계정을 고르세요',
+    );
+    expect(postAccountSaveProblem('account-one', [row])).toBeNull();
+  });
+});
+
+describe('AI comment row', () => {
+  const post = {
+    key: 'post-one',
+    comment: { caption: '저장된 댓글', link: '', updatedAt: '2026-10-19T01:00:00.000Z' },
+  } as Post;
+  const render = (extra: Partial<Parameters<typeof PostCommentSection>[0]> = {}) =>
+    renderToStaticMarkup(
+      createElement(PostCommentSection, {
+        post,
+        editing: true,
+        onEditingChange: vi.fn(),
+        disabled: false,
+        saving: false,
+        onSave: vi.fn(),
+        onGenerate: vi.fn(),
+        ...extra,
+      }),
+    );
+
+  it('offers generation in the edit form and waits for the account', () => {
+    expect(render()).toContain('AI 댓글');
+    expect(render()).toContain('<button type="button" class="registration-generate-button">생성');
+    expect(render({ generateDisabled: true })).toContain(
+      'class="registration-generate-button" disabled=""',
+    );
+    expect(render({ onGenerate: undefined })).not.toContain('AI 댓글');
   });
 });

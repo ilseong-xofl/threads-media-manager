@@ -3,6 +3,7 @@ import type { Post, SavePostCommentInput } from '../shared/contracts';
 import { Icon } from './Icon';
 import { PostLink } from './PostLink';
 import { useToast, useToastMessage } from './toast';
+import { rememberTranslations, savedTranslation as translationToSave } from './registration-model';
 
 export function PostCommentSection({
   post,
@@ -16,6 +17,10 @@ export function PostCommentSection({
   publishDisabled = true,
   published = false,
   mobilePublication = false,
+  savedTranslation = null,
+  onGenerate,
+  generating = false,
+  generateDisabled = false,
 }: {
   post: Post;
   editing: boolean;
@@ -28,9 +33,28 @@ export function PostCommentSection({
   publishDisabled?: boolean;
   published?: boolean;
   mobilePublication?: boolean;
+  /** Korean of the saved comment, kept on this PC. */
+  savedTranslation?: string | null;
+  /** Three AI comment suggestions; null when the generation was cancelled. */
+  onGenerate?(): Promise<{ comments: string[]; translations?: string[] } | null>;
+  generating?: boolean;
+  generateDisabled?: boolean;
 }) {
   const [caption, setCaption] = useState('');
   const [link, setLink] = useState('');
+  const [suggestions, setSuggestions] = useState<{
+    comments: string[];
+    translations?: string[];
+  } | null>(null);
+  const seenTranslations = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (suggestions)
+      rememberTranslations(
+        seenTranslations.current,
+        suggestions.comments,
+        suggestions.translations,
+      );
+  }, [suggestions]);
   const notify = useToast();
   useToastMessage(problem, true);
   const captionInput = useRef<HTMLTextAreaElement>(null);
@@ -43,6 +67,7 @@ export function PostCommentSection({
   function openForm() {
     setCaption(post.comment?.caption ?? '');
     setLink(post.comment?.link ?? '');
+    setSuggestions(null);
     onEditingChange(true);
   }
   function restoreFocus() {
@@ -52,7 +77,20 @@ export function PostCommentSection({
     if (pending.current || disabled || saving) return;
     pending.current = true;
     try {
-      await onSave({ postKey: post.key, caption: caption.trim(), link: link.trim() });
+      const text = caption.trim();
+      await onSave({
+        postKey: post.key,
+        caption: text,
+        link: link.trim(),
+        translation: translationToSave(
+          text,
+          suggestions
+            ? { texts: suggestions.comments, translations: suggestions.translations }
+            : null,
+          post.comment ? { text: post.comment.caption, translation: savedTranslation } : null,
+          seenTranslations.current,
+        ),
+      });
       restoreFocus();
     } catch (cause) {
       notify({
@@ -61,6 +99,22 @@ export function PostCommentSection({
       });
     } finally {
       pending.current = false;
+    }
+  }
+  async function generate() {
+    if (!onGenerate || disabled || generating || generateDisabled) return;
+    setSuggestions(null);
+    try {
+      const result = await onGenerate();
+      if (!result) return;
+      if (!Array.isArray(result.comments) || result.comments.length !== 3)
+        throw new Error('AI 댓글 제안 3개를 확인하지 못했습니다. 앱을 다시 실행해 주세요.');
+      setSuggestions(result);
+    } catch (cause) {
+      notify({
+        message: cause instanceof Error ? cause.message : 'AI 댓글을 만들지 못했습니다.',
+        error: true,
+      });
     }
   }
 
@@ -89,6 +143,64 @@ export function PostCommentSection({
             disabled={saving}
             onChange={(event) => setCaption(event.target.value)}
           />
+          {onGenerate && (
+            <div className="comment-ai">
+              <div className="registration-ai-header">
+                <h4>AI 댓글</h4>
+                <button
+                  type="button"
+                  className="registration-generate-button"
+                  disabled={disabled || saving || generating || generateDisabled}
+                  onClick={() => void generate()}
+                >
+                  {generating ? '생성 중…' : '생성'}
+                </button>
+              </div>
+              {generating && (
+                <p className="comment-hint" role="status">
+                  저장한 캡션에 이어지는 댓글 제안 3개를 만들고 있습니다…
+                </p>
+              )}
+              {suggestions && (
+                <section className="registration-candidates" aria-label="AI 댓글 제안">
+                  {suggestions.comments.map((comment, index) => {
+                    const chosen = caption.trim() === comment;
+                    return (
+                      <article
+                        key={index}
+                        className={`registration-candidate${chosen ? ' is-selected' : ''}`}
+                        aria-labelledby={`comment-candidate-${index}`}
+                      >
+                        <div className="registration-candidate-heading">
+                          <h4 id={`comment-candidate-${index}`}>제안 {index + 1}</h4>
+                          <button
+                            type="button"
+                            className="registration-candidate-select"
+                            disabled={disabled || saving}
+                            aria-pressed={chosen}
+                            aria-label={
+                              chosen
+                                ? `댓글 제안 ${index + 1} 선택됨`
+                                : `댓글 제안 ${index + 1}을 댓글 내용으로 선택`
+                            }
+                            onClick={() => setCaption(comment)}
+                          >
+                            {chosen ? '선택됨' : '선택'}
+                          </button>
+                        </div>
+                        <p className="caption">{comment}</p>
+                        {suggestions.translations?.[index] && (
+                          <p className="registration-translation">
+                            {suggestions.translations[index]}
+                          </p>
+                        )}
+                      </article>
+                    );
+                  })}
+                </section>
+              )}
+            </div>
+          )}
           <label htmlFor="comment-link">링크</label>
           <input
             id="comment-link"
@@ -156,6 +268,9 @@ export function PostCommentSection({
             </div>
           </div>
           {post.comment.caption && <p className="caption">{post.comment.caption}</p>}
+          {post.comment.caption && savedTranslation && (
+            <p className="registration-translation">{savedTranslation}</p>
+          )}
           {post.comment.link && (
             <PostLink postKey={post.key} kind="comment" url={post.comment.link} />
           )}

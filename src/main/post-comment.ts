@@ -8,6 +8,7 @@ import type {
 } from '../shared/contracts';
 import { validPostDraft } from '../shared/post-draft';
 import { ViewError } from './collection';
+import { validDraftTranslation } from './draft-note-store';
 import { pythonCommand } from './python';
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -63,6 +64,17 @@ export function parsePostCommentInput(value: unknown): SavePostCommentInput {
     )
       return { postKey: value.postKey, caption, link };
   }
+  throw new ViewError(
+    'comment_input',
+    '댓글 내용을 입력하거나 올바른 http/https 링크를 입력하세요.',
+  );
+}
+
+/** The Korean rendering sent along with an AI comment; it never reaches the library database. */
+export function parseCommentTranslation(value: unknown): string | null {
+  const translation = object(value) ? value.translation : undefined;
+  if (translation === undefined || translation === null) return null;
+  if (validDraftTranslation(translation)) return translation;
   throw new ViewError(
     'comment_input',
     '댓글 내용을 입력하거나 올바른 http/https 링크를 입력하세요.',
@@ -165,6 +177,13 @@ export class PostCommentController {
       post: import('../shared/contracts').Post,
       input: SavePostCommentInput,
     ) => Promise<string | void>,
+    /** Records the Korean rendering of the saved comment on this PC. */
+    private afterSave?: (
+      view: CollectionView,
+      post: import('../shared/contracts').Post,
+      comment: PostComment,
+      translation: string | null,
+    ) => Promise<void>,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -188,6 +207,7 @@ export class PostCommentController {
   private async run(root: string, rawInput: unknown): Promise<PostCommentResult> {
     try {
       const input = parsePostCommentInput(rawInput);
+      const translation = parseCommentTranslation(rawInput);
       const before = await this.refresh(root);
       if (this.cancelled) throw new ViewError('comment_cancelled', '댓글 저장을 중지했습니다.');
       if (before.error) throw new ViewError(before.error.code, before.error.message);
@@ -221,6 +241,7 @@ export class PostCommentController {
       this.job = this.launch({ root, ...input });
       const comment = await this.job.result;
       this.job = null;
+      await this.afterSave?.(before, post, comment, translation).catch(() => {});
       let view: CollectionView;
       try {
         view = await this.refresh(root);

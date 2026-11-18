@@ -61,6 +61,7 @@ function mock(
     accounts: rows,
     busy,
     loaded,
+    failed: false,
     cooldownUntil,
     refreshWindowDays: 14,
     getSnapshot: vi.fn(),

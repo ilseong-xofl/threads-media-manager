@@ -63,6 +63,7 @@ describe('managed Threads account request lifecycle', () => {
       accounts: [],
       busy: false,
       loaded: true,
+      failed: false,
       cooldownUntil: 0,
       refreshWindowDays: 14,
     });
@@ -122,6 +123,7 @@ describe('managed Threads account request lifecycle', () => {
     expect(controller.getSnapshot()).toEqual({
       accounts: [],
       loaded: false,
+      failed: false,
       busy: false,
       cooldownUntil: 0,
       refreshWindowDays: 14,
@@ -204,11 +206,35 @@ describe('managed Threads account request lifecycle', () => {
       accounts: [],
       busy: false,
       loaded: false,
+      failed: false,
       cooldownUntil: 0,
       refreshWindowDays: 14,
     });
     expect(api.deleteManagedThreadsAccount).toHaveBeenCalledOnce();
     expect(effects.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('a failed account read', () => {
+  it('is told apart from an empty list until a later read succeeds', async () => {
+    const { api, controller } = setup();
+    api.getManagedThreadsAccounts.mockRejectedValueOnce(new Error('offline'));
+    controller.setEnabled(true);
+    await settle();
+    expect(controller.getSnapshot()).toMatchObject({ accounts: [], loaded: true, failed: true });
+    api.getManagedThreadsAccounts.mockResolvedValueOnce({
+      ...ok(),
+      status: 'error',
+      problem: { code: 'SERVICE_UNAVAILABLE', message: '서버에 연결하지 못했습니다.' },
+    });
+    await controller.synchronize();
+    expect(controller.getSnapshot().failed).toBe(true);
+    // A failed write says nothing new about the list.
+    api.registerManagedThreadsAccount.mockRejectedValueOnce(new Error('offline'));
+    await controller.register({ label: '뷰티', appName: '뷰티 앱', token: 'synthetic-token' });
+    expect(controller.getSnapshot().failed).toBe(true);
+    await controller.synchronize();
+    expect(controller.getSnapshot()).toMatchObject({ loaded: true, failed: false });
   });
 });
 

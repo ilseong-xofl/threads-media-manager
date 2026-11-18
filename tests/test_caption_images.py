@@ -3,6 +3,7 @@ import hashlib
 from contextlib import closing
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -32,10 +33,11 @@ class CaptionImagesTests(unittest.TestCase):
                      "mediaIds": [self.fixture.ids[0]], "output": str(self.output), "token": self.token}
         prepare._cancelled = False
 
-    def register_media(self, count, kind="video", account="Example"):
+    def register_media(self, count, kind="video", account="Example", raw=None):
         """Additional completed local registrations; no transfer or video decode."""
         ids, paths = [], []
-        raw = self.fixture.raw_image if kind == "image" else b"synthetic-video-not-decodable"
+        if raw is None:
+            raw = self.fixture.raw_image if kind == "image" else b"synthetic-video-not-decodable"
         extension = "png" if kind == "image" else "mp4"
         with closing(sqlite3.connect(self.fixture.root / "state/state.db")) as db, db:
             for ordinal in range(3, 3 + count):
@@ -174,6 +176,37 @@ class CaptionImagesTests(unittest.TestCase):
         normalize.assert_not_called()
         self.assertEqual([p.name for p in self.output.iterdir()], [".owner"])
         self.assertEqual(before, self.fixture.preserved())
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "Local ffmpeg is required")
+    def test_video_frame_request_writes_one_still_and_leaves_the_video_alone(self):
+        clip = Path(self.temp.name).parent / f"tmm-clip-{self.token}.mp4"
+        self.addCleanup(lambda: clip.unlink(missing_ok=True))
+        subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30",
+                        "-t", "1", "-pix_fmt", "yuv420p", "-y", str(clip)], check=True)
+        (video,), _ = self.register_media(1, raw=clip.read_bytes())
+        before = self.fixture.preserved()
+        result = prepare.prepare({**self.data, "mediaIds": [video], "videoFrames": True})
+        self.assertEqual(result["images"], ["image-01.jpg"])
+        with Image.open(self.output / "image-01.jpg") as image:
+            self.assertEqual((image.format, image.size), ("JPEG", (160, 90)))
+        self.assertEqual(sorted(p.name for p in self.output.iterdir()), [".owner", "image-01.jpg"])
+        self.assertEqual(before, self.fixture.preserved())
+
+    def test_video_frame_request_returns_no_picture_when_the_video_cannot_be_read(self):
+        before = self.fixture.preserved()
+        result = prepare.prepare({**self.data, "mediaIds": [self.fixture.ids[1]], "videoFrames": True})
+        self.assertEqual((result["ok"], result["images"]), (True, []))
+        self.assertEqual([p.name for p in self.output.iterdir()], [".owner"])
+        with patch.object(prepare.shutil, "which", return_value=None):
+            self.assertEqual(prepare.prepare({**self.data, "mediaIds": [self.fixture.ids[1]], "videoFrames": True})["images"], [])
+        self.assertEqual(before, self.fixture.preserved())
+
+    def test_video_frame_request_takes_one_video_and_no_image(self):
+        for ids in ([self.fixture.ids[0]], self.fixture.ids):
+            with self.assertRaises(prepare.PrepareError) as error:
+                prepare.prepare({**self.data, "mediaIds": ids, "videoFrames": True})
+            self.assertEqual(error.exception.code, "caption_input")
+        self.assertEqual([p.name for p in self.output.iterdir()], [".owner"])
 
     def test_previously_captured_image_is_allowed_without_extracting_another_frame(self):
         import edit_media

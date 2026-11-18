@@ -8,6 +8,8 @@ import type {
 } from '../shared/contracts';
 import { validDraftCaption, validDraftMediaIds, validPostDraft } from '../shared/post-draft';
 import { ViewError } from './collection';
+import { validDraftTranslation } from './draft-note-store';
+import { validId } from './managed-threads-store';
 import { pythonCommand } from './python';
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -16,7 +18,10 @@ const object = (value: unknown): value is Record<string, unknown> =>
 export function parsePostDraftInput(value: unknown): SavePostDraftInput {
   if (
     object(value) &&
-    Object.keys(value).sort().join(',') === 'caption,expectedRevision,mediaIds,postKey' &&
+    Object.keys(value).sort().join(',') ===
+      'accountId,caption,expectedRevision,mediaIds,postKey,translation' &&
+    validId(value.accountId) &&
+    (value.translation === null || validDraftTranslation(value.translation)) &&
     typeof value.postKey === 'string' &&
     value.postKey.length > 0 &&
     value.postKey.length <= 512 &&
@@ -33,12 +38,14 @@ export function parsePostDraftInput(value: unknown): SavePostDraftInput {
       caption: value.caption,
       mediaIds: [...value.mediaIds],
       expectedRevision: value.expectedRevision,
+      accountId: value.accountId,
+      translation: value.translation,
     };
   }
-  throw new ViewError('draft_input', '저장할 미디어와 캡션을 확인하세요.');
+  throw new ViewError('draft_input', '저장할 미디어와 캡션, 계정을 확인하세요.');
 }
 
-export function parsePostDraftResult(raw: string, expected: SavePostDraftInput): PostDraft {
+export function parsePostDraftResult(raw: string, expected: PostDraftFields): PostDraft {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -71,7 +78,9 @@ export function parsePostDraftResult(raw: string, expected: SavePostDraftInput):
   );
 }
 
-export type PostDraftCommand = SavePostDraftInput & { root: string };
+/** What the library stores. The account and the Korean rendering stay out of the database. */
+type PostDraftFields = Omit<SavePostDraftInput, 'accountId' | 'translation'>;
+export type PostDraftCommand = PostDraftFields & { root: string };
 export type LaunchPostDraft = (input: PostDraftCommand) => {
   result: Promise<PostDraft>;
   cancel(): void;
@@ -131,7 +140,14 @@ export class PostDraftController {
     private beforeSave?: (
       view: CollectionView,
       post: import('../shared/contracts').Post,
+      input: SavePostDraftInput,
     ) => Promise<void>,
+    /** Records the account for the saved draft; false when that record could not be written. */
+    private afterSave?: (
+      view: CollectionView,
+      draft: PostDraft,
+      input: SavePostDraftInput,
+    ) => Promise<boolean>,
   ) {}
   get active(): boolean {
     return this.pending !== null;
@@ -176,11 +192,22 @@ export class PostDraftController {
           'draft_source',
           '게시글을 저장할 게시글을 찾을 수 없습니다. 목록을 새로고침하세요.',
         );
-      if (this.beforeSave) await this.beforeSave(before, post);
+      if (this.beforeSave) await this.beforeSave(before, post, input);
       if (this.cancelled) throw new ViewError('draft_cancelled', '게시글 저장을 중지했습니다.');
-      this.job = this.launch({ root, ...input });
+      this.job = this.launch({
+        root,
+        postKey: input.postKey,
+        caption: input.caption,
+        mediaIds: input.mediaIds,
+        expectedRevision: input.expectedRevision,
+      });
       const draft = await this.job.result;
       this.job = null;
+      // The draft is committed: a failed note must not turn it into an error that invites
+      // another save with a revision that is now stale.
+      const noteSaved = this.afterSave
+        ? await this.afterSave(before, draft, input).catch(() => false)
+        : true;
       let view: CollectionView;
       try {
         view = await this.refresh(root);
@@ -217,7 +244,7 @@ export class PostDraftController {
           },
         };
       }
-      return { status: 'saved', draft, view };
+      return { status: 'saved', draft, view, noteSaved };
     } catch (error) {
       return {
         status: 'error',

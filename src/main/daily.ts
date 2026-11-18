@@ -416,6 +416,17 @@ export class DailyController {
     });
   }
 
+  /**
+   * The persona bound to one of the user's accounts, or null. Read for a caption or a comment
+   * written as that persona; a file that cannot be read throws rather than reading as "none".
+   */
+  async persona(accountId: string): Promise<DailyPersona | null> {
+    const context = await this.options.client.getBusinessContext();
+    const partition = await this.options.store.read(this.scope(context));
+    this.assert(context);
+    return partition.personas.find((persona) => persona.accountId === accountId) ?? null;
+  }
+
   /** Long-running, so it does not hold the mutation lock. One generation at a time. */
   async generate(input: unknown): Promise<DailyResult> {
     if (this.generating)

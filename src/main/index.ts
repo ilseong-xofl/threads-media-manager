@@ -26,6 +26,8 @@ import { DailyController } from './daily';
 import { DailyGenerator } from './daily-generator';
 import { handleDailyRequest } from './daily-ipc';
 import { DailyStore } from './daily-store';
+import { DraftNoteStore } from './draft-note-store';
+import { DraftNotes } from './draft-notes';
 import { createMetaTokenClient } from './meta-token-client';
 import { MetaTokenLog } from './meta-token-log';
 import squirrelStartup from 'electron-squirrel-startup';
@@ -219,6 +221,8 @@ const comments: PostCommentController = new PostCommentController(
         link: input.link,
       }),
     ),
+  (view, post, comment, translation) =>
+    draftNotes.recordComment(view.snapshot!.libraryId!, post, comment, translation),
 );
 const drafts: PostDraftController = new PostDraftController(
   (root) => controller.refresh(root),
@@ -236,9 +240,18 @@ const drafts: PostDraftController = new PostDraftController(
     draftDeletions.active ||
     captions.active ||
     content.active,
-  (view, post) =>
-    guardPublicationWrite(() =>
-      mobilePublications.requireEditable(view.snapshot!.libraryId!, post.key),
+  (view, post, input) =>
+    guardPublicationWrite(async () => {
+      await mobilePublications.requireEditable(view.snapshot!.libraryId!, post.key);
+      await draftNotes.requireAccount(view.snapshot!.libraryId!, post, input.accountId);
+    }),
+  (view, draft, input) =>
+    draftNotes.recordDraft(
+      view.snapshot!.libraryId!,
+      input.postKey,
+      draft,
+      input.accountId,
+      input.translation,
     ),
 );
 const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
@@ -267,7 +280,10 @@ const draftDeletions: PostDraftDeleteController = new PostDraftDeleteController(
     content.active,
   (view, post) =>
     guardPublicationWrite(() => mobilePublications.beforeDelete(view.snapshot!.libraryId!, post)),
-  (view, post) => mobilePublications.afterDelete(view.snapshot!.libraryId!, post),
+  async (view, post) => {
+    await mobilePublications.afterDelete(view.snapshot!.libraryId!, post);
+    await draftNotes.forget(view.snapshot!.libraryId!, post);
+  },
 );
 const chatGpt: CodexConnection = new CodexConnection(
   join(app.getPath('userData'), 'codex'),
@@ -280,6 +296,7 @@ const captions = new CaptionGenerator(
   (root) => controller.refresh(root),
   aiContentEnabled,
   chatGpt,
+  (accountId) => daily.persona(accountId),
 );
 const content = new ContentGenerator(
   runtimeRoot,
@@ -541,8 +558,15 @@ const threads = new ThreadsPublishingController({
     return choice.response === 1 && (await serviceAccess.allowed());
   },
 });
+const draftNotes = new DraftNotes({
+  client: serviceClient,
+  store: new DraftNoteStore(app.getPath('userData')),
+  service: serviceOrigin ?? 'unconfigured',
+  history: (libraryId, postKey) => mobilePublications.history(libraryId, postKey),
+});
 const mobilePublications: MobilePublicationsController = new MobilePublicationsController({
   client: serviceClient,
+  notes: draftNotes,
   store: new EncryptedLocalStore<PublicationJournal>({
     userData: app.getPath('userData'),
     fileName: 'mobile-publications.json',
@@ -1106,9 +1130,11 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             channel === IPC.deleteMedia ||
             channel === IPC.savePostComment ||
             channel === IPC.savePostDraft ||
+            channel === IPC.draftNote ||
             channel === IPC.deletePostDraft ||
             channel === IPC.exportPostDraft ||
             channel === IPC.generateCaption ||
+            channel === IPC.generatePostComment ||
             channel === IPC.generateContent ||
             channel === IPC.loadContent ||
             channel === IPC.revealContent ||
@@ -1116,6 +1142,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           ) {
             if (args.length !== 1) throw new Error('Unexpected arguments');
           } else if (args.length) throw new Error('Unexpected arguments');
+          if (channel === IPC.draftNote) return draftNotes.read(controller.view, args[0]);
           if (channel === IPC.current) return controller.view;
           if (channel === IPC.downloadStatus) return downloads.view;
           if (channel === IPC.libraryRoot) return controller.root;
@@ -1248,6 +1275,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
               IPC.deletePostDraft,
               IPC.exportPostDraft,
               IPC.generateCaption,
+              IPC.generatePostComment,
               IPC.exportPost,
               IPC.downloadPrepare,
               IPC.downloadStart,
@@ -1274,7 +1302,11 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             if (result.status === 'deleted') controller.view = result.view;
             return result;
           }
-          if (channel === IPC.savePostDraft || channel === IPC.generateCaption) {
+          if (
+            channel === IPC.savePostDraft ||
+            channel === IPC.generateCaption ||
+            channel === IPC.generatePostComment
+          ) {
             if (!controller.root)
               return {
                 status: 'error',
@@ -1283,7 +1315,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                   message: '수집 폴더를 연결한 뒤 게시글을 등록하세요.',
                 },
               };
-            if (channel === IPC.generateCaption) {
+            if (channel === IPC.generateCaption || channel === IPC.generatePostComment) {
               if (
                 maintenance.active ||
                 mobilePublications?.active ||
@@ -1307,7 +1339,9 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
                     message: '진행 중인 작업이 끝난 뒤 캡션을 생성하세요.',
                   },
                 };
-              return captions.generate(controller.root, args[0]);
+              return channel === IPC.generateCaption
+                ? captions.generate(controller.root, args[0])
+                : captions.generateComment(controller.root, args[0]);
             }
             const result = await drafts.save(controller.root, args[0]);
             if (result.status === 'saved') controller.view = result.view;

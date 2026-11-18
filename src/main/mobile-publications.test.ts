@@ -12,6 +12,7 @@ import {
   type PublicationRequest,
 } from './mobile-publication-data';
 import { ServiceApiError, type ServiceApiClient } from './service-api';
+import { ViewError } from './collection';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -244,6 +245,7 @@ async function setup() {
     ];
   });
   const upload = vi.fn(async () => {});
+  const notes = { confirmSendAccount: vi.fn(async () => {}) };
   const refresh = vi.fn(async () => structuredClone(view));
   const controller = new MobilePublicationsController({
     client,
@@ -255,6 +257,7 @@ async function setup() {
     localBusy: () => false,
     prepareMedia: prepare,
     upload,
+    notes,
   });
   const input: SendMobilePublicationInput = {
     postKey: key,
@@ -272,6 +275,7 @@ async function setup() {
     refresh,
     prepare,
     upload,
+    notes,
     input,
     journal: () => journal,
     invalidate: () => {
@@ -348,6 +352,34 @@ describe('desktop publication control plane and durable intent', () => {
       problem: { code: 'INVALID_RESPONSE' },
     });
   });
+  it('sends only to the account the post was written for, checked before anything is stored', async () => {
+    const { controller, notes, input, journal, client, prepare } = await setup();
+    notes.confirmSendAccount.mockRejectedValueOnce(
+      new ViewError('mobile_publication_account_changed', '글에 지정한 계정과 다릅니다.'),
+    );
+    const refused = await controller.send(input);
+    expect(refused.problem?.code).toBe('mobile_publication_account_changed');
+    expect(journal()?.pending ?? []).toHaveLength(0);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(client.publicationRequest).mock.calls.some((call) => call[1] === 'create'),
+    ).toBe(false);
+    const sent = await controller.send(input);
+    expect(sent.problem).toBeNull();
+    const [, libraryId, post, accountId, history] = notes.confirmSendAccount.mock.calls.at(
+      -1,
+    ) as unknown as [unknown, string, { key: string }, string, { publications: unknown[] }];
+    expect([libraryId, post.key, accountId]).toEqual([
+      sent.publications[0].source.libraryId,
+      input.postKey,
+      'account-a',
+    ]);
+    expect(history.publications).toEqual([]);
+    // What was sent can be read back for the account lock without taking the work lock.
+    const after = await controller.history(libraryId, input.postKey);
+    expect(after.publications.map((item) => item.accountId)).toEqual(['account-a']);
+    expect(after.pending).toEqual([]);
+  });
   it('sends only an immutable manifest with the actual prepared hash and original microsecond source date', async () => {
     const f = await setup();
     const r = await f.controller.send(f.input);
@@ -361,8 +393,10 @@ describe('desktop publication control plane and durable intent', () => {
       createHash('sha256').update('converted-png').digest('hex'),
     );
     expect(JSON.stringify(payload)).not.toMatch(/path|token|Bearer|converted-png/);
+    // The intent is stored before the create call; the account check reads history earlier.
+    const requests = vi.mocked(f.client.publicationRequest).mock;
     expect(f.store.write.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(f.client.publicationRequest).mock.invocationCallOrder[0],
+      requests.invocationCallOrder[requests.calls.findIndex((call) => call[1] === 'create')],
     );
     expect(f.upload).toHaveBeenCalledTimes(1);
   });
@@ -388,8 +422,11 @@ describe('desktop publication control plane and durable intent', () => {
   it('retains original failure even if read-only reconciliation also fails', async () => {
     const f = await setup();
     const original = f.client.publicationRequest;
+    // The service goes away after the account check, as the request is created.
+    let offline = false;
     f.client.publicationRequest = vi.fn<typeof original>(async (...args) => {
-      if (['create', 'list'].includes(args[1]))
+      if (args[1] === 'create') offline = true;
+      if (offline && ['create', 'list'].includes(args[1]))
         throw new ServiceApiError('offline', 'SERVICE_UNAVAILABLE', 503);
       return original(...args);
     });

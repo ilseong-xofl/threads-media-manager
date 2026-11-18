@@ -78,6 +78,8 @@ const api: ThreadsMediaApi = {
   savePostComment: (input) => ipcRenderer.invoke(IPC.savePostComment, input),
   openPostLink: (input) => ipcRenderer.invoke(IPC.openPostLink, input),
   savePostDraft: (input) => ipcRenderer.invoke(IPC.savePostDraft, input),
+  getDraftNote: (input) => ipcRenderer.invoke(IPC.draftNote, input),
+  generatePostComment: (input) => ipcRenderer.invoke(IPC.generatePostComment, input),
   pickLocalPostMedia: () => ipcRenderer.invoke(IPC.pickLocalPostMedia),
   addLocalPostMedia: async (files, current) => {
     try {

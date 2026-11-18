@@ -58,6 +58,8 @@ export const IPC = {
   savePostComment: 'tmm:post:comment',
   openPostLink: 'tmm:post:open-link',
   savePostDraft: 'tmm:post:draft',
+  draftNote: 'tmm:post:draft-note',
+  generatePostComment: 'tmm:post:comment-generate',
   pickLocalPostMedia: 'tmm:local-post:pick',
   addLocalPostMedia: 'tmm:local-post:add',
   createLocalPost: 'tmm:local-post:create',
@@ -142,10 +144,34 @@ export interface SavePostDraftInput {
   caption: string;
   mediaIds: string[];
   expectedRevision: number | null;
+  /** The managed Threads account this post is written for (2026-11-18). */
+  accountId: string;
+  /** What the caption says in Korean, when it is an AI suggestion kept as generated. */
+  translation: string | null;
 }
 export type PostDraftResult =
-  | { status: 'saved'; draft: PostDraft; view: CollectionView }
+  | {
+      status: 'saved';
+      draft: PostDraft;
+      view: CollectionView;
+      /** False when the draft was saved but its account could not be recorded on this PC. */
+      noteSaved: boolean;
+    }
   | { status: 'error'; problem: Problem };
+/**
+ * What this PC remembers about a registered draft besides the draft itself: the account it is
+ * written for and the Korean renderings of an AI caption and comment. It lives outside the
+ * library database, per signed-in user, and is valid only for the draft revision (and comment)
+ * it was saved with.
+ */
+export interface DraftNote {
+  /** null: no account was recorded for this revision of the draft. */
+  accountId: string | null;
+  translation: string | null;
+  commentTranslation: string | null;
+}
+export type DraftNoteResult =
+  { status: 'ok'; note: DraftNote } | { status: 'error'; problem: Problem };
 export interface LocalPostMedia {
   id: string;
   name: string;
@@ -181,9 +207,16 @@ export interface GenerateCaptionInput {
   postKey: string;
   mediaIds: string[];
   language: CaptionLanguage;
+  /** The account the post is written for. Its persona, if any, writes the captions. */
+  accountId?: string;
 }
 export type GenerateCaptionResult =
-  | { status: 'generated'; captions: [string, string, string] }
+  | {
+      status: 'generated';
+      captions: [string, string, string];
+      /** Korean renderings, present when a persona wrote the captions in another language. */
+      translations?: [string, string, string];
+    }
   | { status: 'cancelled' }
   | { status: 'error'; problem: Problem };
 export interface GenerateContentInput {
@@ -217,7 +250,22 @@ export interface SavePostCommentInput {
   postKey: string;
   caption: string;
   link: string;
+  /** What the comment says in Korean, when it is an AI suggestion kept as generated. */
+  translation?: string | null;
 }
+export interface GeneratePostCommentInput {
+  postKey: string;
+  /** The account the post is written for; null when none could be determined. */
+  accountId: string | null;
+}
+export type GeneratePostCommentResult =
+  | {
+      status: 'generated';
+      comments: [string, string, string];
+      translations?: [string, string, string];
+    }
+  | { status: 'cancelled' }
+  | { status: 'error'; problem: Problem };
 export type PostCommentResult =
   | { status: 'saved'; comment: PostComment; view: CollectionView; notice?: string }
   | { status: 'error'; problem: Problem };
@@ -283,6 +331,9 @@ export interface ThreadsMediaApi
   savePostComment(input: SavePostCommentInput): Promise<PostCommentResult>;
   openPostLink(input: OpenPostLinkInput): Promise<PostLinkResult>;
   savePostDraft(input: SavePostDraftInput): Promise<PostDraftResult>;
+  getDraftNote(input: { postKey: string }): Promise<DraftNoteResult>;
+  /** Three short follow-up comments for the saved post; cancelled like a caption generation. */
+  generatePostComment(input: GeneratePostCommentInput): Promise<GeneratePostCommentResult>;
   pickLocalPostMedia(): Promise<PickLocalPostMediaResult>;
   addLocalPostMedia(
     files: File[],

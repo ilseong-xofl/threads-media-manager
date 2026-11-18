@@ -6,8 +6,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import warnings
@@ -22,6 +24,8 @@ MAX_IMAGE_BYTES = 2 * 1024**2
 MAX_TOTAL_BYTES = 32 * 1024**2
 MAX_SOURCE_BYTES = 2 * 1024**3
 MAX_PIXELS = 40_000_000
+# A selection of videos only is shown to the model as one still of its first video (2026-11-18).
+FRAME_TIMEOUT = 20
 _cancelled = False
 
 
@@ -52,6 +56,33 @@ def normalize_image(source, destination):
                 clean.save(output, format="JPEG", quality=85, optimize=True)
     if not 0 < destination.stat().st_size <= MAX_IMAGE_BYTES:
         raise PrepareError("caption_image_limit", "이미지 준비 결과의 크기 한도를 초과했습니다.")
+
+
+def video_frame(source, destination):
+    """Write one early, representative frame of a local video as PNG. False when it cannot be made.
+
+    The first frame is often black, so ffmpeg picks among the opening frames. Nothing is written to
+    the collection, and a video that cannot be decoded is simply left out.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    environment = {}
+    if os.name == "nt":
+        system_root = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT")
+        if system_root:
+            environment = {"SystemRoot": system_root}
+    command = [str(Path(ffmpeg).resolve()), "-v", "error", "-nostdin", "-protocol_whitelist", "file,pipe",
+               "-format_whitelist", "mov,matroska,webm", "-i", str(source), "-map", "0:v:0",
+               "-vf", "thumbnail=30", "-frames:v", "1", "-an", "-sn", "-dn",
+               "-f", "image2pipe", "-c:v", "png", "pipe:1"]
+    try:
+        with destination.open("xb") as output:
+            done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.DEVNULL,
+                                  timeout=FRAME_TIMEOUT, shell=False, env=environment)
+        return done.returncode == 0 and destination.stat().st_size > 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def output_directory(raw, token, root):
@@ -101,7 +132,11 @@ def prepare(data, *, include_ai=False):
     # Validate the entire selection before filtering so a foreign video cannot
     # bypass the ownership boundary. Only saved images become model inputs.
     image_ids = [media_id for media_id in ids if media[media_id]["kind"] == "image"]
-    if not image_ids:
+    # For a selection of videos only the caller asks for a still of one video instead.
+    frames = data.get("videoFrames") is True
+    if frames and (image_ids or len(ids) != 1):
+        raise PrepareError("caption_input", "영상 화면은 영상 하나로만 준비합니다.")
+    if not frames and not image_ids:
         raise PrepareError("caption_images_required", "AI 캡션 생성에는 이미지를 한 개 이상 선택하세요.")
     if len(image_ids) > MAX_IMAGES:
         raise PrepareError("caption_image_limit", "AI 캡션 생성에는 이미지를 최대 20개까지 선택하세요.")
@@ -109,7 +144,7 @@ def prepare(data, *, include_ai=False):
     if len(caption.encode("utf-8")) > 128 * 1024:
         raise PrepareError("caption_input", "원본 캡션이 생성 입력 한도를 초과합니다.")
     total, images = 0, []
-    for index, media_id in enumerate(image_ids):
+    for media_id in (ids if frames else image_ids):
         check()
         item = registry[media_id]
         if item["size"] > MAX_SOURCE_BYTES:
@@ -118,9 +153,22 @@ def prepare(data, *, include_ai=False):
                "size": item["size"], "sha256": item["sha256"], "kind": item["kind"]}
         view.local_file(root, row, include_ai=include_ai)
         source = view.safe_path(root, item["relativePath"], require_file=True)
-        filename = f"image-{index + 1:02d}.jpg"
+        filename = f"image-{len(images) + 1:02d}.jpg"
         destination = output / filename
-        normalize_image(source, destination)
+        if frames:
+            # A video that gives no usable still is left out; the caller then sends no picture.
+            still = output / f"frame-{len(images) + 1:02d}.png"
+            try:
+                if not video_frame(source, still):
+                    continue
+                normalize_image(still, destination)
+            except Exception:
+                destination.unlink(missing_ok=True)
+                continue
+            finally:
+                still.unlink(missing_ok=True)
+        else:
+            normalize_image(source, destination)
         check()
         view.local_file(root, row, include_ai=include_ai)
         total += destination.stat().st_size

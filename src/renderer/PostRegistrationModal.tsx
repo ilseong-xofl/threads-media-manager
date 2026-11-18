@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import type { DailyPersona } from '../shared/daily';
 import type {
   Attachment,
   CaptionLanguage,
   GenerateCaptionInput,
+  GeneratePostCommentInput,
   Post,
   PostDraft,
   SavePostDraftInput,
@@ -13,8 +15,8 @@ import { PostCommentSection } from './PostCommentSection';
 import { useToast, useToastMessage } from './toast';
 import { postDraftExportIssue } from '../shared/post-export';
 import {
-  captionImageIds,
   captionGenerationInput,
+  captionSuggestionContext,
   MAX_DRAFT_CAPTION,
   MAX_DRAFT_MEDIA,
   moveRegistrationMedia,
@@ -22,6 +24,8 @@ import {
   registrationInput,
   registrationMedia,
   registrationMediaLabel,
+  rememberTranslations,
+  savedTranslation,
   selectableMedia,
   selectedRegistrationMedia,
   toggleRegistrationMedia,
@@ -42,21 +46,52 @@ import {
 import { MobilePublicationPanel, MobilePublicationSendDialog } from './MobilePublicationPanel';
 import { useMobilePublications } from './use-mobile-publications';
 import { useManagedThreads } from './use-managed-threads';
+import { useDraftNote } from './use-draft-note';
 import {
+  accountPersona,
+  decidePostAccount,
   mobileAccountChoices,
+  mobilePublicationAccountLabel,
   mobilePublicationLocksComment,
   mobilePublicationLocksEditing,
+  mobileSendAccountProblem,
+  postAccountOptionLabel,
+  postAccountSaveProblem,
 } from './mobile-publication-model';
+
+const languageNames: Record<CaptionLanguage, string> = {
+  en: '영어',
+  ko: '한국어',
+  ja: '일본어',
+};
+
+interface Suggestions {
+  /** The account and persona the suggestions were written for (`captionSuggestionContext`). */
+  context: string;
+  captions: string[];
+  translations?: string[];
+}
 
 export interface PostRegistrationModalProps {
   post: Post;
   draft?: PostDraft;
   mode?: 'view' | 'edit';
-  initialCandidates?: string[];
-  initialLanguage?: CaptionLanguage;
+  initialSuggestions?: {
+    language: CaptionLanguage;
+    context: string;
+    captions: string[] | null;
+    translations?: string[];
+  };
+  personas?: DailyPersona[];
+  personasLoaded?: boolean;
   disabled?: boolean;
-  onSave(input: SavePostDraftInput): Promise<void>;
-  onGenerate(input: GenerateCaptionInput): Promise<string[] | null>;
+  onSave(input: SavePostDraftInput, options: { accountChanged: boolean }): Promise<void>;
+  onGenerate(
+    input: GenerateCaptionInput,
+  ): Promise<{ captions: string[]; translations?: string[] } | null>;
+  onGenerateComment?(
+    input: GeneratePostCommentInput,
+  ): Promise<{ comments: string[]; translations?: string[] } | null>;
   onCancelGeneration(): Promise<void>;
   onClose(): void;
   onSaveComment(input: SavePostCommentInput): Promise<void>;
@@ -123,11 +158,13 @@ function RegistrationDialog({
   post,
   draft,
   mode,
-  initialCandidates,
-  initialLanguage = 'en',
+  initialSuggestions,
+  personas = [],
+  personasLoaded = false,
   disabled = false,
   onSave,
   onGenerate,
+  onGenerateComment,
   onCancelGeneration,
   onClose,
   onSaveComment,
@@ -165,10 +202,20 @@ function RegistrationDialog({
   const [activeId, setActiveId] = useState<string | null>(mediaIds[0] ?? null);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [language, setLanguage] = useState<CaptionLanguage>(initialLanguage);
-  const [candidates, setCandidates] = useState<string[] | null>(() =>
-    initialCandidates ? [...initialCandidates] : null,
+  const [language, setLanguage] = useState<CaptionLanguage>(initialSuggestions?.language ?? 'en');
+  const [suggestions, setSuggestions] = useState<Suggestions | null>(() =>
+    initialSuggestions?.captions
+      ? {
+          context: initialSuggestions.context,
+          captions: [...initialSuggestions.captions],
+          ...(initialSuggestions.translations
+            ? { translations: [...initialSuggestions.translations] }
+            : {}),
+        }
+      : null,
   );
+  // null: the post keeps the account decided for it; set only when the user picks one.
+  const [chosenAccount, setChosenAccount] = useState<string | null>(null);
   const notify = useToast();
   function reportError(message: string) {
     notify({ message, error: true });
@@ -184,7 +231,61 @@ function RegistrationDialog({
     mobileEnabled && mobileMode && !!draft,
     onMobileWorking,
   );
-  const managedAccounts = useManagedThreads(mobileEnabled && mobileMode && !!draft);
+  const managedAccounts = useManagedThreads(mobileEnabled && mobileMode);
+  const draftNote = useDraftNote(post.key, draft);
+  const accountRows = managedAccounts.accounts;
+  const accountChoices = mobileAccountChoices(accountRows);
+  // A failed read that still returned stored rows is usable; only an empty one is "unknown".
+  const accountsFailed = managedAccounts.loaded && managedAccounts.failed && !accountChoices.length;
+  const noAccounts = managedAccounts.loaded && !managedAccounts.failed && !accountChoices.length;
+  const accountReady =
+    managedAccounts.loaded && draftNote.loaded && (!draft || !mobileMode || mobile.loaded);
+  const decision = decidePostAccount(
+    mobile.publications,
+    mobile.pending,
+    draft?.createdAt ?? null,
+    draftNote.note.accountId,
+    accountRows,
+  );
+  const accountId = decision.locked ? decision.accountId : (chosenAccount ?? decision.accountId);
+  // A new post shows its first account in the select; only an older post was never assigned one.
+  const autoAssigned = !!draft && decision.source === 'auto' && chosenAccount === null;
+  // No account is on record for this draft yet, whichever account the select shows now.
+  const unrecorded = !!draft && decision.source === 'auto';
+  const accountMissing =
+    accountId !== null && !accountChoices.some((row) => row.account?.id === accountId);
+  const persona = accountPersona(accountId, personas);
+  const suggestionContext = captionSuggestionContext(accountId, persona);
+  const shownSuggestions =
+    accountReady && suggestions?.context === suggestionContext ? suggestions : null;
+  const candidates = shownSuggestions?.captions ?? null;
+  const seenTranslations = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (suggestions)
+      rememberTranslations(
+        seenTranslations.current,
+        suggestions.captions,
+        suggestions.translations,
+      );
+  }, [suggestions]);
+  const accountSaveProblem = !accountReady
+    ? '계정을 확인하고 있습니다.'
+    : decision.locked && accountMissing
+      ? '이미 보낸 글이라 계정을 바꿀 수 없습니다.'
+      : postAccountSaveProblem(accountId, accountRows);
+  const sendAccountProblem = !accountReady
+    ? '계정을 확인하고 있습니다.'
+    : accountsFailed
+      ? '계정 목록을 불러오지 못했습니다.'
+      : noAccounts
+        ? '계정 관리에서 계정을 등록하고 서버와 동기화하세요.'
+        : accountMissing
+          ? decision.locked
+            ? '이미 보낸 글이라 계정을 바꿀 수 없습니다.'
+            : '저장된 계정을 찾지 못했습니다. 수정에서 다른 계정을 고르세요.'
+          : mobileSendAccountProblem(accountId, accountRows);
+  const baselineAccount = accountReady ? decision.accountId : accountId;
+  const writingBlocked = !draft && noAccounts;
   const mobileEditLocked =
     !!draft &&
     mobileMode &&
@@ -202,7 +303,6 @@ function RegistrationDialog({
   const source = registrationMedia(post);
   const shownIds = editing ? mediaIds : (draft?.mediaIds ?? mediaIds);
   const selected = selectedRegistrationMedia(post, shownIds);
-  const selectedImageIds = captionImageIds(post, mediaIds);
   const currentIndex = Math.max(0, shownIds.indexOf(activeId ?? ''));
   const current = selected[currentIndex];
   const unavailable = selected.filter(
@@ -218,7 +318,13 @@ function RegistrationDialog({
       : null,
     true,
   );
-  const dirty = (editing && registrationChanged(baseline, caption, mediaIds)) || commentEditing;
+  const registrationEdited = registrationChanged(
+    { ...baseline, accountId: baselineAccount },
+    caption,
+    mediaIds,
+    accountId,
+  );
+  const dirty = (editing && registrationEdited) || commentEditing;
   const busy =
     saving || generating || commentSaving || uploading || !!threads?.working || mobile.working;
   const publishedPost = latestPublication(threads?.state ?? null, post.key, 'post');
@@ -231,7 +337,8 @@ function RegistrationDialog({
     !connectedAccount.requiresReconnect &&
     Date.parse(connectedAccount.expiresAt) > Date.now();
   const exportIssue = postDraftExportIssue(post);
-  const selectionDisabled = disabled || busy || mobileEditLocked;
+  const selectionDisabled = disabled || busy || mobileEditLocked || writingBlocked;
+  const generationBlocked = !!accountSaveProblem || !personasLoaded;
 
   useEffect(() => {
     mounted.current = true;
@@ -327,15 +434,37 @@ function RegistrationDialog({
     setCaption(next.caption);
     setMediaIds(next.mediaIds);
     setRevision(draft?.revision ?? null);
+    setChosenAccount(null);
     setEditing(true);
+  }
+  function chooseAccount(next: string) {
+    if (decision.locked || next === accountId) return;
+    setChosenAccount(next);
+    // Suggestions were written for the previous account's persona.
+    setSuggestions(null);
   }
   async function save() {
     if (disabled || savingRef.current || generationRef.current || mobileEditLocked) return;
     try {
-      const input = registrationInput(post, caption, mediaIds, revision);
+      if (accountSaveProblem) throw new Error(accountSaveProblem);
+      const input = registrationInput(
+        post,
+        caption,
+        mediaIds,
+        revision,
+        accountId!,
+        savedTranslation(
+          caption,
+          shownSuggestions
+            ? { texts: shownSuggestions.captions, translations: shownSuggestions.translations }
+            : null,
+          draft ? { text: draft.caption, translation: draftNote.note.translation } : null,
+          seenTranslations.current,
+        ),
+      );
       savingRef.current = true;
       setSaving(true);
-      await onSave(input);
+      await onSave(input, { accountChanged: !!draft && accountId !== decision.accountId });
       if (mounted.current) onClose();
     } catch (cause) {
       if (mounted.current)
@@ -359,6 +488,7 @@ function RegistrationDialog({
     setCommentSaving(true);
     try {
       await onSaveComment(input);
+      draftNote.reload();
       if (mobileMode) void mobile.synchronize();
       if (mounted.current) setCommentEditing(false);
     } finally {
@@ -371,23 +501,37 @@ function RegistrationDialog({
       disabled ||
       savingRef.current ||
       generationRef.current ||
-      !selectedImageIds.length ||
-      mobileEditLocked
+      !mediaIds.length ||
+      mobileEditLocked ||
+      generationBlocked
     )
       return;
-    setCandidates(null);
+    setSuggestions(null);
     try {
-      const input = captionGenerationInput(post, mediaIds, language, revision);
+      const context = suggestionContext;
+      const input = captionGenerationInput(
+        post,
+        mediaIds,
+        persona?.language ?? language,
+        revision,
+        accountId,
+      );
       generationRef.current = true;
       const token = ++generationToken.current;
       setGenerating(true);
       try {
         const result = await onGenerate(input);
         if (mounted.current && token === generationToken.current && result !== null) {
-          if (!Array.isArray(result) || result.length !== 3)
+          if (!Array.isArray(result?.captions) || result.captions.length !== 3)
             throw new Error('AI 캡션 제안 3개를 확인하지 못했습니다. 앱을 다시 실행해 주세요.');
-          result.forEach((candidate) => registrationInput(post, candidate, mediaIds, revision));
-          setCandidates(result);
+          result.captions.forEach((candidate) =>
+            registrationInput(post, candidate, mediaIds, revision, '', null),
+          );
+          setSuggestions({
+            context,
+            captions: result.captions,
+            ...(result.translations ? { translations: result.translations } : {}),
+          });
         }
       } catch (cause) {
         if (mounted.current && token === generationToken.current)
@@ -401,6 +545,31 @@ function RegistrationDialog({
     } catch (cause) {
       reportError(cause instanceof Error ? cause.message : '선택한 미디어를 확인하세요.');
     }
+  }
+  async function generateComment() {
+    if (!onGenerateComment || !draft || generationRef.current || !accountReady || !personasLoaded)
+      return null;
+    generationRef.current = true;
+    const token = ++generationToken.current;
+    setGenerating(true);
+    try {
+      const result = await onGenerateComment({ postKey: post.key, accountId });
+      return mounted.current && token === generationToken.current ? result : null;
+    } catch (cause) {
+      // A generation cancelled by closing the form reports nothing.
+      if (mounted.current && token === generationToken.current) throw cause;
+      return null;
+    } finally {
+      generationRef.current = false;
+      if (mounted.current) setGenerating(false);
+    }
+  }
+  function changeCommentEditing(value: boolean) {
+    if (!value && generationRef.current) {
+      generationToken.current += 1;
+      void cancelRef.current().catch(() => undefined);
+    }
+    setCommentEditing(value);
   }
   async function publish(kind: 'post' | 'reply') {
     if (
@@ -432,6 +601,118 @@ function RegistrationDialog({
       uploadPending.current = false;
       if (mounted.current) setUploadKind(null);
     }
+  }
+  function accountSection() {
+    let body;
+    if (accountsFailed)
+      body = (
+        <div className="registration-account-box registration-account-problem">
+          <p>계정 목록을 불러오지 못했습니다.</p>
+          <button
+            type="button"
+            disabled={managedAccounts.busy}
+            onClick={() => void managedAccounts.synchronize()}
+          >
+            <Icon name="refresh" /> 다시 시도
+          </button>
+        </div>
+      );
+    else if (noAccounts)
+      body = (
+        <div className="registration-account-box registration-account-problem">
+          <p>
+            사용할 Threads 계정이 없습니다. 계정 및 설정 메뉴의 [계정 관리]에서 [계정 추가]로 계정을
+            등록한 뒤 이 화면을 다시 여세요.
+          </p>
+        </div>
+      );
+    else if (!accountReady)
+      body = (
+        <p className="registration-hint" role="status">
+          계정을 확인하고 있습니다.
+        </p>
+      );
+    else {
+      const summary = persona?.description
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(' · ');
+      body = (
+        <>
+          {editing && (
+            <div className="select-field registration-account-select">
+              <select
+                aria-label="이 글을 올릴 계정"
+                value={accountId ?? ''}
+                disabled={disabled || busy || decision.locked || mobileEditLocked}
+                onChange={(event) => chooseAccount(event.target.value)}
+              >
+                {accountMissing && (
+                  <option value={accountId!} disabled>
+                    {mobilePublicationAccountLabel(accountId!, accountRows)} (찾을 수 없음)
+                  </option>
+                )}
+                {accountChoices.map((row) => (
+                  <option key={row.account!.id} value={row.account!.id}>
+                    {postAccountOptionLabel(row, personas)}
+                  </option>
+                ))}
+              </select>
+              <Icon name="chevron" />
+            </div>
+          )}
+          <div className="registration-account-box">
+            <p className="registration-account-name">
+              <strong>
+                {accountId === null
+                  ? '계정 없음'
+                  : mobilePublicationAccountLabel(accountId, accountRows)}
+              </strong>
+              {autoAssigned && <span className="registration-account-auto">자동 지정</span>}
+            </p>
+            {!personasLoaded ? (
+              <p className="registration-hint">페르소나 정보를 확인하고 있습니다.</p>
+            ) : persona ? (
+              <div className="registration-persona">
+                <p>
+                  <span className="registration-persona-label">현재 페르소나</span>
+                  <strong>{persona.name}</strong>
+                  <span>{languageNames[persona.language]}</span>
+                </p>
+                {summary && <p className="registration-persona-summary">{summary}</p>}
+              </div>
+            ) : (
+              <p className="registration-hint">
+                이 계정에는 페르소나가 없습니다. 캡션은 고른 언어의 스레드 말투로 만듭니다.
+              </p>
+            )}
+          </div>
+          {decision.locked ? (
+            <p className="registration-account-note">이미 보낸 글이라 계정을 바꿀 수 없습니다.</p>
+          ) : accountMissing ? (
+            <p className="registration-account-note">
+              저장된 계정을 찾지 못했습니다.{' '}
+              {editing ? '다른 계정을 고르세요.' : '수정에서 다른 계정을 고르세요.'}
+            </p>
+          ) : (
+            autoAssigned && (
+              <p className="registration-hint">
+                이 글은 계정을 고른 적이 없어 첫 번째 계정으로 표시합니다.
+              </p>
+            )
+          )}
+        </>
+      );
+    }
+    return (
+      <section className="registration-section" aria-labelledby="registration-account-title">
+        <div className="registration-section-heading">
+          <h3 id="registration-account-title">계정</h3>
+        </div>
+        {body}
+      </section>
+    );
   }
   function dismissDiscard() {
     setDiscard(false);
@@ -489,6 +770,7 @@ function RegistrationDialog({
       </header>
       <div className="registration-form" inert={discard || uploading}>
         <div className="modal-body registration-body">
+          {!editing && accountSection()}
           {editing && (
             <section className="registration-section" aria-labelledby="registration-source-title">
               <div className="registration-section-heading">
@@ -723,6 +1005,7 @@ function RegistrationDialog({
               </div>
             )}
           </section>
+          {editing && accountSection()}
           <section className="registration-section" aria-labelledby="registration-caption-title">
             <div className="registration-section-heading">
               <h3 id="registration-caption-title">캡션</h3>
@@ -747,30 +1030,42 @@ function RegistrationDialog({
                     rows={5}
                     value={caption}
                     maxLength={MAX_DRAFT_CAPTION}
-                    disabled={disabled || saving}
+                    disabled={disabled || saving || writingBlocked}
                     placeholder="등록할 캡션을 직접 작성하거나 아래 AI 제안을 선택하세요."
                     onChange={(event) => setCaption(event.target.value)}
                   />
                   <div className="registration-ai-header">
                     <h4>AI 캡션</h4>
                     <div className="registration-ai-actions">
-                      <div className="select-field registration-language">
-                        <select
-                          aria-label="AI 캡션 언어"
-                          value={language}
-                          disabled={disabled || busy}
-                          onChange={(event) => setLanguage(event.target.value as CaptionLanguage)}
-                        >
-                          <option value="en">영어</option>
-                          <option value="ko">한국어</option>
-                          <option value="ja">일본어</option>
-                        </select>
-                        <Icon name="chevron" />
-                      </div>
+                      {persona ? (
+                        <span className="registration-persona-language">
+                          페르소나 언어: {languageNames[persona.language]}
+                        </span>
+                      ) : (
+                        <div className="select-field registration-language">
+                          <select
+                            aria-label="AI 캡션 언어"
+                            value={language}
+                            disabled={disabled || busy}
+                            onChange={(event) => setLanguage(event.target.value as CaptionLanguage)}
+                          >
+                            <option value="en">영어</option>
+                            <option value="ko">한국어</option>
+                            <option value="ja">일본어</option>
+                          </select>
+                          <Icon name="chevron" />
+                        </div>
+                      )}
                       <button
                         type="button"
                         className="registration-generate-button"
-                        disabled={disabled || busy || !selectedImageIds.length || unavailable > 0}
+                        disabled={
+                          disabled ||
+                          busy ||
+                          !mediaIds.length ||
+                          unavailable > 0 ||
+                          generationBlocked
+                        }
                         onClick={() => void generate()}
                       >
                         {generating ? '생성 중…' : '생성'}
@@ -789,7 +1084,9 @@ function RegistrationDialog({
                         <span role="status">
                           {generating
                             ? 'AI 캡션 제안 3개를 만들고 있습니다…'
-                            : '언어를 선택한 뒤 생성 버튼을 눌러 AI 캡션 제안 3개를 만드세요.'}
+                            : persona
+                              ? '생성 버튼을 눌러 이 페르소나의 AI 캡션 제안 3개를 만드세요.'
+                              : '언어를 선택한 뒤 생성 버튼을 눌러 AI 캡션 제안 3개를 만드세요.'}
                         </span>
                       </div>
                     ) : (
@@ -824,6 +1121,11 @@ function RegistrationDialog({
                                 </button>
                               </div>
                               <p className="caption">{candidate}</p>
+                              {shownSuggestions?.translations?.[index] && (
+                                <p className="registration-translation">
+                                  {shownSuggestions.translations[index]}
+                                </p>
+                              )}
                             </article>
                           );
                         })}
@@ -832,15 +1134,21 @@ function RegistrationDialog({
                   </div>
                   {candidates === null && (
                     <p className="registration-hint">
-                      원본 캡션의 의미와 말투를 유지하며, 선택한 이미지만 보조 자료로 Codex에
-                      전달합니다.
+                      {persona
+                        ? '페르소나와 원본 캡션을 합쳐 이 페르소나의 말투로 만듭니다. 미디어는 첫 번째 이미지 한 장(영상만 골랐으면 영상 화면 한 장)만 참고로 보냅니다.'
+                        : '원본 캡션의 내용을 고른 언어의 스레드 말투로 다시 씁니다. 미디어는 첫 번째 이미지 한 장(영상만 골랐으면 영상 화면 한 장)만 참고로 보냅니다.'}
                     </p>
                   )}
                 </>
               ) : (
-                <p className="caption registration-saved-caption" aria-label="등록 캡션">
-                  {draft?.caption || '캡션이 없습니다.'}
-                </p>
+                <>
+                  <p className="caption registration-saved-caption" aria-label="등록 캡션">
+                    {draft?.caption || '캡션이 없습니다.'}
+                  </p>
+                  {draft?.caption && draftNote.note.translation && (
+                    <p className="registration-translation">{draftNote.note.translation}</p>
+                  )}
+                </>
               )}
             </div>
           </section>
@@ -848,7 +1156,11 @@ function RegistrationDialog({
             <PostCommentSection
               post={post}
               editing={commentEditing}
-              onEditingChange={setCommentEditing}
+              onEditingChange={changeCommentEditing}
+              savedTranslation={draftNote.note.commentTranslation}
+              onGenerate={onGenerateComment ? generateComment : undefined}
+              generating={generating}
+              generateDisabled={!accountReady || !personasLoaded}
               disabled={disabled || busy || !!commentProblem || mobileCommentLocked}
               saving={commentSaving}
               problem={commentProblem}
@@ -922,10 +1234,14 @@ function RegistrationDialog({
                     disabled ||
                     busy ||
                     mobileEditLocked ||
+                    writingBlocked ||
+                    !!accountSaveProblem ||
                     !mediaIds.length ||
                     unavailable > 0 ||
-                    (!!revision && !registrationChanged(baseline, caption, mediaIds))
+                    // An auto-assigned account can be confirmed by saving the post as it is.
+                    (!!revision && !registrationEdited && !unrecorded)
                   }
+                  title={accountSaveProblem ?? undefined}
                 >
                   {saving ? '저장 중…' : revision ? '변경 저장' : '등록'}
                 </button>
@@ -967,17 +1283,14 @@ function RegistrationDialog({
                     mobileEditLocked ||
                     mobile.busy ||
                     managedAccounts.busy ||
-                    !managedAccounts.loaded ||
-                    !mobileAccountChoices(managedAccounts.accounts).length
+                    !!sendAccountProblem
                   }
                   title={
                     !mobile.loaded
                       ? '모바일 게시 상태를 확인하고 있습니다.'
                       : mobileEditLocked
                         ? '다시 보내려면 먼저 게시 대기를 회수하거나 보류된 전송을 취소하세요.'
-                        : !mobileAccountChoices(managedAccounts.accounts).length
-                          ? '계정 관리에서 계정을 등록하고 서버와 동기화하세요.'
-                          : '선택한 계정의 모바일 게시 대기로 보냅니다.'
+                        : (sendAccountProblem ?? '이 글의 계정으로 모바일 게시 대기에 보냅니다.')
                   }
                   onClick={() => setSendMobileOpen(true)}
                 >
@@ -1016,7 +1329,10 @@ function RegistrationDialog({
       </div>
       {sendMobileOpen && draft && (
         <MobilePublicationSendDialog
-          accounts={managedAccounts.accounts}
+          accounts={accountRows}
+          accountId={accountId}
+          autoAssigned={decision.source === 'auto'}
+          personas={personas}
           busy={mobile.working}
           mediaCount={draft.mediaIds.length}
           includesComment={!!post.comment}

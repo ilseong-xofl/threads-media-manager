@@ -68,18 +68,6 @@
   font-size: 13px;
   font-weight: 650;
 }
-.mobile-publication-account-field select {
-  box-sizing: border-box;
-  width: 100%;
-  max-width: none;
-  min-height: 42px;
-  padding: 9px 12px;
-  border: 1px solid #d8deea;
-  border-radius: 9px;
-  background: #fff;
-  color: #303b4b;
-  font: inherit;
-}
 .mobile-publication-history-note {
   border-left: 3px solid #d2c8e7;
   padding-left: 12px;

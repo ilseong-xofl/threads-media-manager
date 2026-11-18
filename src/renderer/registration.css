@@ -597,6 +597,77 @@
   background: #fff;
   font-size: 13px;
 }
+.registration-translation {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed #dce1e8;
+  color: #5b6575;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.registration-account-select {
+  margin-bottom: 10px;
+}
+/* The app caps the width of a bare select; this one fills its row so the names are not cut. */
+.registration-account-select select {
+  max-width: none;
+}
+.registration-account-box {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  /* Reference information, shaded like the source caption rather than a field to type in. */
+  border: 1px solid #e0e4eb;
+  border-radius: 12px;
+  background: #eef1f6;
+  font-size: 13px;
+}
+.registration-account-box p {
+  margin: 0;
+}
+.registration-account-problem {
+  justify-items: start;
+  color: #8c5a56;
+}
+.registration-account-name,
+.registration-persona p:first-child {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.registration-account-auto {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fff4dc;
+  color: #8c6a1f;
+  font-size: 11px;
+  font-weight: 650;
+}
+.registration-persona-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.registration-persona-summary,
+.registration-persona-language {
+  color: #5b6575;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.registration-account-note {
+  margin: 8px 0 0;
+  color: #8c7b56;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.comment-ai {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
 .registration-footer {
   display: flex;
   align-items: center;

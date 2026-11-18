@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAICaptionResponse } from './ai-caption-response';
+import { parseAICaptionResponse, parseAICommentResponse } from './ai-caption-response';
 
 describe('AI caption IPC response boundary', () => {
   it('accepts the new main response and copies three normalized suggestions', () => {
@@ -88,6 +88,73 @@ describe('AI caption IPC response boundary', () => {
   ])('rejects malformed IPC data without returning a missing captions value', (response) => {
     expect(() => parseAICaptionResponse(response)).toThrow(
       'AI 캡션 응답 형식을 확인하지 못했습니다',
+    );
+  });
+});
+
+describe('Korean renderings and AI comment responses', () => {
+  it('accepts three optional Korean renderings with persona captions', () => {
+    expect(
+      parseAICaptionResponse({
+        status: 'generated',
+        captions: ['one', 'two', 'three'],
+        translations: [' 하나 ', '둘', '둘'],
+      }),
+    ).toEqual({
+      status: 'generated',
+      captions: ['one', 'two', 'three'],
+      translations: ['하나', '둘', '둘'],
+    });
+  });
+
+  it.each([
+    { translations: undefined },
+    { translations: null },
+    { translations: ['하나', '둘'] },
+    { translations: ['하나', '둘', ''] },
+    { translations: ['하나', '둘', 3] },
+    { translations: ['하나', '둘', 'bad\x00'] },
+  ])('rejects malformed renderings (%o)', (extra) => {
+    expect(() =>
+      parseAICaptionResponse({ status: 'generated', captions: ['a', 'b', 'c'], ...extra }),
+    ).toThrow('AI 캡션 응답 형식을 확인하지 못했습니다');
+  });
+
+  it('accepts three distinct comments, cancellation and safe errors', () => {
+    expect(
+      parseAICommentResponse({ status: 'generated', comments: [' 첫째 ', '둘째', '셋째'] }),
+    ).toEqual({ status: 'generated', comments: ['첫째', '둘째', '셋째'] });
+    expect(
+      parseAICommentResponse({
+        status: 'generated',
+        comments: ['a', 'b', 'c'],
+        translations: ['가', '나', '다'],
+      }),
+    ).toEqual({ status: 'generated', comments: ['a', 'b', 'c'], translations: ['가', '나', '다'] });
+    expect(parseAICommentResponse({ status: 'cancelled' })).toEqual({ status: 'cancelled' });
+    expect(
+      parseAICommentResponse({
+        status: 'error',
+        problem: { code: 'caption_required', message: '캡션을 먼저 저장하세요.' },
+      }),
+    ).toEqual({
+      status: 'error',
+      problem: { code: 'caption_required', message: '캡션을 먼저 저장하세요.' },
+    });
+  });
+
+  it.each([
+    undefined,
+    { status: 'generated', captions: ['a', 'b', 'c'] },
+    { status: 'generated', comments: ['a', 'b'] },
+    { status: 'generated', comments: ['a', 'a', 'b'] },
+    { status: 'generated', comments: ['a', 'b', ' '] },
+    { status: 'generated', comments: ['a', 'b', 'c'], extra: true },
+    { status: 'generated', comments: ['a', 'b', 'c'], translations: ['가'] },
+    { status: 'error', problem: { code: 'BAD', message: '대문자 코드' } },
+  ])('rejects malformed comment responses (%o)', (response) => {
+    expect(() => parseAICommentResponse(response)).toThrow(
+      'AI 댓글 응답 형식을 확인하지 못했습니다',
     );
   });
 });

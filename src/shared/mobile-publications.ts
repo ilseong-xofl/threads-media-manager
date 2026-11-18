@@ -70,3 +70,29 @@ export interface MobilePublicationMethods {
   cancelPendingMobilePublication(input: { requestId: string }): Promise<MobilePublicationsResult>;
   recallMobilePublication(input: RecallMobilePublicationInput): Promise<MobilePublicationsResult>;
 }
+
+/**
+ * The account a registered draft is bound to by what was already sent for it (2026-11-18), or
+ * null when nothing sent holds it. Only history of the same registration counts
+ * (`draftCreatedAt`): a post deleted and registered again is a new one.
+ *
+ * It holds while a send is pending on this PC, while a copy is uploading, waiting or taken by a
+ * phone, and whenever the root may have reached Threads (sending, unknown, uncertain, published)
+ * even if the copy itself was cancelled afterwards. A root that was never started or failed on a
+ * cancelled or expired copy holds nothing.
+ */
+export function lockedPublicationAccount(
+  publications: MobilePublication[],
+  pending: PendingMobilePublication[],
+  draftCreatedAt: string,
+): string | null {
+  const waiting = pending.find((item) => item.source.draftCreatedAt === draftCreatedAt);
+  if (waiting) return waiting.accountId;
+  const held = publications.find(
+    (item) =>
+      item.source.draftCreatedAt === draftCreatedAt &&
+      (['uploading', 'ready', 'started', 'published'].includes(item.status) ||
+        ['sending', 'unknown', 'uncertain', 'published'].includes(item.rootStatus)),
+  );
+  return held?.accountId ?? null;
+}

@@ -14,6 +14,7 @@ import type {
   SavePostCommentInput,
   SavePostDraftInput,
   GenerateCaptionInput,
+  GeneratePostCommentInput,
   CaptionLanguage,
   PostDraftActionInput,
   AIContentDraft,
@@ -34,7 +35,9 @@ import { PostRegistrationModal } from './PostRegistrationModal';
 import { RegisteredPostCard } from './RegisteredPostCard';
 import { LocalPostModal } from './LocalPostModal';
 import { matchesDateRange } from './date-range';
-import { parseAICaptionResponse } from './ai-caption-response';
+import { parseAICaptionResponse, parseAICommentResponse } from './ai-caption-response';
+import { captionSuggestionContext } from './registration-model';
+import { accountPersona } from './mobile-publication-model';
 import './registration.css';
 import { SettingsModal } from './SettingsModal';
 import { AccountManagementModal } from './AccountManagementModal';
@@ -112,7 +115,16 @@ export function App({
   const draftPending = useRef(false);
   const captionPending = useRef(false);
   const captionSuggestions = useRef(
-    new Map<string, { language: CaptionLanguage; captions: string[] | null }>(),
+    new Map<
+      string,
+      {
+        language: CaptionLanguage;
+        /** The account and persona the suggestions were written for. */
+        context: string;
+        captions: string[] | null;
+        translations?: string[];
+      }
+    >(),
   );
   const threads = useThreadsApi(
     settingsOpen || !!registration || libraryTab === 'registered',
@@ -462,7 +474,10 @@ export function App({
     }
   }
 
-  async function savePostDraft(input: SavePostDraftInput): Promise<void> {
+  async function savePostDraft(
+    input: SavePostDraftInput,
+    options: { accountChanged: boolean },
+  ): Promise<void> {
     if (draftPending.current) throw new Error('게시글을 저장하고 있습니다.');
     draftPending.current = true;
     setSavingDraft(true);
@@ -477,12 +492,28 @@ export function App({
       setQuery('');
       setDateRange(defaultDateRange());
       resetList();
-      setActionNotice({
-        error: !!result.view.error,
-        message:
-          result.view.error?.message ??
-          (input.expectedRevision === null ? '게시글을 등록했습니다.' : '게시글을 수정했습니다.'),
-      });
+      const saved =
+        input.expectedRevision === null ? '게시글을 등록했습니다.' : '게시글을 수정했습니다.';
+      setActionNotice(
+        result.view.error
+          ? {
+              error: true,
+              message: result.noteSaved
+                ? result.view.error.message
+                : `${result.view.error.message} 계정 기록도 저장하지 못했습니다. 글을 다시 열어 계정을 확인하세요.`,
+            }
+          : !result.noteSaved
+            ? {
+                error: true,
+                message: `${saved} 계정 기록을 저장하지 못했습니다. 글을 다시 열어 계정을 확인하세요.`,
+              }
+            : {
+                error: false,
+                message: options.accountChanged
+                  ? `${saved} 계정을 바꿨습니다. 캡션과 댓글을 이 계정에 맞게 다시 확인하세요.`
+                  : saved,
+              },
+      );
     } finally {
       draftPending.current = false;
       setSavingDraft(false);
@@ -575,23 +606,52 @@ export function App({
     contentPending.current = false;
     setGeneratingContent(false);
   }
-  async function generateCaption(input: GenerateCaptionInput): Promise<string[] | null> {
+  async function generateCaption(
+    input: GenerateCaptionInput,
+  ): Promise<{ captions: string[]; translations?: string[] } | null> {
     if (!snapshot?.root) throw new Error('수집 폴더를 먼저 연결하세요.');
     const key = captionCacheKey(snapshot.root, input.postKey);
     if (captionPending.current) throw new Error('캡션을 생성하고 있습니다.');
     captionPending.current = true;
-    captionSuggestions.current.set(key, { language: input.language, captions: null });
+    const accountId = input.accountId ?? null;
+    const context = captionSuggestionContext(
+      accountId,
+      accountPersona(accountId, daily.view.personas),
+    );
+    captionSuggestions.current.set(key, { language: input.language, context, captions: null });
     setGeneratingCaption(true);
     try {
       const response: unknown = await window.threadsMedia.generateCaption(input);
       const result = parseAICaptionResponse(response);
       if (result.status === 'error') throw new Error(result.problem.message);
       if (result.status !== 'generated') return null;
-      captionSuggestions.current.set(key, {
-        language: input.language,
+      const generated = {
         captions: [...result.captions],
-      });
-      return result.captions;
+        ...(result.translations ? { translations: [...result.translations] } : {}),
+      };
+      captionSuggestions.current.set(key, { language: input.language, context, ...generated });
+      return generated;
+    } finally {
+      captionPending.current = false;
+      setGeneratingCaption(false);
+    }
+  }
+  async function generatePostComment(
+    input: GeneratePostCommentInput,
+  ): Promise<{ comments: string[]; translations?: string[] } | null> {
+    // Comment and caption generation share the main process's one-at-a-time ChatGPT run.
+    if (captionPending.current) throw new Error('캡션을 생성하고 있습니다.');
+    captionPending.current = true;
+    setGeneratingCaption(true);
+    try {
+      const response: unknown = await window.threadsMedia.generatePostComment(input);
+      const result = parseAICommentResponse(response);
+      if (result.status === 'error') throw new Error(result.problem.message);
+      if (result.status !== 'generated') return null;
+      return {
+        comments: [...result.comments],
+        ...(result.translations ? { translations: [...result.translations] } : {}),
+      };
     } finally {
       captionPending.current = false;
       setGeneratingCaption(false);
@@ -1230,19 +1290,13 @@ export function App({
           post={registrationPost}
           draft={registrationPost.draft}
           mode={registration.mode}
-          initialCandidates={
-            snapshot?.root
-              ? (captionSuggestions.current.get(
-                  captionCacheKey(snapshot.root, registrationPost.key),
-                )?.captions ?? undefined)
-              : undefined
-          }
-          initialLanguage={
+          initialSuggestions={
             snapshot?.root
               ? captionSuggestions.current.get(captionCacheKey(snapshot.root, registrationPost.key))
-                  ?.language
               : undefined
           }
+          personas={daily.view.personas}
+          personasLoaded={daily.loaded}
           disabled={
             busy ||
             downloading ||
@@ -1280,6 +1334,7 @@ export function App({
           onMobileWorking={setSendingMobile}
           onSave={savePostDraft}
           onGenerate={generateCaption}
+          onGenerateComment={generatePostComment}
           onCancelGeneration={() => window.threadsMedia.cancelCaption()}
           onClose={() => setRegistration(null)}
         />

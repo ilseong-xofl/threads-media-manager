@@ -1,3 +1,4 @@
+import type { DailyPersona } from '../shared/daily';
 import type {
   Attachment,
   CaptionLanguage,
@@ -46,12 +47,61 @@ export function captionGenerationInput(
   mediaIds: readonly string[],
   language: CaptionLanguage,
   expectedRevision: number | null,
+  accountId: string | null,
 ): GenerateCaptionInput {
-  const input = registrationInput(post, '', mediaIds, expectedRevision);
+  const input = registrationInput(post, '', mediaIds, expectedRevision, accountId ?? '', null);
+  // Images are what the model looks at. With videos only, main sends one still per video, or the
+  // source caption alone when no still can be made (2026-11-18).
   const images = captionImageIds(post, input.mediaIds);
-  if (!images.length) throw new Error('AI 캡션을 만들려면 이미지를 하나 이상 선택하세요.');
   if (!['en', 'ko', 'ja'].includes(language)) throw new Error('AI 캡션 언어를 다시 선택하세요.');
-  return { postKey: input.postKey, mediaIds: images, language };
+  return {
+    postKey: input.postKey,
+    mediaIds: images.length ? images : [...input.mediaIds],
+    language,
+    ...(accountId !== null ? { accountId } : {}),
+  };
+}
+
+/** Suggestions belong to the account and persona they were written for. */
+export function captionSuggestionContext(accountId: string | null, persona?: DailyPersona) {
+  return JSON.stringify([
+    accountId,
+    persona?.id ?? null,
+    persona?.language ?? null,
+    persona?.description ?? null,
+  ]);
+}
+
+/**
+ * The Korean saved with a text: the rendering of the suggestion it equals exactly, else the stored
+ * one while the text is unchanged since it was saved, else none.
+ */
+/**
+ * Keeps what every suggestion seen so far says in Korean. Generating again replaces the list on
+ * screen, but a suggestion already taken as the text must not lose its rendering for that.
+ */
+export function rememberTranslations(
+  seen: Map<string, string>,
+  texts: readonly string[],
+  translations: readonly string[] | undefined,
+) {
+  translations?.forEach((translation, index) => {
+    if (texts[index] && translation) seen.set(texts[index], translation);
+  });
+}
+
+export function savedTranslation(
+  text: string,
+  suggestions: { texts: readonly string[]; translations?: readonly string[] } | null,
+  saved: { text: string; translation: string | null } | null,
+  /** Renderings of suggestions shown earlier in this window. */
+  seen?: ReadonlyMap<string, string>,
+): string | null {
+  const index = suggestions ? suggestions.texts.indexOf(text) : -1;
+  const chosen = index >= 0 ? suggestions?.translations?.[index] : undefined;
+  if (chosen) return chosen;
+  if (saved && saved.text === text) return saved.translation;
+  return seen?.get(text) ?? null;
 }
 
 export function addRegistrationMedia(
@@ -95,11 +145,13 @@ export function moveRegistrationMedia(
 }
 
 export function registrationChanged(
-  initial: Pick<PostDraft, 'caption' | 'mediaIds'>,
+  initial: Pick<PostDraft, 'caption' | 'mediaIds'> & { accountId: string | null },
   caption: string,
   mediaIds: readonly string[],
+  accountId: string | null,
 ): boolean {
   return (
+    initial.accountId !== accountId ||
     initial.caption !== caption ||
     initial.mediaIds.length !== mediaIds.length ||
     initial.mediaIds.some((id, index) => id !== mediaIds[index])
@@ -111,6 +163,8 @@ export function registrationInput(
   caption: string,
   mediaIds: readonly string[],
   expectedRevision: number | null,
+  accountId: string,
+  translation: string | null,
 ): SavePostDraftInput {
   if (caption.length > MAX_DRAFT_CAPTION) throw new Error('캡션은 10,000자 이내로 입력하세요.');
   if (
@@ -136,5 +190,12 @@ export function registrationInput(
     (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
   )
     throw new Error('등록 정보를 다시 열고 저장하세요.');
-  return { postKey: post.key, caption, mediaIds: [...mediaIds], expectedRevision };
+  return {
+    postKey: post.key,
+    caption,
+    mediaIds: [...mediaIds],
+    expectedRevision,
+    accountId,
+    translation,
+  };
 }
