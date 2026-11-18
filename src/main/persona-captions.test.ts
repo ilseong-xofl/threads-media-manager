@@ -187,7 +187,8 @@ describe('captions written as a persona', () => {
       // Only the instruction differs from the default arguments (2026-11-18).
       expect(cli().args).toEqual(
         captionArguments(
-          cli().args[cli().args.indexOf('-o') + 1].replace(/\/result\.json$/, ''),
+          // Either separator: the Windows check runs this with backslash paths.
+          cli().args[cli().args.indexOf('-o') + 1].replace(/[\\/]result\.json$/, ''),
           ['image-01.jpg'],
           'ko',
           [],
