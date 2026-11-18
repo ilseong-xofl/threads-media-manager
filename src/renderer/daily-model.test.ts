@@ -155,8 +155,10 @@ describe('daily labels', () => {
 
 describe('daily persona description', () => {
   it('saves only the items that were filled in', () => {
-    expect(dailyDescriptionText(['', '', '', '', ''])).toBe('');
-    expect(dailyDescriptionText([' 30세 ', '', '  ', '육아', ''])).toBe('나이: 30세\n관심사: 육아');
+    expect(dailyDescriptionText(['', '', '', '', '', '', ''])).toBe('');
+    expect(dailyDescriptionText([' 30세 ', '배달 기사', '', '  ', '육아', '', ' 0개 '])).toBe(
+      '나이: 30세\n직업: 배달 기사\n관심사: 육아\n이모지: 0개',
+    );
   });
 
   it('reads the items back and leaves other lines out', () => {
@@ -164,11 +166,13 @@ describe('daily persona description', () => {
       '30세',
       '',
       '',
+      '',
       '육아, 살림',
       '',
+      '',
     ]);
-    expect(dailyDescriptionValues('30세 여성. 전업주부')).toEqual(['', '', '', '', '']);
-    const values = ['30세', '남편', '수원', '육아', '반말'];
+    expect(dailyDescriptionValues('30세 여성. 전업주부')).toEqual(['', '', '', '', '', '', '']);
+    const values = ['30세', '전업주부', '남편', '수원', '육아', '반말', '1~2개'];
     expect(dailyDescriptionValues(dailyDescriptionText(values))).toEqual(values);
   });
 });

@@ -118,13 +118,18 @@ describe('daily post generation', () => {
     const prompt = (language: 'ko' | 'ja' | 'en') => dailyArguments('/tmp/x', language).at(-1)!;
     expect(prompt('ja')).toContain('Japanese Threads');
     expect(prompt('en')).toContain('English-language Threads');
+    expect(prompt('en')).toContain('at least one and at most three');
     expect(prompt('ko')).toContain('Korean Threads');
     expect(prompt('ko')).not.toContain('Japanese Threads');
     expect(prompt('ja')).not.toContain('Korean Threads');
-    // Only Japanese was given a post that asks nothing.
-    expect(prompt('ja')).toContain('a vent or a thought to oneself');
-    for (const language of ['ko', 'en'] as const)
-      expect(prompt(language)).not.toContain('a vent or a thought to oneself');
+    // Every language writes two everyday posts and one question.
+    for (const language of ['ko', 'ja', 'en'] as const) {
+      expect(prompt(language)).toContain('Exactly one of the three posts asks');
+      expect(prompt(language)).toContain('The two everyday posts are of two different kinds');
+    }
+    // The persona's own emoji count is honoured in every language.
+    for (const language of ['ko', 'ja', 'en'] as const)
+      expect(prompt(language)).toContain('its 이모지 item');
     // Every language keeps the rules about time-bound facts and the length limit.
     for (const language of ['ko', 'ja', 'en'] as const) {
       expect(prompt(language)).toContain('sold-out');
@@ -237,6 +242,7 @@ describe('daily post generation', () => {
     // The draft decides what is said; the language's own voice decides how.
     expect(request.args.at(-1)).toContain('Japanese Threads');
     expect(request.args.at(-1)).toContain('add nothing of your own');
+    expect(request.args.at(-1)).toContain('its 이모지 item');
     expect(request.args.at(-1)).not.toContain('recentPosts');
     expect(JSON.parse(request.stdin)).toEqual({
       persona: { name: persona.name, description: persona.description },

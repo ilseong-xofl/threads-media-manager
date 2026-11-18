@@ -136,37 +136,70 @@ export function dailyNeedsTranslation(view: DailyView, postId: string) {
 
 export const dailyInitial = (name: string) => [...name.trim()][0] ?? '?';
 
-/** The fixed items of the persona description form. */
-export const DAILY_DESCRIPTION_LABELS = ['나이', '가족', '거주지', '관심사', '말투'];
+/**
+ * The fixed items of the persona description form. 직업 says what kind of person this is, so the
+ * posts come out of that life (2026-11-18). 이모지 is how many emoji the user wants in one post;
+ * the writer is asked for it in every language and falls back to the language's own habit when
+ * it is left blank.
+ */
+export const DAILY_DESCRIPTION_LABELS = [
+  '나이',
+  '직업',
+  '가족',
+  '거주지',
+  '관심사',
+  '말투',
+  '이모지',
+];
 
 /** Example personas shown in the empty form; `values` follows `DAILY_DESCRIPTION_LABELS`. */
 export const dailyPersonaExamples = [
   {
     name: '연년생 아들맘',
-    values: ['30세', '남편, 5살·4살 아들', '수원', '육아, 살림, 아이 교육', '편한 반말, 솔직한 편'],
+    values: [
+      '30세',
+      '전업주부',
+      '남편, 5살·4살 아들',
+      '수원',
+      '육아, 살림, 아이 교육',
+      '편한 반말, 솔직한 편',
+      '1~2개',
+    ],
   },
   {
     name: '자취 3년차 직장인',
     values: [
       '27세',
+      '마케팅 회사 대리',
       '혼자 삼, 고양이 한 마리',
       '서울 마포구',
       '퇴근 후 요리, 재테크',
       '담담한 존댓말',
+      '0~1개',
     ],
   },
   {
     name: '은퇴한 캠핑 아빠',
-    values: ['58세', '아내, 독립한 딸 하나', '강원 원주', '캠핑, 텃밭, 등산', '느긋한 존댓말'],
+    values: [
+      '58세',
+      '퇴직 후 쉬는 중',
+      '아내, 독립한 딸 하나',
+      '강원 원주',
+      '캠핑, 텃밭, 등산',
+      '느긋한 존댓말',
+      '0개',
+    ],
   },
   {
     name: '새내기 대학생',
     values: [
       '20세',
+      '대학교 1학년',
       '부모님, 고3 남동생',
       '부산, 기숙사 생활',
       '동아리, 알바, 맛집',
       '발랄한 반말',
+      '2~3개',
     ],
   },
 ];

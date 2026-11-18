@@ -44,8 +44,8 @@ function useDailyExample(active: boolean) {
   return dailyPersonaExamples[index]!;
 }
 
-/** Five items of this length and their names stay within the description limit. */
-const DESCRIPTION_VALUE_LIMIT = 300;
+/** Seven items of this length and their names stay within the description limit. */
+const DESCRIPTION_VALUE_LIMIT = 250;
 
 /**
  * Example text over an empty field (2026-11-17, after Suno's create form). It fades in and out
@@ -248,7 +248,8 @@ export function DailyPersonaDialog({
             ))}
           </div>
           <p className="daily-form-note">
-            항목 옆에 내용을 적어 주세요. 비워 둔 항목은 저장하지 않습니다.
+            항목 옆에 내용을 적어 주세요. 비워 둔 항목은 저장하지 않습니다. 이모지는 글 하나에 쓸
+            개수입니다(0~4개 사이, 예: 0개 · 1~2개). 비워 두면 그 언어에서 흔한 만큼 씁니다.
           </p>
           <div className="threads-actions managed-threads-dialog-actions daily-form-actions">
             {persona && (
