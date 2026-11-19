@@ -13,6 +13,13 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
 
+## 2026-11-19 0.1.10 공개 완료
+
+- [0.1.10 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.10)를 00:38 KST에 공개했다. 앱 소스와 태그는 `97cfb322ea1d9617d5f5dac2011784d0f5db73ee`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/44333440121)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/44337767770)이 설치 파일을 Release로 옮겼다. 자동 업데이트 주소(`update.electronjs.org/…/win32-x64/0.1.9`)가 `v0.1.10`을 안내함을 확인했다.
+- 변경: 일상 탭, 등록 글의 계정과 페르소나(댓글 AI 생성, 영상 화면 한 장으로 캡션 만들기 포함), 페르소나의 서버 보관, 일상 보내기 확인 창. 로컬 전체 검사: TypeScript 70개 파일 1,638개, Python 579개, 린트·타입·포맷 통과.
+- 첫 CI(`19624d4`)는 Windows에서 테스트 하나가 실패했다. 임시 폴더 경로를 슬래시로만 잘라 역슬래시 경로에서 기대값이 틀리게 만들어진 테스트 문제였고 앱 코드는 같다. `97cfb32`에서 고쳐 다시 통과시켰다. Windows CI의 Python 578개(건너뜀 4), 설치 파일·실행 검증은 두 번 모두 성공했다.
+- 실기: 아직 없다. Windows 설치본의 0.1.9 → 0.1.10 업데이트 적용, 일상 탭, 영상 화면 뽑기(내장 ffmpeg)는 테스터 PC에서 확인이 필요하다.
+
 ## 2026-10-29 0.1.9 공개 완료
 
 - [0.1.9 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.9)를 14:02 KST에 공개했다. 앱 소스와 태그는 `285bf14bfb643606d2f1e03dc340ac007f47d0d9`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40819230929)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/40820911478)이 검증된 파일 5개를 공개했다. 서비스 주소는 개발 서버이고 업데이트 목록(RELEASES)에 0.1.9가 있다.
