@@ -1,6 +1,6 @@
 # Threads API 토큰 발급 가이드
 
-**처음 접속하는 분을 기준으로, 위에서 아래 순서대로 진행합니다.** 원문 화면 이미지 21개를 같은 순서로 넣고, 실제로 선택할 권한 4개가 표시된 이미지를 추가했습니다. 사진을 누르면 크게 볼 수 있습니다.
+**처음 접속하는 분을 기준으로, 위에서 아래 순서대로 진행합니다.** 원문 화면 이미지 21개를 같은 순서로 넣었습니다. 사진을 누르면 크게 볼 수 있습니다.
 
 준비물: **Facebook 계정 · 글을 게시할 본인 Threads 계정 · 문자 인증을 받을 휴대폰 · 본인 이메일**
 
@@ -90,32 +90,31 @@ Facebook 계정이 없다면 Facebook 로그인 화면의 **새 계정 만들기
 
 ![화면 09 — Threads API 액세스 맞춤 설정 이용 사례의 오른쪽 화살표](https://t1.kakaocdn.net/brunch/service/user/2LbE/image/4Cv3PMPstLq7lJ5UKYzSWxF56pg.png)
 
-## 10. 권한 4개 추가하기
+## 10. 권한 5개 추가하기
 
-**이용 사례 → 권한 및 기능**에서 **아래 4개를 모두 추가**합니다. 각 항목 오른쪽의 **추가**를 누릅니다. 이미 **테스트 준비 완료**로 표시되면 그대로 둡니다.
+**이용 사례 → 권한 및 기능**에서 **아래 5개를 모두 추가**합니다. 각 항목 오른쪽의 **추가**를 누릅니다. 이미 **테스트 준비 완료**로 표시되면 그대로 둡니다.
 
 - `threads_basic` — 내 Threads 계정 확인
 - `threads_content_publish` — 게시글 올리기
 - `threads_manage_insights` — 조회수·좋아요 등 통계 확인
 - `threads_manage_replies` — 댓글 올리기
+- `threads_read_replies` — 댓글 읽기
 
-화면을 아래로 내려 4개를 모두 찾습니다. **위 4개 외의 권한은 추가하지 않습니다.**
+화면을 아래로 내려 5개를 모두 찾습니다. **위 5개 외의 권한은 추가하지 않습니다.**
 
 아래 원문 사진에서는 **추가 버튼의 위치**를 확인합니다.
 
 ![화면 10 — 원문 예시의 권한 추가 버튼 위치](https://t1.kakaocdn.net/brunch/service/user/2LbE/image/UXBkOZW5tCkRBxrxJMRzhI9Sytc.png)
 
-<p class="important"><strong>최종 권한 설정은 아래 이미지를 그대로 따릅니다.</strong> 원문 사이트와 달리 <strong>위 4개가 모두 ‘테스트 준비 완료’</strong>여야 합니다. 확인한 뒤 11번으로 진행합니다.</p>
-
-![권한 설정 기준 — threads_basic, threads_content_publish, threads_manage_insights, threads_manage_replies 모두 테스트 준비 완료](assets/meta-api-token-guide/threads-permissions.png)
+<p class="important">원문 사이트와 달리 <strong>위 5개가 모두 ‘테스트 준비 완료’</strong>여야 합니다. 확인한 뒤 11번으로 진행합니다.</p>
 
 ## 11. 권한 추가를 마치고 ‘앱 역할’ 열기
 
-1. **10번의 권한 4개가 모두 테스트 준비 완료**인지 확인합니다.
+1. **10번의 권한 5개가 모두 테스트 준비 완료**인지 확인합니다.
 2. 왼쪽 아래 **앱 역할**을 누릅니다. 메뉴가 아이콘으로만 보이면 아래 사진의 빨간 표시 위치에 마우스를 올려 **앱 역할**을 찾습니다.
 3. 펼쳐진 메뉴에서 **역할**을 누릅니다.
 
-아래 원문 사진에서는 **앱 역할 메뉴의 위치만 확인**합니다. 권한 목록은 **10번의 4개**를 기준으로 합니다.
+아래 원문 사진에서는 **앱 역할 메뉴의 위치만 확인**합니다. 권한 목록은 **10번의 5개**를 기준으로 합니다.
 
 ![화면 11 — 왼쪽 아래 앱 역할 메뉴 위치](https://t1.kakaocdn.net/brunch/service/user/2LbE/image/E1J86TG0eDuDfkxa5pxaVV9Le74.png)
 
