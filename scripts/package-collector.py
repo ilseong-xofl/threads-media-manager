@@ -19,7 +19,7 @@ PLUGIN = 'plugins/threads-collector'
 FILES = (
     '.codex-plugin/plugin.json', 'README.md',
     'references/local-settings.md', 'references/collection-source.md',
-    'scripts/collection_journal.py', 'scripts/setup_collection.py',
+    'scripts/collection_journal.py', 'scripts/setup_collection.py', 'scripts/blob-video-urls.mjs',
     'scripts/collection_source.py', 'scripts/threads_source/__init__.py',
     'scripts/threads_source/excel_input.py', 'scripts/threads_source/files.py',
     'scripts/threads_source/legacy_jsonl.py', 'scripts/threads_source/service.py',

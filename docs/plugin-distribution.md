@@ -8,7 +8,7 @@
 - Git 추적 브랜치: `main`
 - marketplace: `threads-collector`
 - plugin ID: `threads-collector@threads-collector`
-- 현재 버전: `0.1.0+codex.20260929082903`
+- 배포 버전: `0.1.1+codex.20261109073351`
 
 사용자는 Codex 대화에 GitHub README를 확인하고 설치해 달라고 요청한다. Codex가 앱 제공 실행기로 공식 Git marketplace 등록과 플러그인 설치를 수행한다. 사용자가 터미널·Git·Node·Python·Excel 프로그램을 설치하거나 저장소를 clone하는 절차는 없다. 기존 개인 목록은 보존하고 새 대화에서 실제 로드 경로와 버전을 확인한다. 명령과 사용자 복사 문장은 [배포 README](../distribution/github/README.md)에 있다.
 
@@ -29,13 +29,15 @@
 5. 배포 저장소 main에 커밋·push하고 해당 버전 태그를 남긴다. Mac·Windows CI를 확인한다.
 6. 서로 다른 두 버전으로 설치 캐시 갱신과 사용자 자료 보존을 확인하고 새 대화 적용은 별도 확인한다.
 
-배포에는 플러그인·빈 Excel 양식·설치 안내·검증 코드·62개 합성 테스트와 파일별 해시만 들어간다. 실제 계정 목록·수집 Excel·JSONL·미디어·DB·토큰·앱 런타임·개발 저장소 Git 이력을 복사하지 않는다. exporter는 알 수 없는 기존 파일이 있으면 중단하고, 검증 스크립트는 누락·변경·추가 파일을 검사한다. 배포 저장소에 사용자 자료를 넣지 않는다.
+배포에는 플러그인·빈 Excel 양식·설치 안내·검증 코드·합성 테스트와 파일별 해시만 들어간다. 실제 계정 목록·수집 Excel·JSONL·미디어·DB·토큰·앱 런타임·개발 저장소 Git 이력을 복사하지 않는다. exporter는 알 수 없는 기존 파일이 있으면 중단하고, 검증 스크립트는 누락·변경·추가 파일을 검사한다. 배포 저장소에 사용자 자료를 넣지 않는다.
 
 `scripts/package-collector.py`와 `distribution/collector/`는 이전 오프라인 ZIP 형식 확인용으로 보존한다. 현재 최종 설치 경로는 GitHub이며 ZIP의 `threads-collector-testing`은 업데이트 스킬 대상이 아니다.
 
 ## 검증 범위
 
-실제 검증 결과와 커밋·CI 링크는 [최신 체크포인트](checkpoint-2026-09-29.md)의 GitHub 배포 항목을 따른다. Mac CLI 설치·업데이트, Mac/Windows 합성 테스트와 깨끗한 Windows 실제 설치·새 대화 로드·수집은 각각 다른 확인 항목이다. 필요한 Codex 제공 Python·Git 기능·내부 브라우저가 없는 경우 최종 시험 실패로 기록하며 수동 개발 도구 설치로 감추지 않는다.
+2026-11-09 배포한 0.1.1은 페이지 JSON에서 누락된 blob 영상의 MP4 주소를 현재 탭의 플레이어에서 읽고, 유효한 `oe`의 예상 만료 시각을 Excel에 기록한다. macOS·Windows 합성 테스트가 통과했고 이 Mac의 공식 설치본 27개 파일이 배포본과 일치했다. [배포 커밋](https://github.com/ilseong-xofl/threads-collector/commit/edb698814b7dc691900d9300bf5901b32d28c8ab) · [GitHub CI](https://github.com/ilseong-xofl/threads-collector/actions/runs/42583123108)
+
+이전 배포 검증은 [2026-09-29 체크포인트](checkpoint-2026-09-29.md)의 GitHub 배포 항목에 있다. Mac CLI 설치·업데이트, Mac/Windows 합성 테스트와 깨끗한 Windows 실제 설치·새 대화 로드·수집은 각각 다른 확인 항목이다. 필요한 Codex 제공 Python·Git 기능·내부 브라우저가 없는 경우 최종 시험 실패로 기록하며 수동 개발 도구 설치로 감추지 않는다.
 
 ## 사용자 가이드
 

@@ -24,6 +24,7 @@ EXTRA = {
     "scripts/verify-distribution.py": "distribution/github/verify-distribution.py",
     "tests/test_setup_collection.py": "tests/test_setup_collection.py",
     "tests/test_collection_source.py": "tests/test_collection_source.py",
+    "tests/blob-video-fixture.mjs": "tests/blob-video-fixture.mjs",
     "tests/test_collection_journal.py": "tests/test_collection_journal.py",
 }
 
@@ -49,6 +50,8 @@ def export(destination):
             raise ValueError(f"Invalid export source: {relative}")
     for relative, source in files.items():
         target = destination / relative
+        if target.is_file() and target.read_bytes() == (ROOT / source).read_bytes():
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / source, target)
     manifest = json.loads((destination / package.PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))

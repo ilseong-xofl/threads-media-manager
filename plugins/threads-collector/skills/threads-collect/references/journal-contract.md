@@ -16,6 +16,17 @@ python <plugin>/scripts/collection_journal.py read --journal <account.jsonl> --o
 
 한 번 추출한 여러 게시글·첨부를 하나의 `batch` 기록으로 넣는다. 매 게시글마다 별도 프로세스를 실행하거나 Excel을 갱신하지 않는다. 입력 JSON은 셸 인자로 보간하지 말고 안전한 파일 작성 도구로 생성한다. helper는 UTF-8 한 줄을 추가하고 flush/fsync한다. 출력에는 요약만 나오며 서명 URL을 콘솔에 출력하지 않는다.
 
+다음 예시는 수집 스킬의 blob 보완 호출을 포함한다. `prepare`가 반환한 실행 폴더 안에 이벤트 전용 입력 경로 `recordPath`를 잡고, 내부 브라우저 REPL의 `record.payload.media`를 그대로 쓴다. `append --journal ... --input ...`의 성공이나 동일 이벤트의 기존 기록을 확인하면 이 입력 파일만 정리한다. 응답이 유실되면 같은 입력 파일·이벤트 ID로 이어간다. 보완 도중 오류가 나면 이미 확보한 행을 append하고 기존 partial 종료 절차를 따른다.
+
+```js
+const { writeFile } = await import("node:fs/promises");
+try {
+  await resolveBlobVideos(record.payload.media);
+} finally {
+  await writeFile(recordPath, JSON.stringify(record), { flag: "wx", mode: 0o600 });
+}
+```
+
 ## 기록 구조
 
 각 입력은 아래 필드를 가진 JSON 객체다. `seq`는 helper가 부여한다. 같은 `event_id`의 동일 입력을 다시 전달해도 중복 추가하지 않으며, 같은 ID의 다른 내용은 오류다. 자동 브라우저 재시도 권한을 뜻하지 않는다.

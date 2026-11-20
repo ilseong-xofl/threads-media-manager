@@ -4,6 +4,20 @@
 
 [Codex 설치 파일 다운로드](https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi)를 눌러 설치하고, 본인의 ChatGPT 계정으로 로그인합니다.
 
+<a id="video-settings"></a>
+
+### 영상 수집을 위한 브라우저 설정
+
+수집에 사용할 PC마다 처음 한 번 설정합니다. 그림을 누르면 크게 볼 수 있습니다.
+
+Codex 앱에서 **① 설정**을 엽니다. 왼쪽 메뉴를 아래로 내려 **② 브라우저**를 누릅니다.
+
+<a href="assets/threads-collector-guide/settings-browser.png"><img src="assets/threads-collector-guide/settings-browser.png" width="282" alt="① 설정과 ② 브라우저 메뉴가 빨간 테두리로 표시된 화면"></a>
+
+오른쪽 화면을 맨 아래로 내려 **개발자 모드**를 찾습니다. **③ CDP 액세스 전체 활성화** 스위치를 켭니다. 스위치가 파란색이면 준비된 상태입니다.
+
+<a href="assets/threads-collector-guide/cdp-access.png"><img src="assets/threads-collector-guide/cdp-access.png" width="590" alt="③ CDP 액세스 전체 활성화 스위치가 파란색으로 켜진 화면"></a>
+
 ## 2. 수집 플러그인 설치
 
 Codex 대화에 아래 내용을 복사해서 보냅니다.
@@ -71,6 +85,12 @@ Codex 내부 브라우저에서 Threads 로그인 화면을 열어줘. Chrome �
 Threads 로그인 완료했어. $threads-collect로 수집해줘.
 ```
 
+### <span style="color:#b42318">수집 중 ‘위험 증가’ 경고가 뜨면</span>
+
+일부 영상의 다운로드 주소를 확인할 때 Codex 대화창 아래에 권한 요청이 나타납니다. 주소가 **`https://www.threads.com`**인지 확인하고, **왼쪽 아래의 항상 허용**을 누릅니다. 수집이 이어지고, 다음 수집에도 Threads에 대한 이 선택이 적용됩니다.
+
+<a href="assets/threads-collector-guide/threads-always-allow.png"><img src="assets/threads-collector-guide/threads-always-allow.png" width="570" alt="Threads 권한 요청 창. 왼쪽 아래 항상 허용 버튼을 빨간 화살표로 표시한 화면"></a>
+
 수집이 끝나면 **로컬 앱 가이드**로 넘어갑니다.
 
 ## 6. 다음 수집·플러그인 업데이트
@@ -86,6 +106,8 @@ $threads-collect로 수집해줘.
 ```text
 $threads-update로 수집 플러그인을 업데이트해줘.
 ```
+
+기존에 플러그인을 사용하던 PC라면 업데이트 후에도 [영상 수집을 위한 브라우저 설정](#video-settings)을 확인합니다.
 
 ## 7. 자동 수집 예약
 

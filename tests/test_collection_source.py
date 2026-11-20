@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ import zipfile
 SCRIPTS = Path(__file__).resolve().parents[1] / "plugins/threads-collector/scripts"
 sys.path.insert(0, str(SCRIPTS))
 import collection_source
+from collection_journal import append_record, read_journal
 from threads_source import excel_input, service
 from threads_source.files import CollectionLock, SourceError
 
@@ -146,6 +148,39 @@ class CollectionSourceTests(unittest.TestCase):
         self.assertFalse((self.root / "media").exists())
         self.assertNotIn("https://", json.dumps(result))
         self.assertEqual(excel_input.load_collection(self.root)["media"][0]["다운로드URL"], payload()["media"][0]["다운로드URL"])
+
+    def test_blob_video_observations_round_trip_through_journal_and_excel(self):
+        fixture = Path(__file__).with_name("blob-video-fixture.mjs")
+        media = json.loads(subprocess.check_output(["node", str(fixture)], encoding="utf-8"))
+        data = payload(day="2026-11-09")
+        first = data["posts"][0]
+        first["영상 수"] = 2
+        data["posts"].append({**first, "게시글ID": "Later_02", "이미지 수": 0, "영상 수": 1,
+                              "원문URL": "https://www.threads.com/@example/post/Later_02"})
+        data["run"].update({"대상확인수": 2, "신규저장수": 2, "최하단확인ID": "Later_02"})
+        self.input.parent.mkdir(parents=True)
+        journal = self.input.with_name("0001.jsonl")
+        for kind, body in (("start", {}), ("batch", {"posts": data["posts"], "media": media}), ("end", {})):
+            append_record(journal, {"v": 1, "type": kind, "account": "Example", "run_id": "RunA",
+                                    "event_id": kind, "payload": body})
+        batch = read_journal(journal)["records"][1]["payload"]
+        self.write_input({**batch, "run": data["run"]})
+        with self.forbid_download_storage():
+            result = service.commit_source(self.root, self.input, journal_path=journal)
+        self.assertTrue(result["temporary_cleaned"])
+        saved = excel_input.read_workbook(self.root / result["relative_path"])
+        self.assertFalse(saved["errors"])
+        by_attachment = {(r["게시글ID"], r["순서"]): r for r in saved["media"]}
+        for observed in media:
+            actual = by_attachment[observed["게시글ID"], observed["순서"]]
+            for field in ("다운로드URL", "추출위치", "주소상태", "만료근거"):
+                self.assertEqual(actual[field], observed[field])
+            if observed["종류"] == "video":
+                self.assertEqual(actual["관찰주소"], observed["관찰주소"])
+                self.assertTrue(actual["URL확보시각(KST)"].endswith("+09:00"))
+        self.assertEqual(by_attachment["AbC_01", 2]["만료추정시각(KST)"], "2026-11-10T09:30:00+09:00")
+        self.assertIsNone(by_attachment["AbC_01", 3]["만료추정시각(KST)"])
+        self.assertEqual(by_attachment["Later_02", 1]["만료추정시각(KST)"], "2026-11-10T09:30:00+09:00")
 
     def test_existing_downloader_storage_is_never_opened_or_modified(self):
         for directory in ("state", "media"):

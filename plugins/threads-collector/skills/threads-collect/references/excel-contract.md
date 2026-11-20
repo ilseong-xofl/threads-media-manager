@@ -55,7 +55,7 @@ Excel 형식 버전은 `daily-v1`이다. `accounts.xlsx`는 `계정` 1개 시트
 | 만료근거 | `oe_hex_unverified` 또는 `unknown`; 공식적으로 확인한 근거가 생기면 구체적으로 기록 |
 | 주소상태 | 아래 상태값 |
 | 선언 폭(px), 선언 높이(px) | srcset/연결된 자산 정보에 명시된 값만. 파일 검증 값이 아님 |
-| 추출위치 | `img.srcset`, `picture.source.srcset`, `img.currentSrc`, `img.src`, `video.currentSrc`, `video.src`, `video.source`, `pageAssets` 등 실제 출처 |
+| 추출위치 | 실제 출처. blob 보완은 `json.video_versions`, `player.hdSrc`, `player.sdSrc`. 기존 DOM·`pageAssets` 출처도 그대로 읽음 |
 | 비고 | 고해상도 미확보, 첨부 연결 근거, manifest만 관찰 등 한계 |
 | 확인실행ID | 해당 미디어 정보를 실제 확인한 실행 ID |
 
@@ -69,7 +69,7 @@ Excel 형식 버전은 `daily-v1`이다. `accounts.xlsx`는 `계정` 1개 시트
 ### 만료와 향후 실행기 인계
 
 - 미디어 CDN URL에는 만료가 있을 수 있다. **현재 Threads의 모든 링크가 24시간 또는 1~4일 유효하다는 보장은 없다.** [Meta의 CDN URL 만료 관련 설명](https://about.fb.com/news/2020/11/bug-bounty-program-10th-anniversary/)은 만료 동작의 존재를 뒷받침하지만 현재 Threads의 고정 TTL을 정의하지 않는다.
-- 일부 URL의 `oe`를 16진 Unix 초로 읽는 방식은 공식 계약으로 확인되지 않은 추정이다. 선택적으로 사용하되 올바른 16진수이고 2000~2100년의 유효한 시각으로 해석될 때만 `oe_hex_unverified`와 함께 저장한다. 다른 경우는 unknown/빈 값이다. 추정 시각 전이라고 다운로드를 보장하거나 이후라고 파일이 반드시 소멸했다고 단정하지 않는다.
+- MP4 URL의 `oe` 한 개가 올바른 16진 Unix 초이며 UTC 기준 2000~2100년이면 `만료추정시각(KST)`와 `oe_hex_unverified`를 함께 저장한다. 누락·중복·잘못된 값은 빈 시각과 `unknown`으로 기록한다. 예상 만료는 참고용이며 다운로드 적격 여부를 결정하지 않는다.
 - blob URL은 브라우저의 Blob/MediaSource를 참조하며 별도 앱이 나중에 문자열만으로 재사용할 다운로드 URL이 아니다. [MDN blob URL 설명](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Schemes/blob)을 참고한다.
 - 로컬 앱은 검증된 결과 Excel을 읽고 후보 URL을 처리한다. 플러그인은 URL을 기록할 뿐 다운로드하지 않는다. 링크를 수주간 축적하면 과거 파일 확보가 실패할 수 있다. 원문URL/ID는 재확인 대상 식별용이지 영구 미디어 접근 보장이 아니다. 만료된 링크 재수집은 별도 요청 범위다.
 - 향후 단일 공용 실행기가 소유할 다운로드 시각·파일 경로·성공 여부는 이 수집 양식의 완료 상태와 혼합하지 않는다. Electron은 같은 실행기의 상태를 읽는다. Excel만으로 모든 영상 다운로드가 가능하다고 약속하지 않는다.
