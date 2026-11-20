@@ -13,6 +13,12 @@ GitHub Actions의 `CI`는 push·PR·수동 실행에서 Mac과 Windows Server 20
 워크플로: [CI](../.github/workflows/ci.yml). GitHub 저장소 **Actions → CI → 성공한 실행 → Artifacts**에서 같은 커밋의 설치 후보를 받는다. 기존 자료·토큰 없이 생성하며 서명하지 않은 내부 검수용이다.
 
 
+## 2026-11-20 0.1.11 공개 완료 (개발용, 두 벌 구조의 첫 릴리스)
+
+- [0.1.11 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.11)를 17:22 KST에 공개했다. 앱 소스와 태그는 `894e7a2bf76de0f336169425a2cbc8c7e26cf9ee`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/44699345348)(Windows는 개발용·운영용 두 벌)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/44701822318)이 **개발용 후보**를 Release로 옮겼다. `verification.json`의 벌은 `dev`, 서버는 `https://threads-admin-dev.ilscp.net`, 업데이트 저장소는 이 저장소다. 자동 업데이트 주소(`update.electronjs.org/…/win32-x64/0.1.10`)가 0.1.11과 `threads_media_manager-0.1.11-full.nupkg`를 안내하는 것을 확인했다.
+- 변경: 같은 소스에서 개발용·운영용 두 벌을 빌드하는 구조(`docs/dev-prod-split.md`). 개발용에서 사용자가 보는 차이는 화면 이름 "(개발) ILS 소셜(T) 관리"뿐이다. 수집 플러그인 0.1.1 원본도 함께 들어갔다(앱에 포함되는 수집 스크립트). 로컬 전체 검사: TypeScript 71개 파일 1,658개, Python 617개, 린트·타입·포맷 통과.
+- 실기: 아직 없다. 0.1.10 → 0.1.11 자동 업데이트 적용과 창 제목의 "(개발)" 표시는 테스터 PC와 사용자 PC에서 확인이 필요하다. 운영용은 릴리스하지 않았다(운영 저장소 없음).
+
 ## 2026-11-19 0.1.10 공개 완료
 
 - [0.1.10 Release](https://github.com/ilseong-xofl/threads-media-manager/releases/tag/v0.1.10)를 00:38 KST에 공개했다. 앱 소스와 태그는 `97cfb322ea1d9617d5f5dac2011784d0f5db73ee`다. [Mac/Windows CI](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/44333440121)를 통과한 뒤 [게시 실행](https://github.com/ilseong-xofl/threads-media-manager/actions/runs/44337767770)이 설치 파일을 Release로 옮겼다. 자동 업데이트 주소(`update.electronjs.org/…/win32-x64/0.1.9`)가 `v0.1.10`을 안내함을 확인했다.
