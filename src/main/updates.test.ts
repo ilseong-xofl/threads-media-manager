@@ -19,6 +19,7 @@ vi.mock('update-electron-app', () => ({
   UpdateSourceType: { ElectronPublicUpdateService: 0 },
 }));
 
+import { selectVariant } from '../../scripts/variants.mjs';
 import { configureAutoUpdates } from './updates';
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -90,6 +91,16 @@ describe('configureAutoUpdates', () => {
     );
     expect(mocks.showMessageBox).not.toHaveBeenCalled();
     expect(mocks.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it.each(['dev', 'prod'])('checks only the %s variant update repository', async (name) => {
+    const repository = selectVariant(name).updateRepository;
+    const stop = configureAutoUpdates({ getWindow: () => null, isBusy: () => false, repository });
+    removers.push(stop);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mocks.updateElectronApp).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ updateSource: { type: 0, repo: repository } }),
+    );
   });
 
   it.each(['', 'https://github.com/owner/repo', 'owner/repo/extra', 'owner /repo'])(

@@ -1,0 +1,183 @@
+name: Release production Windows app
+
+# This file runs in the production release repository (variants.json: prod.updateRepository).
+# Its original is distribution/prod-release/release.yml in the source repository; edit it there
+# and copy it to .github/workflows/release.yml here. A person starts it with a version that is
+# already released as the dev variant; it builds the same tagged source as the prod variant and
+# publishes it here. It needs no token for any other repository.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version already released and checked as the dev variant (for example 0.1.12)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: ilseong-xofl/threads-media-manager
+  TMM_VARIANT: prod
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.15'
+      - name: Require a published dev release that is newer than every production release
+        id: source
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          def api(*args):
+              result = subprocess.run(["gh", "api", *args], capture_output=True, text=True, encoding="utf-8")
+              require(result.returncode == 0, f"GitHub request failed: {args[-1]}")
+              return json.loads(result.stdout)
+
+          version = os.environ["REQUESTED_VERSION"].strip()
+          require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version),
+                  "Enter a stable major.minor.patch version, without the leading v.")
+          tag = f"v{version}"
+          source = os.environ["SOURCE_REPOSITORY"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          require(repository != source, "Run this in the production release repository, not in the source.")
+          require(api(f"repos/{repository}")["visibility"] == "public",
+                  "ElectronPublicUpdateService requires a public GitHub repository.")
+          dev = api(f"repos/{source}/releases/tags/{tag}")
+          require(dev["tag_name"] == tag and not dev["draft"] and not dev["prerelease"],
+                  "Release this version as the dev variant in the source repository first.")
+          for page in api("--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"):
+              for release in page:
+                  if release["tag_name"] == tag:
+                      # A draft is what a run that failed before publishing leaves behind. Nobody
+                      # can have installed from it, so it is removed and this run starts over.
+                      require(release["draft"],
+                              "Release already exists. Do not overwrite installed update assets.")
+                      subprocess.run(["gh", "release", "delete", tag, "--repo", repository, "--yes"],
+                                     check=True)
+                      continue
+                  stable = re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", release["tag_name"])
+                  if stable and not release["draft"] and not release["prerelease"]:
+                      require(tuple(map(int, stable.groups())) < tuple(map(int, version.split("."))),
+                              "Version must be higher than every existing production release.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\ntag={tag}\n")
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: refs/tags/${{ steps.source.outputs.tag }}
+          persist-credentials: false
+      - name: Verify the tagged source is the checked dev release and targets this repository
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          version = os.environ["RELEASE_VERSION"]
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          require(json.loads(Path("package.json").read_text(encoding="utf-8"))["version"] == version,
+                  "Tagged package version does not match the requested version.")
+          variant = json.loads(Path("variants.json").read_text(encoding="utf-8"))["prod"]
+          require(variant["updateRepository"] == os.environ["GITHUB_REPOSITORY"],
+                  "The prod variant updates from another repository; release it there.")
+          # Build exactly the commit the dev release was built and checked from.
+          subprocess.run(["gh", "release", "download", os.environ["RELEASE_TAG"],
+                          "--repo", os.environ["SOURCE_REPOSITORY"], "--pattern", "verification.json",
+                          "--dir", os.environ["RUNNER_TEMP"], "--clobber"], check=True)
+          checked = json.loads(Path(os.environ["RUNNER_TEMP"], "verification.json").read_text(encoding="utf-8"))
+          require(checked.get("variant") == "dev" and checked.get("commit") == sha,
+                  "The dev release was not built from this tagged commit.")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"TMM_SOURCE_COMMIT={sha}\n")
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Windows app runtime
+        shell: pwsh
+        run: |
+          python scripts/prepare-windows-runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the prod variant installer
+        run: pnpm make --arch=x64
+      - name: Verify packaged runtime and installer outputs
+        run: pnpm verify:windows
+      - name: Save packaged Windows UI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-windows-ui-${{ steps.source.outputs.version }}
+          path: out/windows-ui-smoke.png
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Publish the verified prod variant here
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          tag = os.environ["RELEASE_TAG"]
+          version = os.environ["RELEASE_VERSION"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          source = os.environ["SOURCE_REPOSITORY"]
+          sha = os.environ["TMM_SOURCE_COMMIT"]
+          output = Path("out/make/squirrel.windows/x64")
+          variant = json.loads(Path("variants.json").read_text(encoding="utf-8"))["prod"]
+          names = [variant["setupExe"], "RELEASES",
+                   f"{variant['squirrelName']}-{version}-full.nupkg", "SHA256SUMS.txt", "verification.json"]
+          require({entry.name for entry in output.iterdir()} == set(names),
+                  "Build output must contain exactly the five verified release assets.")
+          verification = json.loads((output / "verification.json").read_text(encoding="utf-8"))
+          require(verification["variant"] == "prod" and verification["commit"] == sha and
+                  verification["release"]["variant"] == "prod" and
+                  verification["release"]["version"] == version and
+                  verification["release"]["repository"] == repository,
+                  "Verified build is not the prod variant of this version for this repository.")
+          assets = [str((output / name).resolve()) for name in names]
+          notes = f"Built from https://github.com/{source}/tree/{tag} (commit {sha})."
+          subprocess.run(["gh", "release", "create", tag, *assets, "--repo", repository,
+                          "--target", os.environ["GITHUB_SHA"], "--title", tag, "--notes", notes,
+                          "--draft"], check=True)
+          subprocess.run(["gh", "release", "edit", tag, "--repo", repository,
+                          "--draft=false", "--latest"], check=True)

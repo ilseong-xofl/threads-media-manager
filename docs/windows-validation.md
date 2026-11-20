@@ -151,9 +151,12 @@ python scripts/prepare-windows-runtime.py
 $env:TMM_PYTHON = (Resolve-Path build/runtime/python/python.exe).Path
 $env:PATH = "$(Resolve-Path build/runtime/bin);$env:PATH"
 pnpm check
+$env:TMM_VARIANT = "dev"   # 또는 "prod". 벌을 정하지 않으면 설치용 빌드가 멈춘다(2026-11-20).
 pnpm make --arch=x64
 pnpm verify:windows
 ```
+
+벌을 바꿔 다시 빌드할 때는 먼저 `out/`을 지운다. 검증은 `out/`에 그 벌의 산출물만 있어야 통과한다.
 
 ## 별도로 남는 실제 설치 검증
 

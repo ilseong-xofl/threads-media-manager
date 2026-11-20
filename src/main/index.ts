@@ -91,11 +91,9 @@ const rendererEntry = app.isPackaged
   ? pathToFileURL(join(__dirname, '..', 'renderer', 'main_window', 'index.html')).href
   : MAIN_WINDOW_WEBPACK_ENTRY;
 
-app.setName('Threads Media Manager');
+app.setName(TMM_APP_NAME);
 app.setAppUserModelId(
-  process.platform === 'win32'
-    ? 'com.squirrel.threads_media_manager.ThreadsMediaManager'
-    : 'com.threadsmediamanager.desktop',
+  process.platform === 'win32' ? TMM_APP_USER_MODEL_ID : 'com.threadsmediamanager.desktop',
 );
 const aiContentEnabled = !app.isPackaged;
 const testUserData = !app.isPackaged ? process.env.TMM_USER_DATA : undefined;
@@ -103,7 +101,7 @@ app.setPath(
   'userData',
   testUserData && isAbsolute(testUserData)
     ? testUserData
-    : join(app.getPath('appData'), 'ThreadsMediaManager'),
+    : join(app.getPath('appData'), TMM_USER_DATA_DIR),
 );
 protocol.registerSchemesAsPrivileged([
   {
@@ -353,7 +351,7 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
         title: '데이터베이스 백업 저장',
         defaultPath: join(app.getPath('documents'), fileName),
         buttonLabel: '백업 저장',
-        filters: [{ name: 'Threads Media Manager DB 백업', extensions: ['sqlite'] }],
+        filters: [{ name: `${TMM_DISPLAY_NAME} DB 백업`, extensions: ['sqlite'] }],
         properties: ['createDirectory', 'showOverwriteConfirmation', 'dontAddToRecent'],
         showsTagField: false,
       });
@@ -366,7 +364,7 @@ const maintenance: LibraryMaintenanceController = new LibraryMaintenanceControll
       const choice = await dialog.showOpenDialog(window, {
         title: '데이터베이스 백업 선택',
         buttonLabel: '백업 선택',
-        filters: [{ name: 'Threads Media Manager DB 백업', extensions: ['sqlite'] }],
+        filters: [{ name: `${TMM_DISPLAY_NAME} DB 백업`, extensions: ['sqlite'] }],
         properties: ['openFile', 'dontAddToRecent'],
       });
       return choice.canceled || signal.aborted || !(await serviceAccess.allowed())
@@ -717,7 +715,7 @@ function createWindow(): void {
     minHeight: 650,
     show: false,
     backgroundColor: '#f5f6f8',
-    title: 'Threads Media Manager',
+    title: TMM_DISPLAY_NAME,
     icon: appIconPath,
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -1462,10 +1460,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       });
     })
     .catch(() => {
-      dialog.showErrorBox(
-        'Threads Media Manager',
-        '앱을 시작할 수 없습니다. 개발 환경을 확인하세요.',
-      );
+      dialog.showErrorBox(TMM_DISPLAY_NAME, '앱을 시작할 수 없습니다. 개발 환경을 확인하세요.');
       app.quit();
     });
   app.on('before-quit', (event) => {

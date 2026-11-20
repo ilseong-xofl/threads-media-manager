@@ -1,15 +1,24 @@
 import { DefinePlugin, type Configuration } from 'webpack';
+import { bundleValues } from './scripts/variants.mjs';
 import { createPlugins } from './webpack.plugins';
 import { typescriptRule } from './webpack.rules';
-export const mainConfig: Configuration = {
-  entry: './src/main/index.ts',
-  module: { rules: [typescriptRule] },
-  plugins: [
-    ...createPlugins(),
-    new DefinePlugin({
-      TMM_SERVICE_URL: JSON.stringify(process.env.THREADS_ADMIN_API_URL ?? ''),
-      TMM_GITHUB_REPOSITORY: JSON.stringify(process.env.GITHUB_REPOSITORY ?? ''),
-    }),
-  ],
-  resolve: { extensions: ['.js', '.ts', '.json'] },
+// Forge compiles in production mode only for a packaged build.
+export const mainConfig = (_env: unknown, args: Record<string, unknown>): Configuration => {
+  const values = bundleValues(args.mode === 'production', process.env);
+  return {
+    entry: './src/main/index.ts',
+    module: { rules: [typescriptRule] },
+    plugins: [
+      ...createPlugins(),
+      new DefinePlugin({
+        TMM_DISPLAY_NAME: JSON.stringify(values.displayName),
+        TMM_APP_NAME: JSON.stringify(values.appName),
+        TMM_APP_USER_MODEL_ID: JSON.stringify(values.appUserModelId),
+        TMM_USER_DATA_DIR: JSON.stringify(values.userDataDir),
+        TMM_SERVICE_URL: JSON.stringify(values.serviceUrl),
+        TMM_GITHUB_REPOSITORY: JSON.stringify(values.updateRepository),
+      }),
+    ],
+    resolve: { extensions: ['.js', '.ts', '.json'] },
+  };
 };

@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isLocalRequest, isTrustedFrame } from './security';
+import { selectVariant, variantNames } from '../../scripts/variants.mjs';
 const entry = 'http://localhost:3120/main_window';
 it('allows only this Forge server and registered-shape media URLs', () => {
   expect(isLocalRequest('http://localhost:3120/main_window/index.js', entry)).toBe(true);
@@ -30,9 +31,13 @@ it('requires the exact main frame, sender, and entry for IPC', () => {
   expect(isTrustedFrame(1, 1, true, entry + '/other', entry)).toBe(false);
 });
 
-it.each(['Test', 'Test User', '테스트 #100%'])(
-  'loads only the packaged renderer tree for Windows user %s',
-  (user) => {
+it.each(
+  ['Test', 'Test User', '테스트 #100%'].flatMap((user) =>
+    variantNames.map((name) => [user, selectVariant(name).squirrelName]),
+  ),
+)(
+  'loads only the packaged renderer tree for Windows user %s in the %s install folder',
+  (user, installFolder) => {
     const packagedEntry = pathToFileURL(
       win32.join(
         'C:',
@@ -40,7 +45,7 @@ it.each(['Test', 'Test User', '테스트 #100%'])(
         user,
         'AppData',
         'Local',
-        'threads_media_manager',
+        installFolder,
         'app-0.1.1',
         'resources',
         'app.asar',

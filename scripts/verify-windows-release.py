@@ -8,15 +8,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import mmap
 from pathlib import Path, PurePosixPath
 import re
 import struct
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 
-APP_ID = "threads_media_manager"
-SETUP_NAME = "ThreadsMediaManager-win32-x64-Setup.exe"
-EXE_NAME = "ThreadsMediaManager.exe"
+VARIANTS_PATH = Path(__file__).resolve().parents[1] / "variants.json"
 ASAR_NAME = "lib/net45/resources/app.asar"
 FORBIDDEN_NAMES = {
     "auth.json", "credentials.json", "threads-account.json", "file-server.json",
@@ -28,6 +27,19 @@ FORBIDDEN_NAMES = {
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def load_variants():
+    return json.loads(VARIANTS_PATH.read_text(encoding="utf-8"))
+
+
+def has_name(text, value):
+    """Whole-name search: the dev update repository is the start of the prod one."""
+    return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(value)}(?![A-Za-z0-9_.-])", text) is not None
+
+
+def has_literal(text, value):
+    return any(f"{quote}{value}{quote}" in text for quote in "\"'`")
 
 
 def safe_name(name):
@@ -81,16 +93,24 @@ def asar_read(stream, files, content_start, name, limit=32 * 1024 * 1024):
     return result
 
 
-def verify_release(output, version, repository, service_url=None):
+def verify_release(output, version, variant_name, variants=None):
+    """Every expected name, the service and the update repository come from variants.json."""
+    variants = load_variants() if variants is None else variants
+    require(variant_name in variants, f"Unknown build variant: {variant_name!r}")
+    variant = variants[variant_name]
+    others = [value for name, value in variants.items() if name != variant_name]
+    app_id, setup_name = variant["squirrelName"], variant["setupExe"]
+    exe_name = f"{variant['executableName']}.exe"
+    repository, service_url = variant["updateRepository"], variant["serviceUrl"]
     require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version),
             "Windows public releases require a stable major.minor.patch version")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository),
             "Expected GitHub owner/repository")
-    require(service_url is None or re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/?", service_url),
+    require(re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", service_url),
             "Service URL must be an HTTPS origin")
     output = Path(output)
-    package_name = f"{APP_ID}-{version}-full.nupkg"
-    required = {SETUP_NAME, "RELEASES", package_name}
+    package_name = f"{app_id}-{version}-full.nupkg"
+    required = {setup_name, "RELEASES", package_name}
     names = {entry.name for entry in output.iterdir()}
     require(required <= names, "Missing Windows installer, RELEASES or versioned full package")
     require(names <= required | {"SHA256SUMS.txt", "verification.json"},
@@ -98,8 +118,15 @@ def verify_release(output, version, repository, service_url=None):
     for name in names:
         path = output / name
         require(path.is_file() and not path.is_symlink(), f"Invalid artifact: {name}")
-    with (output / SETUP_NAME).open("rb") as setup:
+    with (output / setup_name).open("rb") as setup:
         require(setup.read(2) == b"MZ", "Windows setup is not a PE executable")
+        # Squirrel stores the full package in Setup.exe under its file name.
+        with mmap.mmap(setup.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            require(data.find(package_name.encode()) != -1,
+                    "Windows setup does not carry this variant's full package")
+            for other in others:
+                require(data.find(f"{other['squirrelName']}-{version}-full.nupkg".encode()) == -1,
+                        "Windows setup carries another variant's package")
     lines = (output / "RELEASES").read_text(encoding="utf-8-sig").splitlines()
     require(len(lines) == 1, "RELEASES must contain exactly the current full package")
     fields = lines[0].split()
@@ -116,33 +143,49 @@ def verify_release(output, version, repository, service_url=None):
         names = [safe_name(entry.filename) for entry in archive.infolist()]
         require(len(names) == len(set(names)), "Duplicate NuGet archive entries")
         nuspecs = [name for name in names if name.endswith(".nuspec")]
-        require(nuspecs == [f"{APP_ID}.nuspec"], "Unexpected NuGet application ID")
+        require(nuspecs == [f"{app_id}.nuspec"], "Unexpected NuGet application ID")
         metadata = ET.fromstring(archive.read(nuspecs[0])).find("{*}metadata")
         require(metadata is not None, "Missing NuGet metadata")
-        require(metadata.findtext("{*}id") == APP_ID, "NuGet application ID mismatch")
+        require(metadata.findtext("{*}id") == app_id, "NuGet application ID mismatch")
         require(metadata.findtext("{*}version") == version, "NuGet version mismatch")
-        require(f"lib/net45/{EXE_NAME}" in names and ASAR_NAME in names,
+        # Windows lists the installed program under this title and publisher.
+        require(metadata.findtext("{*}title") == variant["productName"] and
+                metadata.findtext("{*}authors") == variant["companyName"],
+                "NuGet title or authors belong to another variant")
+        require(f"lib/net45/{exe_name}" in names and ASAR_NAME in names,
                 "Missing Windows application or app.asar")
-        with archive.open(f"lib/net45/{EXE_NAME}") as executable:
-            require(executable.read(2) == b"MZ", "Shipped app is not a Windows executable")
-            executable.seek(0x3C)
-            pointer = executable.read(4)
-            require(len(pointer) == 4, "Missing PE header offset")
-            executable.seek(struct.unpack("<I", pointer)[0])
-            require(executable.read(6) == b"PE\x00\x00\x64\x86",
-                    "Shipped app must be a Windows x64 executable")
+        require(not any(f"lib/net45/{other['executableName']}.exe" in names for other in others),
+                "Package carries another variant's application")
+        binary = archive.read(f"lib/net45/{exe_name}")
+        require(binary[:2] == b"MZ", "Shipped app is not a Windows executable")
+        pointer = binary[0x3C:0x40]
+        require(len(pointer) == 4, "Missing PE header offset")
+        offset = struct.unpack("<I", pointer)[0]
+        require(binary[offset:offset + 6] == b"PE\x00\x00\x64\x86",
+                "Shipped app must be a Windows x64 executable")
+        # The version resource names the product (UTF-16). A dev executable renamed into a prod
+        # package, or the reverse, would install under the wrong program name.
+        require(variant["productName"].encode("utf-16-le") in binary,
+                "Shipped app does not carry this variant's product name")
+        require(not any(other["productName"].encode("utf-16-le") in binary for other in others),
+                "Shipped app carries another variant's product name")
         with archive.open(ASAR_NAME) as stream:
             files, content_start = asar_files(stream)
             metadata = json.loads(asar_read(stream, files, content_start, "package.json"))
             require(metadata.get("name") == "threads-media-manager", "Shipped package name mismatch")
             require(metadata.get("version") == version, "Shipped package version mismatch")
             main = asar_read(stream, files, content_start, ".webpack/main/index.js").decode("utf-8")
-            require(repository in main and "update.electronjs.org" in main,
+            require(has_literal(main, repository) and "update.electronjs.org" in main,
                     "Shipped updater does not contain the intended public GitHub feed")
-            # The app locks without its service, so record the origin baked in at build time.
-            require(service_url is None or service_url in main,
+            # The app locks without its service, so the origin must be exactly this variant's.
+            require(has_literal(main, service_url),
                     "Shipped app does not contain the intended service URL")
-    return {"version": version, "appId": APP_ID, "platform": "win32-x64",
+            for other in others:
+                require(not has_name(main, other["updateRepository"]),
+                        "Shipped app contains another variant's update repository")
+                require(not has_name(main, other["serviceUrl"]),
+                        "Shipped app contains another variant's service URL")
+    return {"variant": variant_name, "version": version, "appId": app_id, "platform": "win32-x64",
             "repository": repository, "feed": f"https://update.electronjs.org/{repository}/win32-x64/{version}",
             "serviceUrl": service_url,
             "fullPackage": package_name, "feedIntegrity": "passed", "privateFileNames": "absent",
@@ -153,12 +196,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default="out/make/squirrel.windows/x64")
     parser.add_argument("--package", default="package.json")
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--service-url", default="")
+    parser.add_argument("--variant", required=True)
     args = parser.parse_args()
     metadata = json.loads(Path(args.package).read_text(encoding="utf-8"))
-    print(json.dumps(verify_release(args.output, metadata["version"], args.repository,
-                                    args.service_url or None)))
+    print(json.dumps(verify_release(args.output, metadata["version"], args.variant)))
 
 
 if __name__ == "__main__":

@@ -152,7 +152,7 @@ export function AuthenticationGate() {
       >
         <main className="service-auth-screen">
           <section className="service-auth-card" aria-label="서비스 로그인">
-            <p className="service-auth-brand">Threads Media Manager</p>
+            <p className="service-auth-brand">{TMM_DISPLAY_NAME}</p>
             {!state ? (
               <p role="status">서비스 연결 확인 중…</p>
             ) : passwordRequired || changing ? (

@@ -15,11 +15,17 @@ concurrency:
 
 jobs:
   quality:
-    name: Check (${{ matrix.os }})
+    name: Check (${{ matrix.variant && format('{0}, {1}', matrix.os, matrix.variant) || matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-2022]
+        # One Windows job per build variant (variants.json): two builds in one job would share out/.
+        include:
+          - os: macos-latest
+          - os: windows-2022
+            variant: dev
+          - os: windows-2022
+            variant: prod
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
@@ -62,21 +68,21 @@ jobs:
         if: runner.os == 'Windows'
         continue-on-error: true
         env:
-          # The packaged app locks until it reaches this service; unset builds are not releasable.
-          THREADS_ADMIN_API_URL: ${{ vars.THREADS_ADMIN_API_URL }}
+          # Names, service and update repository all come from variants.json for this variant.
+          TMM_VARIANT: ${{ matrix.variant }}
         run: pnpm make --arch=x64
       - name: Verify packaged runtime and installer outputs
         id: packaged_runtime
         if: runner.os == 'Windows' && steps.package.outcome == 'success'
         continue-on-error: true
         env:
-          THREADS_ADMIN_API_URL: ${{ vars.THREADS_ADMIN_API_URL }}
+          TMM_VARIANT: ${{ matrix.variant }}
         run: pnpm verify:windows
       - name: Save packaged Windows UI evidence
         if: runner.os == 'Windows' && always()
         uses: actions/upload-artifact@v7
         with:
-          name: threads-media-manager-windows-ui-${{ github.sha }}
+          name: threads-media-manager-windows-ui-${{ matrix.variant }}-${{ github.sha }}
           path: out/windows-ui-smoke.png
           if-no-files-found: ignore
           retention-days: 14
@@ -98,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: runner.os == 'Windows'
         with:
-          name: threads-media-manager-windows-candidate-${{ github.sha }}
+          name: threads-media-manager-windows-candidate-${{ matrix.variant }}-${{ github.sha }}
           path: out/make/squirrel.windows/x64/
           if-no-files-found: error
           retention-days: 14

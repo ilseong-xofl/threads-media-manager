@@ -4,7 +4,7 @@ Codex 플러그인으로 Threads 게시글 정보를 수집하고, Electron 앱�
 
 **2026-09-29 기능 개발 완료:** Threads 계정·파일 서버 연결, 게시글·텍스트 댓글 API 업로드, 최신 5개 게시글 통계, 수집·등록 독립 삭제와 영상 음소거를 구현했다. Mac에서 실제 영상·이미지 혼합 게시글 1건과 직접 답글 1건의 등록, 통계 수신을 확인했다. 전체 검증 결과와 남은 Windows 설치·자동 업데이트 작업은 [최신 체크포인트](docs/checkpoint-2026-09-29.md)에 정리한다.
 
-저장소 대상은 공개 `ilseong-xofl/threads-media-manager`다. local-video-manager와 같이 소스와 Releases를 같은 공개 저장소에서 관리하고, 0.1.1부터 Windows 설치 앱에서 실행 후 업데이트 확인·백그라운드 다운로드·나중에/지금 재시작 선택을 제공한다. Windows 설치 후보는 GitHub Actions에서 런타임을 포함해 생성·검사한다. [0.1.7 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.7/ThreadsMediaManager-win32-x64-Setup.exe)은 Windows 브라우저에서 직접 받는다. [자동 업데이트와 Release 계약](docs/windows-release.md)을 따른다. [Windows 자동 검증과 잔여 실기 항목](docs/windows-validation.md)을 따른다.
+저장소 대상은 공개 `ilseong-xofl/threads-media-manager`다. local-video-manager와 같이 소스와 Releases를 같은 공개 저장소에서 관리하고, 0.1.1부터 Windows 설치 앱에서 실행 후 업데이트 확인·백그라운드 다운로드·나중에/지금 재시작 선택을 제공한다. Windows 설치 후보는 GitHub Actions에서 런타임을 포함해 생성·검사한다. [0.1.7 설치 파일](https://github.com/ilseong-xofl/threads-media-manager/releases/download/v0.1.7/ThreadsMediaManager-win32-x64-Setup.exe)은 Windows 브라우저에서 직접 받는다. 2026-11-20부터 같은 소스에서 개발용(`dev`, 이 저장소에 릴리스, 화면 이름 "(개발) ILS 소셜(T) 관리")과 운영용(`prod`, `ilseong-xofl/threads-media-manager-prod`에 릴리스, "ILS 소셜(T) 관리") 두 벌을 빌드한다. 벌은 `TMM_VARIANT`로 고르고 값은 `variants.json`에 있다. 위 설치 파일과 이 저장소의 Releases는 개발용이며, 운영용은 아직 릴리스하지 않았다. [자동 업데이트와 Release 계약](docs/windows-release.md)을 따른다. [Windows 자동 검증과 잔여 실기 항목](docs/windows-validation.md)을 따른다.
 
 ## 역할과 데이터
 

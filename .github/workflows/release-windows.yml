@@ -1,5 +1,7 @@
 name: Release Windows
 
+# Publishes the dev variant (variants.json) here. The prod variant is released from its own
+# repository by distribution/prod-release/release.yml.
 on:
   push:
     tags: ['v*']
@@ -63,6 +65,9 @@ jobs:
           require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version),
                   "Public Windows releases require a stable major.minor.patch version.")
           require(tag == f"v{version}", "Requested tag does not match the tagged package version.")
+          variant = json.loads(Path("variants.json").read_text(encoding="utf-8"))["dev"]
+          require(variant["updateRepository"] == repository,
+                  "Installed dev apps update from another repository; publish the dev variant there.")
           sha = command("git", "rev-parse", "HEAD")
           require(command("git", "rev-parse", f"refs/tags/{tag}^{{commit}}") == sha,
                   "Checkout does not match the existing version tag.")
@@ -101,11 +106,11 @@ jobs:
               require(matches, "No successful CI for this exact commit. Run CI first; release never rebuilds.")
               selected = max(matches, key=lambda run: (run["run_number"], run.get("run_attempt", 1)))
           run_id = selected["id"]
-          artifact_name = f"threads-media-manager-windows-candidate-{sha}"
+          artifact_name = f"threads-media-manager-windows-candidate-dev-{sha}"
           artifacts = api(f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100")
           matches = [item for item in artifacts["artifacts"] if item["name"] == artifact_name]
           require(len(matches) == 1 and not matches[0]["expired"],
-                  "Expected exactly one non-expired Windows candidate artifact from the verified CI run.")
+                  "Expected exactly one non-expired dev Windows candidate artifact from the verified CI run.")
           require(matches[0].get("workflow_run", {}).get("head_sha", sha) == sha,
                   "Artifact source commit differs from the version tag.")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -145,8 +150,9 @@ jobs:
 
           version = os.environ["RELEASE_VERSION"]
           output = Path("candidate")
-          package = f"threads_media_manager-{version}-full.nupkg"
-          payloads = {"ThreadsMediaManager-win32-x64-Setup.exe", "RELEASES", package}
+          variant = json.loads(Path("variants.json").read_text(encoding="utf-8"))["dev"]
+          package = f"{variant['squirrelName']}-{version}-full.nupkg"
+          payloads = {variant["setupExe"], "RELEASES", package}
           expected = payloads | {"SHA256SUMS.txt", "verification.json"}
           require({entry.name for entry in output.iterdir()} == expected,
                   "Candidate must contain exactly the five expected release assets.")
@@ -165,6 +171,8 @@ jobs:
           require(checked == payloads, "Missing candidate payload checksum.")
           verification = json.loads((output / "verification.json").read_text(encoding="utf-8"))
           require(verification["commit"] == os.environ["SOURCE_SHA"], "Candidate verification commit mismatch.")
+          require(verification.get("variant") == "dev" and verification["release"].get("variant") == "dev",
+                  "Only a dev variant candidate is published from this repository.")
           require(verification["installerCreated"] is True, "CI did not verify an installer.")
           require(all(verification.get("ui", {}).get(field) is True for field in
                       ("packagedAppLaunched", "rendererReady", "preloadReady", "ipcReady")),
@@ -172,15 +180,15 @@ jobs:
           require(verification["release"]["version"] == version and
                   verification["release"]["repository"] == os.environ["GITHUB_REPOSITORY"],
                   "Candidate release metadata mismatch.")
-          # Installed apps lock until they reach the service, so never publish a build without it.
-          service_url = verification["release"].get("serviceUrl")
-          require(service_url, "Candidate has no service URL. Set the THREADS_ADMIN_API_URL "
-                  "repository variable and pass CI again before publishing.")
+          # Checks the package, Setup.exe, service and update repository against the dev variant.
           spec = importlib.util.spec_from_file_location("release_check", "scripts/verify-windows-release.py")
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
-          print(json.dumps(module.verify_release(output, version, os.environ["GITHUB_REPOSITORY"],
-                                                 service_url)))
+          report = module.verify_release(output, version, "dev")
+          require(report["repository"] == os.environ["GITHUB_REPOSITORY"] and
+                  report["serviceUrl"] == verification["release"].get("serviceUrl"),
+                  "Candidate does not update from this repository or changed its service URL.")
+          print(json.dumps(report))
       - name: Publish the existing candidate without rebuilding
         shell: python
         env:
@@ -188,14 +196,16 @@ jobs:
           RELEASE_TAG: ${{ steps.source.outputs.tag }}
           RELEASE_VERSION: ${{ steps.source.outputs.version }}
         run: |
+          import json
           import os
           from pathlib import Path
           import subprocess
           tag = os.environ["RELEASE_TAG"]
           version = os.environ["RELEASE_VERSION"]
           repository = os.environ["GITHUB_REPOSITORY"]
-          names = ["ThreadsMediaManager-win32-x64-Setup.exe", "RELEASES",
-                   f"threads_media_manager-{version}-full.nupkg", "SHA256SUMS.txt", "verification.json"]
+          variant = json.loads(Path("variants.json").read_text(encoding="utf-8"))["dev"]
+          names = [variant["setupExe"], "RELEASES",
+                   f"{variant['squirrelName']}-{version}-full.nupkg", "SHA256SUMS.txt", "verification.json"]
           assets = [str(Path("candidate", name).resolve()) for name in names]
           subprocess.run(["gh", "release", "create", tag, *assets, "--repo", repository,
                           "--verify-tag", "--generate-notes", "--draft"], check=True)

@@ -827,7 +827,7 @@ export function App({
             <span className="brand-mark">
               <Icon name="grid" />
             </span>
-            <h1>Threads Media Manager</h1>
+            <h1>{TMM_DISPLAY_NAME}</h1>
           </div>
           <div className="actions">
             {mode === 'collection' && (
@@ -1230,7 +1230,7 @@ export function App({
         )}
       </main>
       <footer>
-        <span>Threads Media Manager</span>
+        <span>{TMM_DISPLAY_NAME}</span>
         <span>내 컴퓨터에 저장된 자료</span>
       </footer>
       {detail && !registrationPost && !contentPost && (

@@ -10,13 +10,29 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
 import runtimeManifest from './scripts/windows-runtime.json';
+import { selectVariant, variantNames } from './scripts/variants.mjs';
 import packageMetadata from './package.json';
+
+// `pnpm start` never reads the packaging names below, so it runs without TMM_VARIANT.
+// Packaging without a valid TMM_VARIANT stops in the prePackage and preMake hooks.
+const variant = selectVariant(
+  variantNames.includes(process.env.TMM_VARIANT ?? '') ? process.env.TMM_VARIANT : 'dev',
+);
+const requireVariant = async () => {
+  selectVariant(process.env.TMM_VARIANT);
+};
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     appBundleId: 'com.threadsmediamanager.desktop',
-    executableName: 'ThreadsMediaManager',
+    name: variant.packageName,
+    executableName: variant.executableName,
+    win32metadata: {
+      CompanyName: variant.companyName,
+      FileDescription: variant.productName,
+      ProductName: variant.productName,
+    },
     icon: join(__dirname, 'assets', 'app-icon.ico'),
     extraResource: [
       join(__dirname, 'assets', 'app-icon.png'),
@@ -32,7 +48,9 @@ const config: ForgeConfig = {
           process.arch,
         ]);
     },
+    preMake: requireVariant,
     prePackage: async (_config, platform, arch) => {
+      await requireVariant();
       if (platform !== 'win32' || arch !== 'x64')
         throw new Error('Only Windows x64 distribution is supported.');
       for (const file of [
@@ -46,8 +64,10 @@ const config: ForgeConfig = {
   },
   makers: [
     new MakerSquirrel({
-      name: 'threads_media_manager',
-      setupExe: 'ThreadsMediaManager-win32-x64-Setup.exe',
+      name: variant.squirrelName,
+      title: variant.productName,
+      authors: variant.companyName,
+      setupExe: variant.setupExe,
       setupIcon: join(__dirname, 'assets', 'app-icon.ico'),
       iconUrl: `https://raw.githubusercontent.com/ilseong-xofl/threads-media-manager/v${packageMetadata.version}/assets/app-icon.ico`,
     }),

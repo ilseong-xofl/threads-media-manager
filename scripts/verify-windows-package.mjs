@@ -4,14 +4,21 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { selectVariant } from './variants.mjs';
 
 assert.equal(process.platform, 'win32', 'Run this verification on Windows.');
+// Verify against the variant this run was asked to build, never against whatever is in out/.
+const variant = selectVariant(process.env.TMM_VARIANT);
 const packages = (await readdir('out')).filter((name) => name.endsWith('-win32-x64'));
-assert.equal(packages.length, 1, 'Expected one Windows app package.');
+assert.deepEqual(
+  packages,
+  [`${variant.packageName}-win32-x64`],
+  `Expected only the ${variant.name} Windows app package.`,
+);
 const app = resolve('out', packages[0]);
 const runtime = join(app, 'resources/runtime');
 for (const relative of [
-  'ThreadsMediaManager.exe',
+  `${variant.executableName}.exe`,
   'resources/app.asar',
   'resources/runtime/runtime-manifest.json',
   'resources/runtime/python/LICENSE.txt',
@@ -120,8 +127,7 @@ try {
   await rm(isolatedRoot, { recursive: true, force: true });
 }
 const output = resolve('out/make/squirrel.windows/x64');
-for (const name of ['ThreadsMediaManager-win32-x64-Setup.exe', 'RELEASES'])
-  await access(join(output, name));
+for (const name of [variant.setupExe, 'RELEASES']) await access(join(output, name));
 const release = JSON.parse(
   execFileSync(
     join(runtime, 'python/python.exe'),
@@ -131,11 +137,8 @@ const release = JSON.parse(
       'utf8',
       '-B',
       resolve('scripts/verify-windows-release.py'),
-      '--repository',
-      process.env.GITHUB_REPOSITORY ?? '',
-      // Empty in ordinary CI; the release workflow refuses a build without it.
-      '--service-url',
-      process.env.THREADS_ADMIN_API_URL ?? '',
+      '--variant',
+      variant.name,
     ],
     { env, encoding: 'utf8', timeout: 90_000, windowsHide: true },
   ),
@@ -167,7 +170,9 @@ await writeFile(
   join(output, 'verification.json'),
   JSON.stringify(
     {
-      commit: process.env.GITHUB_SHA ?? null,
+      variant: variant.name,
+      // The production release builds this source from another repository's workflow.
+      commit: process.env.TMM_SOURCE_COMMIT || process.env.GITHUB_SHA || null,
       icons: iconVerification,
       runtime: JSON.parse(result),
       codex: codexVerification,

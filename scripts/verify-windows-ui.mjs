@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { otherVariants, selectVariant } from './variants.mjs';
 
 // This launches the packaged app, not the Squirrel Setup installer.
 // Electron supports --remote-debugging-port; its --user-data-dir handling is in
@@ -156,16 +157,19 @@ try {
     !isAbsolute(process.env.SystemRoot ?? '')
   )
     throw new Error('disposable_windows_ci_required');
+  stage = 'variant';
+  const variant = selectVariant(process.env.TMM_VARIANT);
   stage = 'package';
   const packages = (await readdir('out', { withFileTypes: true })).filter(
     (entry) => entry.isDirectory() && entry.name.endsWith('-win32-x64'),
   );
-  if (packages.length !== 1) throw new Error('one_windows_package_required');
-  const executable = resolve('out', packages[0].name, 'ThreadsMediaManager.exe');
+  if (packages.length !== 1 || packages[0].name !== `${variant.packageName}-win32-x64`)
+    throw new Error('one_windows_package_required');
+  const executable = resolve('out', packages[0].name, `${variant.executableName}.exe`);
   await access(executable);
 
   stage = 'fresh_user_data';
-  userData = join(process.env.APPDATA, 'ThreadsMediaManager');
+  userData = join(process.env.APPDATA, variant.userDataDir);
   try {
     await lstat(userData);
     throw new Error('existing_app_data');
@@ -267,7 +271,8 @@ try {
       const brand = card?.querySelector('.service-auth-brand');
       const heading = card?.querySelector('h1');
       return visible(card) && visible(heading) && root.childElementCount > 0 &&
-        brand?.textContent.trim() === 'Threads Media Manager';
+        brand?.textContent.trim() === ${JSON.stringify(variant.displayName)} &&
+        document.title === ${JSON.stringify(variant.displayName)};
     })()`);
     if (!ready) await delay(150);
   }
@@ -296,6 +301,19 @@ try {
   if (png.length < 100 || png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a')
     throw new Error('invalid_screenshot');
   await writeFile(resolve('out/windows-ui-smoke.png'), png);
+
+  stage = 'user_data';
+  // The app must have written to this variant's own data folder and to no other variant's:
+  // two installed variants sharing one folder would share logins and the single-instance lock.
+  if ((await readdir(userData)).length === 0) throw new Error('app_data_unused');
+  for (const other of otherVariants(variant.name)) {
+    try {
+      await lstat(join(process.env.APPDATA, other.userDataDir));
+      throw new Error('other_variant_app_data');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
   success = {
     packagedAppLaunched: true,
     rendererReady: true,

@@ -40,9 +40,12 @@ TMM_PYTHON="/path/to/python3-with-existing-test-dependencies" pnpm check
 | 앱 ID | com.threadsmediamanager.desktop |
 | 실행 파일명 | ThreadsMediaManager |
 | userData | OS appData 아래 ThreadsMediaManager |
+| 화면 안의 이름 | (개발) ILS 소셜(T) 관리 |
 | preload API | window.threadsMedia.current / chooseFolder / refresh |
 | 미디어 protocol | threads-media |
 | 개발 서버 / 로그 서버 | localhost:3120 / localhost:9120 |
+
+위 값은 개발용(`dev`)과 포장하지 않은 실행(`pnpm start`)의 값이다. 2026-11-20부터 설치용 빌드는 `TMM_VARIANT=dev|prod`로 두 벌을 만들며 벌마다 다른 값은 `variants.json`에 있다. 운영용(`prod`)은 앱 이름·화면 이름 ILS 소셜(T) 관리, 실행 파일명 IlsSocialManager, userData IlsSocialManager, Windows 설치 식별자 ils_social_manager다(개발용은 threads_media_manager). package 이름·Mac 앱 ID·preload API·미디어 protocol은 두 벌이 같다. 전체 표는 [Windows Release 문서](windows-release.md).
 
 local-video-manager에서 직접 확인한 Electron 43.3.0, Forge 7.11.2, Webpack 5.109.2, React/ReactDOM 19.2.8, TypeScript 5.9.3, Vitest 4.1.10과 hoisted pnpm 환경을 고정했다. macOS polling watcher와 로컬 파일 range 응답 구조를 재사용했다. 기존 main, 로그인, 토큰, 기존 앱 SQLite, service client, updater, Google Fonts, GitHub/service 주소 주입은 가져오지 않았다.
 
