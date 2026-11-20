@@ -42,6 +42,16 @@ def has_literal(text, value):
     return any(f"{quote}{value}{quote}" in text for quote in "\"'`")
 
 
+def has_version_string(binary, key, value):
+    """Whole entry of the version resource (UTF-16): key, terminator and padding, then the value.
+
+    One variant's product name is part of the other's and equals its company name, so a search
+    for the bare name would find it in both executables.
+    """
+    return re.search(re.escape(key.encode("utf-16-le")) + rb"(?:\x00\x00)+" +
+                     re.escape(value.encode("utf-16-le")) + rb"\x00\x00", binary) is not None
+
+
 def safe_name(name):
     normalized = name.replace("\\", "/")
     path = PurePosixPath(normalized)
@@ -163,11 +173,12 @@ def verify_release(output, version, variant_name, variants=None):
         offset = struct.unpack("<I", pointer)[0]
         require(binary[offset:offset + 6] == b"PE\x00\x00\x64\x86",
                 "Shipped app must be a Windows x64 executable")
-        # The version resource names the product (UTF-16). A dev executable renamed into a prod
+        # The version resource names the product. A dev executable renamed into a prod
         # package, or the reverse, would install under the wrong program name.
-        require(variant["productName"].encode("utf-16-le") in binary,
+        require(has_version_string(binary, "ProductName", variant["productName"]),
                 "Shipped app does not carry this variant's product name")
-        require(not any(other["productName"].encode("utf-16-le") in binary for other in others),
+        require(not any(has_version_string(binary, "ProductName", other["productName"])
+                        for other in others),
                 "Shipped app carries another variant's product name")
         with archive.open(ASAR_NAME) as stream:
             files, content_start = asar_files(stream)

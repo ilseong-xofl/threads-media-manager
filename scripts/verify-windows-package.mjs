@@ -27,7 +27,7 @@ for (const relative of [
 ])
   await access(join(app, relative));
 const iconVerification = [];
-for (const name of ['app-icon.png', 'app-icon.ico']) {
+for (const name of [`${variant.icon}.png`, `${variant.icon}.ico`]) {
   const sourceHash = createHash('sha256')
     .update(await readFile(resolve('assets', name)))
     .digest('hex');

@@ -31,6 +31,7 @@ import { DraftNotes } from './draft-notes';
 import { createMetaTokenClient } from './meta-token-client';
 import { MetaTokenLog } from './meta-token-log';
 import squirrelStartup from 'electron-squirrel-startup';
+import { removeFormerShortcuts } from './former-shortcuts';
 import { configureRuntime } from './runtime';
 import { configureAutoUpdates } from './updates';
 import { homedir } from 'node:os';
@@ -85,7 +86,7 @@ import { readLibraryPublications, saveLibraryPublications } from './library-publ
 const runtimeRoot = configureRuntime(app.isPackaged, app.getAppPath(), process.resourcesPath);
 const appIconPath = join(
   app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'assets'),
-  process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png',
+  `${TMM_ICON}.${process.platform === 'win32' ? 'ico' : 'png'}`,
 );
 const rendererEntry = app.isPackaged
   ? pathToFileURL(join(__dirname, '..', 'renderer', 'main_window', 'index.html')).href
@@ -801,6 +802,9 @@ function createWindow(): void {
   void window.loadURL(rendererEntry);
 }
 
+// An update that renamed the app leaves the shortcuts of its former name behind.
+if (process.platform === 'win32')
+  removeFormerShortcuts(process.argv[1], TMM_FORMER_SHORTCUTS, (name) => app.getPath(name));
 if (squirrelStartup || !app.requestSingleInstanceLock()) {
   app.quit();
 } else {

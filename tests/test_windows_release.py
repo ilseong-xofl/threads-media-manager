@@ -30,13 +30,14 @@ def asar(contents):
     return struct.pack("<II", 4, len(pickle_header)) + pickle_header + payload
 
 
-def executable_x64(product=""):
+def executable_x64(product="", company=""):
     binary = bytearray(134)
     binary[:2] = b"MZ"
     binary[0x3C:0x40] = struct.pack("<I", 128)
     binary[128:] = b"PE\x00\x00\x64\x86"
-    # Windows keeps the product name in the version resource as UTF-16.
-    return bytes(binary) + product.encode("utf-16-le")
+    # Windows keeps these in the version resource as UTF-16: key, terminator, padding, value.
+    return bytes(binary) + (f"CompanyName\0\0{company}\0"
+                            f"ProductName\0\0{product}\0").encode("utf-16-le")
 
 
 VARIANTS = release.load_variants()
@@ -80,7 +81,8 @@ class WindowsReleaseTests(unittest.TestCase):
                 <authors>{authors or self.variant["companyName"]}</authors>
                 </metadata></package>""")
             archive.writestr(f"lib/net45/{self.variant['executableName']}.exe",
-                             executable_x64(executable_product or self.variant["productName"]))
+                             executable_x64(executable_product or self.variant["productName"],
+                                            self.variant["companyName"]))
             archive.writestr(release.ASAR_NAME, asar(self.contents))
             for name, data in (extra or {}).items():
                 archive.writestr(name, data)
@@ -171,10 +173,21 @@ class WindowsReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "product name"):
             self.verify()
 
-    def test_rejects_the_other_variants_installed_program_name(self):
-        for field in ["title", "authors"]:
+    def test_tells_the_product_name_from_the_shared_company_name(self):
+        # Both variants install under the company name that is also the prod product name,
+        # and the dev product name ends with it.
+        self.assertEqual(VARIANTS["dev"]["companyName"], VARIANTS["prod"]["productName"])
+        self.assertTrue(VARIANTS["dev"]["productName"].endswith(VARIANTS["prod"]["productName"]))
+        binary = executable_x64(self.variant["productName"], self.variant["companyName"])
+        self.assertTrue(release.has_version_string(binary, "ProductName", self.variant["productName"]))
+        self.assertFalse(release.has_version_string(binary, "ProductName", self.other["productName"]))
+
+    def test_rejects_another_installed_program_name_or_publisher(self):
+        # The two variants share the publisher, so the wrong one is the former dev name.
+        former = VARIANTS["dev"]["formerShortcuts"][0]["companyName"]
+        for field, value in [("title", self.other["productName"]), ("authors", former)]:
             with self.subTest(field=field):
-                self.build(**{field: self.other["productName"]})
+                self.build(**{field: value})
                 with self.assertRaisesRegex(ValueError, "title or authors"):
                     self.verify()
 
@@ -267,8 +280,8 @@ class WindowsReleaseTests(unittest.TestCase):
         original = globals()["executable_x64"]
         try:
             # Machine field of the PE header (offset 132): x86 instead of x64.
-            globals()["executable_x64"] = lambda product="": (
-                original(product)[:132] + b"\x4c\x01" + original(product)[134:])
+            globals()["executable_x64"] = lambda *names: (
+                original(*names)[:132] + b"\x4c\x01" + original(*names)[134:])
             self.build()
         finally:
             globals()["executable_x64"] = original

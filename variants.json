@@ -1,8 +1,13 @@
 {
   "dev": {
     "displayName": "(개발) ILS 소셜(T) 관리",
-    "productName": "Threads Media Manager",
-    "companyName": "Threads Media Manager",
+    "productName": "(개발) ILS 소셜(T) 관리",
+    "companyName": "ILS 소셜(T) 관리",
+    "icon": "app-icon-dev",
+    "formerShortcuts": [
+      { "companyName": "Threads Media Manager", "productName": "Threads Media Manager" }
+    ],
+    "appName": "Threads Media Manager",
     "packageName": "Threads Media Manager",
     "executableName": "ThreadsMediaManager",
     "squirrelName": "threads_media_manager",
@@ -16,6 +21,9 @@
     "displayName": "ILS 소셜(T) 관리",
     "productName": "ILS 소셜(T) 관리",
     "companyName": "ILS 소셜(T) 관리",
+    "icon": "app-icon",
+    "formerShortcuts": [],
+    "appName": "ILS 소셜(T) 관리",
     "packageName": "IlsSocialManager",
     "executableName": "IlsSocialManager",
     "squirrelName": "ils_social_manager",

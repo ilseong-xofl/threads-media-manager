@@ -2,9 +2,16 @@ export interface Variant {
   name: string;
   /** Shown inside the app: window title, sign-in brand, header and footer. */
   displayName: string;
-  /** Start menu and installed-programs name; also the executable's ProductName. */
+  /** Start menu shortcut and installed-programs name; also the executable's ProductName. */
   productName: string;
+  /** Start menu folder and publisher; also the executable's CompanyName. */
   companyName: string;
+  /** Icon file name in `assets` without its extension (`.ico` and `.png`). */
+  icon: string;
+  /** Company and product names of earlier releases, whose shortcuts an update removes. */
+  formerShortcuts: { companyName: string; productName: string }[];
+  /** Electron app name (`app.setName`). The macOS keychain entry of safeStorage is named by it. */
+  appName: string;
   /** Packager name: the `out/<packageName>-win32-x64` folder. */
   packageName: string;
   executableName: string;
@@ -20,6 +27,8 @@ export interface Variant {
 export interface BundleValues {
   displayName: string;
   appName: string;
+  icon: string;
+  formerShortcuts: { companyName: string; productName: string }[];
   appUserModelId: string;
   userDataDir: string;
   serviceUrl: string;

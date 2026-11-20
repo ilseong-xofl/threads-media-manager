@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { serviceBaseUrl } from '../main/service-api';
 import {
@@ -7,12 +9,11 @@ import {
   variantNames,
 } from '../../scripts/variants.mjs';
 
-// Installed dev copies update in place only while every one of these stays exactly as released.
+// Never change these: installed dev copies find their updates, their install folder and their
+// data through them. appName names the macOS keychain entry that decrypts an unpackaged run's
+// stored files.
 const releasedDevIdentity = {
-  name: 'dev',
-  displayName: '(개발) ILS 소셜(T) 관리',
-  productName: 'Threads Media Manager',
-  companyName: 'Threads Media Manager',
+  appName: 'Threads Media Manager',
   packageName: 'Threads Media Manager',
   executableName: 'ThreadsMediaManager',
   squirrelName: 'threads_media_manager',
@@ -22,9 +23,22 @@ const releasedDevIdentity = {
   serviceUrl: 'https://threads-admin-dev.ilscp.net',
   updateRepository: 'ilseong-xofl/threads-media-manager',
 };
+// Free to change: what people see. A changed productName or companyName moves the shortcuts, so
+// the names it replaces go into formerShortcuts.
+const devPresentation = {
+  displayName: '(개발) ILS 소셜(T) 관리',
+  productName: '(개발) ILS 소셜(T) 관리',
+  companyName: 'ILS 소셜(T) 관리',
+  icon: 'app-icon-dev',
+  formerShortcuts: [{ companyName: 'Threads Media Manager', productName: 'Threads Media Manager' }],
+};
 
 it('keeps the dev variant on the released install identity', () => {
-  expect(selectVariant('dev')).toEqual(releasedDevIdentity);
+  expect(selectVariant('dev')).toMatchObject(releasedDevIdentity);
+});
+
+it('shows the dev variant under its own name and icon', () => {
+  expect(selectVariant('dev')).toEqual({ name: 'dev', ...releasedDevIdentity, ...devPresentation });
 });
 
 it('gives the prod variant its own install identity, service and update repository', () => {
@@ -33,6 +47,9 @@ it('gives the prod variant its own install identity, service and update reposito
     displayName: 'ILS 소셜(T) 관리',
     productName: 'ILS 소셜(T) 관리',
     companyName: 'ILS 소셜(T) 관리',
+    icon: 'app-icon',
+    formerShortcuts: [],
+    appName: 'ILS 소셜(T) 관리',
     packageName: 'IlsSocialManager',
     executableName: 'IlsSocialManager',
     squirrelName: 'ils_social_manager',
@@ -69,6 +86,8 @@ it('shares no install identity, service or update repository between variants', 
   const [dev, prod] = [selectVariant('dev'), selectVariant('prod')];
   for (const key of [
     'displayName',
+    'productName',
+    'icon',
     'packageName',
     'executableName',
     'squirrelName',
@@ -79,6 +98,23 @@ it('shares no install identity, service or update repository between variants', 
     'updateRepository',
   ] as const)
     expect(dev[key]).not.toBe(prod[key]);
+});
+
+it.each(['dev', 'prod'])('ships both icon files of the %s variant', (name) => {
+  for (const extension of ['ico', 'png'])
+    expect(existsSync(join('assets', `${selectVariant(name).icon}.${extension}`))).toBe(true);
+});
+
+it('removes no shortcut that a current variant installs', () => {
+  // Squirrel names the shortcuts from the company and product names.
+  const current = variantNames
+    .map(selectVariant)
+    .map(({ companyName, productName }) => ({ companyName, productName }));
+  for (const variant of variantNames.map(selectVariant))
+    for (const former of variant.formerShortcuts) {
+      expect(current).not.toContainEqual(former);
+      expect(current.map(({ productName }) => productName)).not.toContain(former.productName);
+    }
 });
 
 it.each([undefined, '', 'DEV', 'production', 'toString'])('rejects the variant %j', (name) => {
@@ -96,6 +132,8 @@ it('compiles the chosen variant into a packaged build, ignoring the local servic
   expect(bundleValues(true, { ...env, TMM_VARIANT: 'dev' })).toEqual({
     displayName: '(개발) ILS 소셜(T) 관리',
     appName: 'Threads Media Manager',
+    icon: 'app-icon-dev',
+    formerShortcuts: devPresentation.formerShortcuts,
     appUserModelId: 'com.squirrel.threads_media_manager.ThreadsMediaManager',
     userDataDir: 'ThreadsMediaManager',
     serviceUrl: 'https://threads-admin-dev.ilscp.net',
@@ -104,6 +142,8 @@ it('compiles the chosen variant into a packaged build, ignoring the local servic
   expect(bundleValues(true, { ...env, TMM_VARIANT: 'prod' })).toEqual({
     displayName: 'ILS 소셜(T) 관리',
     appName: 'ILS 소셜(T) 관리',
+    icon: 'app-icon',
+    formerShortcuts: [],
     appUserModelId: 'com.squirrel.ils_social_manager.IlsSocialManager',
     userDataDir: 'IlsSocialManager',
     serviceUrl: 'https://threads-admin.ilscp.net',
@@ -111,10 +151,12 @@ it('compiles the chosen variant into a packaged build, ignoring the local servic
   });
 });
 
-it('keeps an unpackaged run local: dev names, no variant service or update repository', () => {
+it('keeps an unpackaged run local: dev names and icon, no variant service or update repository', () => {
   const local = {
     displayName: '(개발) ILS 소셜(T) 관리',
     appName: 'Threads Media Manager',
+    icon: 'app-icon-dev',
+    formerShortcuts: devPresentation.formerShortcuts,
     appUserModelId: 'com.squirrel.threads_media_manager.ThreadsMediaManager',
     userDataDir: 'ThreadsMediaManager',
     serviceUrl: '',
@@ -143,7 +185,9 @@ it('compiles each value into the constant the app reads it from', async () => {
     const prod = selectVariant('prod');
     expect(plugin?.definitions).toEqual({
       TMM_DISPLAY_NAME: JSON.stringify(prod.displayName),
-      TMM_APP_NAME: JSON.stringify(prod.productName),
+      TMM_APP_NAME: JSON.stringify(prod.appName),
+      TMM_ICON: JSON.stringify(prod.icon),
+      TMM_FORMER_SHORTCUTS: JSON.stringify(prod.formerShortcuts),
       TMM_APP_USER_MODEL_ID: JSON.stringify(prod.appUserModelId),
       TMM_USER_DATA_DIR: JSON.stringify(prod.userDataDir),
       TMM_SERVICE_URL: JSON.stringify(prod.serviceUrl),

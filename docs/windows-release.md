@@ -9,7 +9,9 @@
 | 항목 | 개발용 (`dev`) | 운영용 (`prod`) |
 | --- | --- | --- |
 | 화면 안의 이름 | (개발) ILS 소셜(T) 관리 | ILS 소셜(T) 관리 |
-| 시작 메뉴·프로그램 목록 이름 | Threads Media Manager | ILS 소셜(T) 관리 |
+| 시작 메뉴·바탕 화면 바로가기·프로그램 목록 이름 | (개발) ILS 소셜(T) 관리 | ILS 소셜(T) 관리 |
+| 시작 메뉴 폴더·게시자 | ILS 소셜(T) 관리 | ILS 소셜(T) 관리 |
+| 아이콘(`assets/`) | `app-icon-dev` (주황 배지) | `app-icon` (파란 배지) |
 | 실행 파일 | `ThreadsMediaManager.exe` | `IlsSocialManager.exe` |
 | 설치 식별자(Squirrel) | `threads_media_manager` | `ils_social_manager` |
 | 설치 파일 | `ThreadsMediaManager-win32-x64-Setup.exe` | `IlsSocialManager-win32-x64-Setup.exe` |
@@ -17,9 +19,12 @@
 | 접속 서버 | `https://threads-admin-dev.ilscp.net` | `https://threads-admin.ilscp.net` |
 | 업데이트·릴리스 저장소 | `ilseong-xofl/threads-media-manager` | `ilseong-xofl/threads-media-manager-prod` |
 
-- 개발용의 설치 쪽 값은 0.1.10까지의 설치본과 같다. 그래서 기존 설치본이 자동 업데이트로 그대로 넘어온다. 달라지는 것은 화면 안의 이름뿐이다. 이 값은 `src/shared/variants.test.ts`가 고정한다.
+- 개발용의 설치 식별 값(실행 파일, 설치 식별자, 설치 파일, AppUserModelId, 자료 폴더, 접속 서버, 업데이트 저장소, 포장 이름, 앱 이름)은 처음 설치본과 같다. 그래서 기존 설치본이 자동 업데이트로 그대로 넘어온다. 이 값은 `src/shared/variants.test.ts`가 고정한다. 사람 눈에 보이는 값(화면 안의 이름, 바로가기·프로그램 목록 이름, 시작 메뉴 폴더, 아이콘)만 바꿀 수 있다.
+- 0.1.11까지 개발용의 바로가기 이름은 "Threads Media Manager"였다(시작 메뉴 폴더도 같은 이름). 그다음 버전부터 화면 안의 이름과 같다. Squirrel은 업데이트 때 새 이름으로 바로가기를 만들고 예전 것은 지우지 않으므로, 프로그램이 설치·업데이트 직후(`--squirrel-install`, `--squirrel-updated`)에 예전 바로가기(바탕 화면, 시작 메뉴와 그 빈 폴더)를 지운다(`src/main/former-shortcuts.ts`). 예전 이름은 `variants.json`의 `formerShortcuts`에 있다. 지우지 못해도 설치·업데이트는 계속된다. 작업 표시줄에 고정한 항목은 건드리지 않는다.
+- 앱 이름(`appName`, `app.setName`)은 바로가기 이름과 따로 둔다. 개발용은 "Threads Media Manager" 그대로다. 포장하지 않은 Mac 실행의 암호화 저장소(키체인 항목 이름)가 이 이름에 묶여 있기 때문이다.
+- 아이콘 파일은 벌마다 다르다(`variants.json`의 `icon`). 실행 파일·설치 파일·창·프로그램 목록 아이콘이 모두 그 벌의 파일을 쓰고, 패키지에는 그 벌의 PNG·ICO만 들어간다. 프로그램 목록 아이콘 주소는 두 벌 모두 이 저장소의 그 버전 태그에 있는 파일이다.
 - `TMM_VARIANT`가 없거나 `dev`·`prod`가 아니면 설치용 빌드(`pnpm make`·`pnpm package`)와 `pnpm verify:windows`가 실패한다. 기본 벌은 없다.
-- 포장하지 않은 실행(`pnpm start`)은 `TMM_VARIANT`를 보지 않는다. 화면 이름만 개발용 것을 쓰고, 접속 서버 기본값(`http://127.0.0.1:4191`, `THREADS_ADMIN_API_URL`로 바꿈)·`TMM_USER_DATA` 격리·업데이트 없음은 그대로다.
+- 포장하지 않은 실행(`pnpm start`)은 `TMM_VARIANT`를 보지 않는다. 화면 이름과 아이콘만 개발용 것을 쓰고, 접속 서버 기본값(`http://127.0.0.1:4191`, `THREADS_ADMIN_API_URL`로 바꿈)·`TMM_USER_DATA` 격리·업데이트 없음은 그대로다.
 - 버전 번호는 두 벌이 같이 쓴다. 운영용은 개발용으로 먼저 릴리스한 버전만 낼 수 있다(아래 "운영용 릴리스").
 
 아래 절은 개발용 기준으로 쓰여 있다. 운영용은 표의 이름으로 바꿔 읽는다.

@@ -39,13 +39,15 @@
 | 실행 파일 | `ThreadsMediaManager.exe` (그대로) | `IlsSocialManager.exe` |
 | 설치 식별자(Squirrel `name`) | `threads_media_manager` (그대로) | `ils_social_manager` |
 | 설치 파일 | `ThreadsMediaManager-win32-x64-Setup.exe` (그대로) | `IlsSocialManager-win32-x64-Setup.exe` |
-| 시작 메뉴·프로그램 목록 이름 | Threads Media Manager (그대로) | ILS 소셜(T) 관리 |
+| 시작 메뉴·바탕 화면 바로가기·프로그램 목록 이름 | (개발) ILS 소셜(T) 관리 (0.1.11까지 Threads Media Manager) | ILS 소셜(T) 관리 |
+| 시작 메뉴 폴더·게시자 | ILS 소셜(T) 관리 (0.1.11까지 Threads Media Manager) | ILS 소셜(T) 관리 |
+| 아이콘 | 주황 배지(`app-icon-dev`) | 파란 배지(`app-icon`) |
 | AppUserModelId | `com.squirrel.threads_media_manager.ThreadsMediaManager` (그대로) | `com.squirrel.ils_social_manager.IlsSocialManager` |
 | 자료 폴더(`%APPDATA%`) | `ThreadsMediaManager` (그대로) | `IlsSocialManager` |
 | 접속 서버 | `https://threads-admin-dev.ilscp.net` | `https://threads-admin.ilscp.net` |
 | 자동 업데이트가 보는 저장소 | `ilseong-xofl/threads-media-manager` (그대로) | `ilseong-xofl/threads-media-manager-prod` (새 저장소) |
 
-- **개발용은 화면 안의 이름만 바꾼다.** 설치 쪽 식별(실행 파일의 제품 이름, 설치 식별자, 자료 폴더)은 하나도 건드리지 않는다. 지금 설치본이 자동 업데이트로 그대로 넘어와야 하기 때문이다. 시작 메뉴에는 "Threads Media Manager"로 남고, 프로그램을 열면 "(개발) ILS 소셜(T) 관리"로 보인다.
+- **개발용은 눈에 보이는 것만 바꾼다.** 설치 쪽 식별(실행 파일 이름, 설치 식별자, 설치 파일, AppUserModelId, 자료 폴더, 접속 서버, 업데이트 저장소)은 하나도 건드리지 않는다. 지금 설치본이 자동 업데이트로 그대로 넘어와야 하기 때문이다. 0.1.11에서는 화면 안의 이름만 바꿔 시작 메뉴에 "Threads Media Manager"로 남았다. 사용자 결정(2026-11-20)으로 그다음 버전부터 바로가기·프로그램 목록 이름(실행 파일의 제품 이름)도 "(개발) ILS 소셜(T) 관리"로 맞추고, 시작 메뉴 폴더(회사 이름)는 운영용과 같은 "ILS 소셜(T) 관리"로 두며, 아이콘 배지를 주황으로 구분한다. 예전 이름의 바로가기는 업데이트 직후 프로그램이 지운다. 앱 이름(`app.setName`)은 "Threads Media Manager" 그대로다(포장하지 않은 Mac 실행의 키체인 항목 이름). 상세는 [Release 계약](windows-release.md)의 두 벌 절.
 - **운영용의 한글 이름은 표시용으로만 쓴다.** 폴더·파일 이름에 들어가는 값(포장 도구의 `name`, 실행 파일, 설치 식별자)은 영문으로 두고, 한글 이름은 실행 파일 정보(`win32metadata`의 제품 이름·설명·회사 이름)와 설치 패키지 제목에 넣는다. 개발용의 옛 이름("Threads Media Manager")이 운영용의 회사 이름·게시자에 새지 않게 한다.
 - **접속 서버**는 설치용 빌드에서 `variants.json`의 값을 쓴다. 저장소 변수 `THREADS_ADMIN_API_URL`은 쓰지 않는다. 검증은 "주소가 들어 있다"가 아니라 "그 벌의 주소와 정확히 같다"를 본다.
 - **업데이트 저장소**도 `variants.json`에서 온다(지금은 CI가 주는 `GITHUB_REPOSITORY`). 검증은 번들에 그 벌의 저장소 이름이 있고 **다른 벌의 저장소 이름이 없는지**를 본다.
@@ -131,7 +133,7 @@
 | 2 | 운영용 영문 식별 이름 | `IlsSocialManager` / `ils_social_manager`. 설치 위치와 자료 폴더가 된다. | 5장 예행이 끝나기 전 |
 | 3 | 운영용 릴리스 방식 | 운영 저장소에서 사람이 실행해 그 자리에서 빌드한다. 저장소 사이 권한(토큰)을 두지 않기 위해서다. | 구현 전 |
 | 4 | 서버 주소·업데이트 저장소 | 저장소 변수와 CI 환경값 대신 저장소의 설정 파일에 둔다. | 구현 전 |
-| 5 | 개발용 시작 메뉴 이름 | 바꾸지 않는다(화면 안의 이름만 바꾼다). | 언제든 |
+| 5 | 개발용 시작 메뉴 이름 | 0.1.11에서는 바꾸지 않았다(화면 안의 이름만). 사용자 결정(2026-11-20)으로 그다음 버전부터 화면 안의 이름과 맞추고 아이콘도 벌마다 다르게 한다(3장). | 반영함 |
 | 6 | 이번 범위와 Play 순서 | PC 두 벌 구조까지가 이번 범위, 그다음 Play에는 개발용 앱 먼저. 운영 한 벌은 운영 개시 때. | 구현 전 |
 
 검토에서 나온 지적 가운데 구조를 바꿔 없앤 것: 전환판과 그 예외 경로, 사전 릴리스 표시 하나에 기댄 격리, 예전 설치 파일이 운영용을 받는 문제, 사전 릴리스가 쌓여 운영 업데이트가 밀리는 문제, 후보 보관 기간, 작업 폴더 표시의 판정 문제. 반영한 것: 로컬 실행 주소, 개발용 이름, 회사 이름, 검증 강화, 운영용 예행, 사람이 실행하는 운영 릴리스, 범위와 Play 순서, 시험용 계정 규칙.

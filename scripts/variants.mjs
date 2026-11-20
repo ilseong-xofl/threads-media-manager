@@ -20,13 +20,16 @@ export const otherVariants = (name) =>
 
 /**
  * Values compiled into the app. A packaged build takes everything from its variant. An unpackaged
- * run (`pnpm start`) keeps its local service default and has no updates; it only shows the dev name.
+ * run (`pnpm start`) keeps its local service default and has no updates; it only shows the dev name
+ * and icon.
  */
 export function bundleValues(packaged, env) {
   const variant = selectVariant(packaged ? env.TMM_VARIANT : 'dev');
   return {
     displayName: variant.displayName,
-    appName: variant.productName,
+    appName: variant.appName,
+    icon: variant.icon,
+    formerShortcuts: variant.formerShortcuts,
     appUserModelId: variant.appUserModelId,
     userDataDir: variant.userDataDir,
     serviceUrl: packaged ? variant.serviceUrl : (env.THREADS_ADMIN_API_URL ?? ''),

@@ -21,6 +21,7 @@ const variant = selectVariant(
 const requireVariant = async () => {
   selectVariant(process.env.TMM_VARIANT);
 };
+const icon = join(__dirname, 'assets', `${variant.icon}.ico`);
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -33,10 +34,10 @@ const config: ForgeConfig = {
       FileDescription: variant.productName,
       ProductName: variant.productName,
     },
-    icon: join(__dirname, 'assets', 'app-icon.ico'),
+    icon,
     extraResource: [
-      join(__dirname, 'assets', 'app-icon.png'),
-      join(__dirname, 'assets', 'app-icon.ico'),
+      join(__dirname, 'assets', `${variant.icon}.png`),
+      icon,
       ...(process.platform === 'win32' ? [join('build', 'runtime')] : []),
     ],
   },
@@ -68,8 +69,8 @@ const config: ForgeConfig = {
       title: variant.productName,
       authors: variant.companyName,
       setupExe: variant.setupExe,
-      setupIcon: join(__dirname, 'assets', 'app-icon.ico'),
-      iconUrl: `https://raw.githubusercontent.com/ilseong-xofl/threads-media-manager/v${packageMetadata.version}/assets/app-icon.ico`,
+      setupIcon: icon,
+      iconUrl: `https://raw.githubusercontent.com/ilseong-xofl/threads-media-manager/v${packageMetadata.version}/assets/${variant.icon}.ico`,
     }),
   ],
   plugins: [

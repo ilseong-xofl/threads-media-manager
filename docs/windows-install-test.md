@@ -5,7 +5,7 @@
 ## 1. 앱 설치
 
 1. [Windows 설치 파일 다운로드](https://github.com/ilseong-xofl/threads-media-manager/releases/latest/download/ThreadsMediaManager-win32-x64-Setup.exe)를 누릅니다.
-2. 받은 파일을 실행해 설치하고 **Threads Media Manager**를 엽니다. 이 링크는 **개발용**(테스터용)입니다. 시작 메뉴 이름은 **Threads Media Manager**이고, 0.1.10 다음 버전부터 프로그램을 열면 창 제목과 화면에 **(개발) ILS 소셜(T) 관리**로 보입니다. 운영용(**ILS 소셜(T) 관리**)은 운영 개시 때 따로 안내하며, [두 벌의 차이](windows-release.md)는 Release 문서에 있습니다.
+2. 받은 파일을 실행해 설치하고 **Threads Media Manager**를 엽니다. 이 링크는 **개발용**(테스터용)입니다. 0.1.11까지는 시작 메뉴 이름이 **Threads Media Manager**이고, 그다음 버전부터 시작 메뉴·바탕 화면 바로가기와 창 제목이 모두 **(개발) ILS 소셜(T) 관리**이며 아이콘의 배지가 주황색입니다. 운영용(**ILS 소셜(T) 관리**)은 운영 개시 때 따로 안내하며, [두 벌의 차이](windows-release.md)는 Release 문서에 있습니다.
 3. **로그인** 화면에서 관리자에게 받은 **아이디**와 **비밀번호**를 입력하고 **로그인**을 누릅니다.
 4. 처음 로그인하면 **비밀번호 변경** 화면이 나옵니다. **현재 비밀번호**와 **새 비밀번호**(8~24자)를 입력하고 **비밀번호 변경**을 누른 뒤, 새 비밀번호로 다시 로그인합니다.
 
