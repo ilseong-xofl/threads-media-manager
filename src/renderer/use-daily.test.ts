@@ -37,6 +37,11 @@ function setup() {
     getDailyReplies: vi.fn(),
     translateDailyReplies: vi.fn(),
     openDailyReplyLink: vi.fn().mockResolvedValue({ status: 'ok', problem: null }),
+    addDailyAnswer: vi.fn(),
+    saveDailyAnswer: vi.fn(),
+    deleteDailyAnswer: vi.fn(),
+    sendDailyAnswers: vi.fn(),
+    cancelDailyAnswer: vi.fn(),
   };
   const effects = { notify: vi.fn() };
   return { api, effects, controller: createDailyController(api, effects) };
@@ -269,6 +274,7 @@ describe('daily replies window', () => {
         postedAt: '2026-11-21T05:00:00.000Z',
       },
     ],
+    answers: [],
   });
   const read = (postId: string, translation: string | null = null): DailyRepliesResult => ({
     ...ok('read'),
@@ -322,6 +328,32 @@ describe('daily replies window', () => {
     expect(await controller.translateReplies('post-1')).toBe(false);
     expect(effects.notify).toHaveBeenLastCalledWith('한국어 뜻을 생성하지 못했습니다.', true);
     expect(controller.getSnapshot().replies?.replies[0].translation).toBe('귀엽다');
+  });
+  it('shows the answers an answer call returns, also when the call failed', async () => {
+    const { api, controller, effects } = setup();
+    controller.setEnabled(true);
+    await settle();
+    api.getDailyReplies.mockResolvedValueOnce(read('post-1'));
+    await controller.openReplies('post-1');
+    const answer = {
+      id: 'a1',
+      replyThreadsId: '1',
+      text: 'Hi',
+      translation: null,
+      state: 'unconfirmed' as const,
+      errorCode: null,
+      postedBefore: false,
+    };
+    api.sendDailyAnswers.mockResolvedValueOnce({
+      ...ok('lost'),
+      status: 'error',
+      problem: { code: 'SERVICE_UNAVAILABLE', message: '서비스에 연결할 수 없습니다.' },
+      thread: { ...thread('post-1'), answers: [answer] },
+    });
+    expect(await controller.sendAnswers('post-1', ['a1'])).toBe(false);
+    expect(api.sendDailyAnswers).toHaveBeenCalledWith({ postId: 'post-1', answerIds: ['a1'] });
+    expect(controller.getSnapshot().replies?.answers).toEqual([answer]);
+    expect(effects.notify).toHaveBeenLastCalledWith('서비스에 연결할 수 없습니다.', true);
   });
   it('opens a reply on Threads by its ids and says so when it cannot', async () => {
     const { api, controller, effects } = setup();

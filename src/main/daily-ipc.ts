@@ -15,6 +15,11 @@ interface DailyActions {
   replies(input: unknown): Promise<DailyRepliesResult>;
   translateReplies(input: unknown): Promise<DailyRepliesResult>;
   openReplyLink(input: unknown): Promise<DailyLinkResult>;
+  addAnswer(input: unknown): Promise<DailyRepliesResult>;
+  saveAnswer(input: unknown): Promise<DailyRepliesResult>;
+  deleteAnswer(input: unknown): Promise<DailyRepliesResult>;
+  sendAnswers(input: unknown): Promise<DailyRepliesResult>;
+  cancelAnswer(input: unknown): Promise<DailyRepliesResult>;
 }
 
 /** Called only after the main frame and service-access checks. No arbitrary endpoint IPC. */
@@ -53,6 +58,16 @@ export function handleDailyRequest(
       return daily.translateReplies(args[0]);
     case IPC.openDailyReplyLink:
       return daily.openReplyLink(args[0]);
+    case IPC.addDailyAnswer:
+      return daily.addAnswer(args[0]);
+    case IPC.saveDailyAnswer:
+      return daily.saveAnswer(args[0]);
+    case IPC.deleteDailyAnswer:
+      return daily.deleteAnswer(args[0]);
+    case IPC.sendDailyAnswers:
+      return daily.sendAnswers(args[0]);
+    case IPC.cancelDailyAnswer:
+      return daily.cancelAnswer(args[0]);
     default:
       throw new Error('Unsupported daily operation');
   }

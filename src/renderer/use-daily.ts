@@ -223,6 +223,25 @@ export function createDailyController(
     translateReplies(postId: string) {
       return call('translate-replies', () => api.translateDailyReplies({ postId }), postId);
     },
+    /** Adds an answer draft to a reply; `fromKorean` has it written in the persona's language. */
+    addAnswer(postId: string, replyThreadsId: string, text: string, fromKorean: boolean) {
+      return call(fromKorean ? 'compose' : 'write', () =>
+        api.addDailyAnswer({ postId, replyThreadsId, text, fromKorean }),
+      );
+    },
+    saveAnswer(postId: string, answerId: string, text: string) {
+      return call('write', () => api.saveDailyAnswer({ postId, answerId, text }));
+    },
+    deleteAnswer(postId: string, answerId: string) {
+      return call('write', () => api.deleteDailyAnswer({ postId, answerId }));
+    },
+    /** Sends answers of one post to the phone, one by one; the first failure stops the rest. */
+    sendAnswers(postId: string, answerIds: string[]) {
+      return call('write', () => api.sendDailyAnswers({ postId, answerIds }));
+    },
+    cancelAnswer(postId: string, answerId: string) {
+      return call('write', () => api.cancelDailyAnswer({ postId, answerId }));
+    },
     async openReplyLink(postId: string, threadsId: string) {
       const result = await api.openDailyReplyLink({ postId, threadsId }).catch(() => null);
       if (result?.status !== 'ok')
@@ -253,6 +272,11 @@ export function useDaily(enabled: boolean) {
         getDailyReplies: (input) => window.threadsMedia.getDailyReplies(input),
         translateDailyReplies: (input) => window.threadsMedia.translateDailyReplies(input),
         openDailyReplyLink: (input) => window.threadsMedia.openDailyReplyLink(input),
+        addDailyAnswer: (input) => window.threadsMedia.addDailyAnswer(input),
+        saveDailyAnswer: (input) => window.threadsMedia.saveDailyAnswer(input),
+        deleteDailyAnswer: (input) => window.threadsMedia.deleteDailyAnswer(input),
+        sendDailyAnswers: (input) => window.threadsMedia.sendDailyAnswers(input),
+        cancelDailyAnswer: (input) => window.threadsMedia.cancelDailyAnswer(input),
       },
       { notify: (message, error) => notifyRef.current({ message, error }) },
     ),

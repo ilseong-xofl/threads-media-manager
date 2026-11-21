@@ -53,6 +53,25 @@ export interface StoredReplyNote {
   text: string;
   translation: string;
 }
+/**
+ * The persona's answer to one reply of a published post (2026-11-21), kept from the draft until
+ * this PC sees it on Threads: the text stays here even after it was sent.
+ */
+export interface StoredDailyAnswer {
+  id: string;
+  postId: string;
+  /** The publication the reply belongs to, which the answer is sent for. */
+  publicationId: string;
+  replyThreadsId: string;
+  text: string;
+  /** The Korean it was written from, for a persona of another language. */
+  translation?: string | null;
+  createdAt: string;
+  /** Written before the network call; `confirmed` once the server answered it. */
+  send: { confirmed: boolean } | null;
+  /** Earlier ids of this draft whose sends were cancelled; the phone may have posted one anyway. */
+  cancelledIds?: string[];
+}
 export interface DailyPartition {
   service: string;
   ownerId: string;
@@ -60,6 +79,8 @@ export interface DailyPartition {
   posts: StoredDailyPost[];
   /** Absent in files written before replies were read. */
   replyNotes?: StoredReplyNote[];
+  /** Absent in files written before answers were written. */
+  answers?: StoredDailyAnswer[];
 }
 export interface DailyFile {
   version: 1;
@@ -145,6 +166,22 @@ function validNote(v: unknown): v is StoredReplyNote {
     validDailyTranslation(v.translation)
   );
 }
+function validAnswer(v: unknown): v is StoredDailyAnswer {
+  return (
+    isObject(v) &&
+    uuid(v.id) &&
+    uuid(v.postId) &&
+    uuid(v.publicationId) &&
+    threadsId(v.replyThreadsId) &&
+    validDailyText(v.text) &&
+    (v.translation === undefined ||
+      v.translation === null ||
+      validDailyTranslation(v.translation)) &&
+    timestamp(v.createdAt) &&
+    (v.send === null || (isObject(v.send) && typeof v.send.confirmed === 'boolean')) &&
+    (v.cancelledIds === undefined || (Array.isArray(v.cancelledIds) && v.cancelledIds.every(uuid)))
+  );
+}
 /** Checks the fields this version uses. Unknown fields are kept as they are. */
 export function validDailyFile(v: unknown): v is DailyFile {
   if (!isObject(v) || v.version !== 1 || !Array.isArray(v.partitions)) return false;
@@ -161,7 +198,8 @@ export function validDailyFile(v: unknown): v is DailyFile {
       !p.personas.every(validPersona) ||
       !p.posts.every(validPost) ||
       (p.replyNotes !== undefined &&
-        (!Array.isArray(p.replyNotes) || !p.replyNotes.every(validNote)))
+        (!Array.isArray(p.replyNotes) || !p.replyNotes.every(validNote))) ||
+      (p.answers !== undefined && (!Array.isArray(p.answers) || !p.answers.every(validAnswer)))
     )
       return false;
     const scope = JSON.stringify([p.service, p.ownerId]);
@@ -172,7 +210,8 @@ export function validDailyFile(v: unknown): v is DailyFile {
       personas.size === p.personas.length &&
       new Set(p.personas.map((item) => item.accountId)).size === p.personas.length &&
       new Set(p.posts.map((item) => item.id)).size === p.posts.length &&
-      p.posts.every((item) => personas.has(item.personaId))
+      p.posts.every((item) => personas.has(item.personaId)) &&
+      new Set((p.answers ?? []).map((item) => item.id)).size === (p.answers ?? []).length
     );
   });
 }
@@ -208,11 +247,14 @@ export class DailyStore {
       throw unreadable();
     }
     if (!validDailyFile(value)) throw unreadable();
-    // An older version that deleted a persona left the notes of its posts behind; drop them.
+    // An older version that deleted a persona left the notes and answers of its posts behind;
+    // drop them.
     for (const partition of value.partitions) {
       const posts = new Set(partition.posts.map((post) => post.id));
       if (partition.replyNotes)
         partition.replyNotes = partition.replyNotes.filter((note) => posts.has(note.postId));
+      if (partition.answers)
+        partition.answers = partition.answers.filter((answer) => posts.has(answer.postId));
     }
     return value;
   }

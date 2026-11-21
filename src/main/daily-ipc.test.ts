@@ -16,6 +16,11 @@ const actions = () => ({
   replies: vi.fn(),
   translateReplies: vi.fn(),
   openReplyLink: vi.fn(),
+  addAnswer: vi.fn(),
+  saveAnswer: vi.fn(),
+  deleteAnswer: vi.fn(),
+  sendAnswers: vi.fn(),
+  cancelAnswer: vi.fn(),
 });
 
 it('rejects unknown daily operations and wrong argument counts before any work', () => {
@@ -37,6 +42,11 @@ it('rejects unknown daily operations and wrong argument counts before any work',
     [IPC.dailyReplies, []],
     [IPC.translateDailyReplies, [{}, {}]],
     [IPC.openDailyReplyLink, [{ postId: 'post' }, 'https://www.threads.com/@someone']],
+    [IPC.addDailyAnswer, []],
+    [IPC.saveDailyAnswer, [{}, {}]],
+    [IPC.deleteDailyAnswer, []],
+    [IPC.sendDailyAnswers, [{ postId: 'post' }, 'https://graph.threads.net/me/threads']],
+    [IPC.cancelDailyAnswer, []],
   ] as const) {
     expect(() => handleDailyRequest(channel, [...args], daily)).toThrow();
   }
@@ -61,6 +71,11 @@ it('routes each fixed channel to its one action', () => {
     [IPC.dailyReplies, daily.replies],
     [IPC.translateDailyReplies, daily.translateReplies],
     [IPC.openDailyReplyLink, daily.openReplyLink],
+    [IPC.addDailyAnswer, daily.addAnswer],
+    [IPC.saveDailyAnswer, daily.saveAnswer],
+    [IPC.deleteDailyAnswer, daily.deleteAnswer],
+    [IPC.sendDailyAnswers, daily.sendAnswers],
+    [IPC.cancelDailyAnswer, daily.cancelAnswer],
   ] as const) {
     handleDailyRequest(channel, [input], daily);
     expect(action).toHaveBeenCalledWith(input);

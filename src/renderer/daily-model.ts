@@ -1,8 +1,10 @@
 import type { CaptionLanguage } from '../shared/contracts';
 import type {
+  DailyAnswer,
   DailyPersona,
   DailyPost,
   DailyReply,
+  DailyReplySummary,
   DailyReplyThread,
   DailyView,
   DailyWaitingNote,
@@ -210,6 +212,35 @@ export function dailyRepliesTranslatable(thread: DailyReplyThread, language: Cap
     )
   );
 }
+
+/** What the answer cell says beside an answer that is not a draft (2026-11-21). */
+export function dailyAnswerNote(answer: DailyAnswer) {
+  switch (answer.state) {
+    case 'unconfirmed':
+      return '전송 확인 필요';
+    case 'queued':
+      return '휴대폰 대기';
+    case 'failed':
+      return answer.errorCode === null ? '등록 실패' : `등록 실패 (Meta 코드 ${answer.errorCode})`;
+    case 'unknown':
+      return '휴대폰에서 [재등록] 또는 [등록 완료]';
+    default:
+      return null;
+  }
+}
+
+/** The answers of a published post's card: the ones on the phone, and the ones to check there. */
+export function dailyAnswerBadges(replies: DailyReplySummary) {
+  const waiting = replies.answers.queued + replies.answers.failed;
+  return [
+    ...(waiting > 0 ? [`답글 대기 ${waiting}`] : []),
+    ...(replies.answers.unknown > 0 ? ['휴대폰에서 확인 필요'] : []),
+  ];
+}
+
+/** The drafts [모바일로 보내기] sends, in the order they were written. */
+export const dailyAnswerDrafts = (thread: DailyReplyThread) =>
+  thread.answers.filter((answer) => answer.state === 'draft');
 
 export const dailyInitial = (name: string) => [...name.trim()][0] ?? '?';
 

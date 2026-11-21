@@ -86,6 +86,15 @@ const COMPOSITION_OUTPUT = [
   'Return only the required JSON object with text: that post as one nonempty string of at most 400 characters, no explanation or markdown wrapper.',
 ].join('\n');
 
+// 2026-11-21: an answer to a reply on the persona's own post. Only the Korean draft goes in, never
+// the reply it answers: the operator may not read the result, so another person's text must have
+// no way to shape it.
+const ANSWER_COMPOSITION_OUTPUT = [
+  'Write it as a short, natural reply on Threads, not as a new post. Do not explain or comment on it.',
+  'Do not use tools, inspect files, search the web, follow links, or access any other context.',
+  'Return only the required JSON object with text: that answer as one nonempty string of at most 400 characters, no explanation or markdown wrapper.',
+].join('\n');
+
 /** A persona that does not write in Korean gets a Korean rendering with each post. */
 export const dailyTranslated = (language: CaptionLanguage) => language !== 'ko';
 
@@ -103,6 +112,10 @@ export function dailyReplyTranslationPrompt(language: CaptionLanguage): string {
 
 export function dailyCompositionPrompt(language: CaptionLanguage): string {
   return `stdin JSON has korean: a short Threads post drafted in Korean for the fictional persona described next to it. Write that same post in ${LANGUAGE_NAMES[language]}, the language this persona posts in.\n${COMPOSITION_RULES}\n${wording(language)}\n${COMPOSITION_OUTPUT}`;
+}
+
+export function dailyAnswerCompositionPrompt(language: CaptionLanguage): string {
+  return `stdin JSON has korean: a short answer drafted in Korean that the fictional persona described next to it writes under a reply someone left on one of the persona's Threads posts. Write that same answer in ${LANGUAGE_NAMES[language]}, the language this persona posts in.\n${COMPOSITION_RULES}\n${wording(language)}\n${ANSWER_COMPOSITION_OUTPUT}`;
 }
 
 /** The caption argument list with the prompt swapped; no image is ever attached. */
@@ -125,6 +138,11 @@ export const dailyCompositionArguments = (
   language: CaptionLanguage,
   authArguments: readonly string[] = [],
 ) => withPrompt(directory, language, authArguments, dailyCompositionPrompt(language));
+export const dailyAnswerCompositionArguments = (
+  directory: string,
+  language: CaptionLanguage,
+  authArguments: readonly string[] = [],
+) => withPrompt(directory, language, authArguments, dailyAnswerCompositionPrompt(language));
 export const dailyReplyTranslationArguments = (
   directory: string,
   language: CaptionLanguage,
@@ -384,6 +402,22 @@ export class DailyGenerator {
       subject: '글',
       arguments: (directory, authArguments) =>
         dailyCompositionArguments(directory, persona.language, authArguments),
+      schema: {
+        type: 'object',
+        properties: { text: TEXT },
+        required: ['text'],
+        additionalProperties: false,
+      },
+      stdin: { persona: { name: persona.name, description: persona.description }, korean },
+      parse: parseDailyComposition,
+    });
+  }
+  /** Writes a Korean answer draft as the persona's answer; the reply it answers is not given. */
+  composeAnswer(persona: DailyPersona, korean: string): Promise<string> {
+    return this.start({
+      subject: '글',
+      arguments: (directory, authArguments) =>
+        dailyAnswerCompositionArguments(directory, persona.language, authArguments),
       schema: {
         type: 'object',
         properties: { text: TEXT },

@@ -6,6 +6,7 @@ import {
   dailyTextLength,
   type DailyPersona,
   type DailyPost,
+  type DailyReply,
 } from '../shared/daily';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
 import './managed-threads.css';
@@ -16,17 +17,22 @@ const languageNames: Record<CaptionLanguage, string> = {
   en: '영어',
 };
 
-/** Edits a draft, or with no `post` writes a new one for the persona by hand. */
+/**
+ * Edits a draft, or with no `post` writes a new one for the persona by hand. With `replyTo` it
+ * does the same for the persona's answer to that reply (2026-11-21).
+ */
 export function DailyPostDialog({
   post,
   persona,
   busy,
   composing = false,
+  replyTo,
   onSave,
   onClose,
 }: {
-  post: DailyPost | null;
+  post: Pick<DailyPost, 'text' | 'translation'> | null;
   persona: DailyPersona;
+  replyTo?: DailyReply;
   busy: boolean;
   /** The Korean draft is being written in the persona's language. */
   composing?: boolean;
@@ -44,9 +50,10 @@ export function DailyPostDialog({
   const valid = dailyTextLength(text.trim()) >= 1 && length <= limit;
   const personaLanguage = languageNames[persona.language];
   const working = busy || composing;
+  const kind = replyTo ? '답글' : '글';
   return (
     <ManagedThreadsActionDialog
-      title={post ? '초안 수정' : '수동 등록'}
+      title={replyTo ? (post ? '답글 수정' : '답글 쓰기') : post ? '초안 수정' : '수동 등록'}
       busy={working}
       onClose={onClose}
     >
@@ -60,6 +67,13 @@ export function DailyPostDialog({
           });
         }}
       >
+        {replyTo && (
+          <div className="daily-answer-to">
+            <strong>@{replyTo.username}</strong>
+            {replyTo.text && <p className="daily-card-body">{replyTo.text}</p>}
+            {replyTo.translation && <p className="daily-card-translation">{replyTo.translation}</p>}
+          </div>
+        )}
         {!post && persona.language !== 'ko' && (
           <>
             <label htmlFor={`${id}-language`}>작성 언어</label>
@@ -74,12 +88,14 @@ export function DailyPostDialog({
             </select>
             <p className="daily-form-note">
               {fromKorean
-                ? `한국어로 쓰면 ${personaLanguage} 글로 바꿔 초안에 넣습니다. 쓴 내용은 한국어 뜻으로 함께 보입니다.${
+                ? `한국어로 쓰면 ${personaLanguage} ${kind}로 바꿔 초안에 넣습니다. 쓴 내용은 한국어 뜻으로 함께 보입니다.${
+                    replyTo ? ' 바꿀 때 댓글 내용은 ChatGPT에 보내지 않습니다.' : ''
+                  }${
                     limit < DAILY_TEXT_LIMIT
                       ? ` ${personaLanguage}로 바꾸면 길이가 두 배쯤 늘어 ${limit}자까지 쓸 수 있습니다.`
                       : ''
                   }`
-                : `쓴 그대로 초안에 넣고 한국어 뜻을 만듭니다. ${personaLanguage} 작문이 어렵다면 한국어를 고르세요.`}
+                : `쓴 그대로 초안에 넣${replyTo ? '습니다' : '고 한국어 뜻을 만듭니다'}. ${personaLanguage} 작문이 어렵다면 한국어를 고르세요.`}
             </p>
           </>
         )}
@@ -98,7 +114,11 @@ export function DailyPostDialog({
         {post?.translation && (
           <>
             <p className="daily-card-translation">{post.translation}</p>
-            <p className="daily-form-note">본문을 고쳐 저장하면 한국어 뜻을 다시 만듭니다.</p>
+            <p className="daily-form-note">
+              {replyTo
+                ? '본문을 고쳐 저장하면 한국어 뜻은 지워집니다.'
+                : '본문을 고쳐 저장하면 한국어 뜻을 다시 만듭니다.'}
+            </p>
           </>
         )}
         <div className="threads-actions managed-threads-dialog-actions">

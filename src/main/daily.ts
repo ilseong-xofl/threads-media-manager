@@ -5,6 +5,8 @@ import {
   DAILY_KOREAN_DRAFT_LIMIT,
   DAILY_NAME_LIMIT,
   DAILY_TEXT_LIMIT,
+  type DailyAnswer,
+  type DailyAnswerState,
   type DailyDraft,
   type DailyLinkResult,
   type DailyPersona,
@@ -26,6 +28,7 @@ import {
   validDailyTranslation,
   type DailyPartition,
   type DailyScope,
+  type StoredDailyAnswer,
   type StoredDailyPost,
 } from './daily-store';
 import { exactKeys, isObject, parseManagedAccount, validId } from './managed-threads-store';
@@ -62,6 +65,11 @@ interface Options {
   translate(persona: DailyPersona, text: string): Promise<string>;
   /** Writes a Korean draft as a post in the persona's language. Throws a readable ViewError. */
   compose(persona: DailyPersona, korean: string): Promise<string>;
+  /**
+   * Writes a Korean answer draft as the persona's answer in its language. It is never handed the
+   * reply being answered. Throws a readable ViewError.
+   */
+  composeAnswer(persona: DailyPersona, korean: string): Promise<string>;
   /** Says in Korean what replies to one post say, by reply id. Throws a readable ViewError. */
   translateReplies(
     persona: DailyPersona,
@@ -96,7 +104,50 @@ interface ReplySummary {
   publicationId: string;
   fetchedAt: string;
   count: number;
+  answers: { queued: number; failed: number; unknown: number };
 }
+type AnswerStatus = 'queued' | 'failed' | 'unknown' | 'published' | 'cancelled';
+const ANSWER_STATUSES: AnswerStatus[] = ['queued', 'failed', 'unknown', 'published', 'cancelled'];
+/** Not yet ended: the phone still has it. */
+const unfinished = (status: AnswerStatus) =>
+  status === 'queued' || status === 'failed' || status === 'unknown';
+/** One answer as the server sends it to this PC; fields this PC does not use are left out. */
+interface ServerAnswer {
+  id: string;
+  replyThreadsId: string;
+  text: string;
+  status: AnswerStatus;
+  /** The Threads number of a posted answer; null until a fetch or a phone report gives it. */
+  threadsId: string | null;
+  errorCode: number | null;
+  createdAt: string;
+  publishedAt: string | null;
+}
+function serverAnswer(value: unknown): ServerAnswer | null {
+  if (
+    !isObject(value) ||
+    !uuid(value.id) ||
+    !threadsId(value.replyThreadsId) ||
+    !validDailyText(value.text) ||
+    !ANSWER_STATUSES.includes(value.status as AnswerStatus) ||
+    !(value.threadsId === null || threadsId(value.threadsId)) ||
+    !(value.errorCode === null || Number.isSafeInteger(value.errorCode)) ||
+    !timestamp(value.createdAt) ||
+    !(value.publishedAt === null || timestamp(value.publishedAt))
+  )
+    return null;
+  return {
+    id: value.id,
+    replyThreadsId: value.replyThreadsId,
+    text: value.text,
+    status: value.status as AnswerStatus,
+    threadsId: value.threadsId as string | null,
+    errorCode: value.errorCode as number | null,
+    createdAt: value.createdAt,
+    publishedAt: value.publishedAt as string | null,
+  };
+}
+const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
 /** One reply as the server sends it to this PC. */
 interface ServerReply {
   threadsId: string;
@@ -108,6 +159,22 @@ interface ServerReply {
   ownedByMe: boolean;
   postedAt: string;
 }
+/** One post's replies and answers as last read from the server. */
+interface ThreadRead {
+  publicationId: string;
+  fetchedAt: string | null;
+  rootThreadsId: string | null;
+  replies: ServerReply[];
+  answers: ServerAnswer[];
+}
+/**
+ * The server refused an answer and holds none of that id, so it may become a draft again. A lost
+ * answer or a sign-in to renew leaves it as sent: the same id may be repeated.
+ */
+const refusedAnswer = (error: unknown) =>
+  error instanceof ServiceApiError &&
+  (error.code === 'MIGRATION_REQUIRED' ||
+    (error.status >= 400 && error.status < 500 && error.status !== 401 && error.status !== 403));
 /**
  * The server cannot show replies: an older build without the routes, or one whose tables are not
  * created. The board then simply shows no replies, as before.
@@ -126,19 +193,28 @@ function replySummaries(value: unknown): Map<string, ReplySummary> | null {
   if (!isObject(value) || !Array.isArray(value.posts)) return null;
   const summaries = new Map<string, ReplySummary>();
   for (const row of value.posts) {
+    if (!isObject(row)) return null;
+    // A daily post this PC did not write (its keys are UUIDs) has no card here; the rest stand.
+    if (!uuid(row.postKey)) continue;
     if (
-      !isObject(row) ||
-      !uuid(row.postKey) ||
       !uuid(row.publicationId) ||
       !timestamp(row.fetchedAt) ||
-      !Number.isSafeInteger(row.count) ||
-      (row.count as number) < 0
+      !count(row.count) ||
+      !isObject(row.answers) ||
+      !count(row.answers.queued) ||
+      !count(row.answers.failed) ||
+      !count(row.answers.unknown)
     )
       return null;
     summaries.set(row.postKey, {
       publicationId: row.publicationId,
       fetchedAt: row.fetchedAt,
       count: row.count as number,
+      answers: {
+        queued: row.answers.queued as number,
+        failed: row.answers.failed as number,
+        unknown: row.answers.unknown as number,
+      },
     });
   }
   return summaries;
@@ -301,10 +377,12 @@ export class DailyController {
   /** By post id; empty while the server cannot show replies. */
   private replySummary = new Map<string, ReplySummary>();
   /**
-   * Threads addresses of the replies last read, the only ones a link may open. `scope` is the
-   * service and user they were read for; after a change of either they are not used.
+   * The replies and answers last read, by post (2026-11-21): the replies an answer may go to and
+   * the only Threads addresses a link may open. A late read of one post never replaces another's.
+   * `scope` is the service and user they were read for; after a change of either they are not
+   * used. Memory only.
    */
-  private links: { scope: string; postId: string; urls: Map<string, string> } | null = null;
+  private readonly reads = new Map<string, { scope: string; read: ThreadRead }>();
   /** A sync with the server that is under way; changes wait for it. */
   private syncing: Promise<void> | null = null;
   /** Server personas the last sync left out because another persona here uses their account. */
@@ -497,7 +575,9 @@ export class DailyController {
             note: null,
             started: false,
             sentAt: post.published.sentAt,
-            replies: replies ? { fetchedAt: replies.fetchedAt, count: replies.count } : null,
+            replies: replies
+              ? { fetchedAt: replies.fetchedAt, count: replies.count, answers: replies.answers }
+              : null,
           };
         }
         if (!post.send)
@@ -543,62 +623,217 @@ export class DailyController {
     this.assert(context);
     const replies =
       isObject(raw) && Array.isArray(raw.replies) ? raw.replies.map(serverReply) : null;
+    const answers =
+      isObject(raw) && Array.isArray(raw.answers) ? raw.answers.map(serverAnswer) : null;
     if (
       !isObject(raw) ||
       !(raw.fetchedAt === null || timestamp(raw.fetchedAt)) ||
       !(raw.rootThreadsId === null || threadsId(raw.rootThreadsId)) ||
       !replies ||
-      replies.some((reply) => !reply)
+      replies.some((reply) => !reply) ||
+      !answers ||
+      answers.some((answer) => !answer)
     )
       return fail('INVALID_RESPONSE', '댓글 목록을 확인하지 못했습니다.');
-    const read = {
+    const read: ThreadRead = {
+      publicationId: summary.publicationId,
       fetchedAt: raw.fetchedAt as string | null,
       rootThreadsId: raw.rootThreadsId as string | null,
       replies: replies as ServerReply[],
+      answers: answers as ServerAnswer[],
     };
-    this.links = {
-      scope: JSON.stringify(this.scope(context)),
-      postId,
-      urls: new Map(
-        read.replies.flatMap((reply) =>
-          reply.permalink ? [[reply.threadsId, reply.permalink]] : [],
-        ),
-      ),
-    };
+    this.reads.set(postId, { scope: JSON.stringify(this.scope(context)), read });
     return read;
   }
   /** The replies with this PC's Korean renderings, each only for the text it was written for. */
   private static thread(
     postId: string,
     partition: DailyPartition,
-    read: Awaited<ReturnType<DailyController['serverReplies']>>,
+    read: ThreadRead,
   ): DailyReplyThread {
     const notes = (partition.replyNotes ?? []).filter((note) => note.postId === postId);
+    const mine = (partition.answers ?? [])
+      .filter((answer) => answer.postId === postId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const server = (id: string) => read.answers.find((answer) => answer.id === id);
+    const answers = mine.flatMap((answer): DailyAnswer[] => {
+      // The server decides wherever it holds the id.
+      const theirs = server(answer.id);
+      const state: AnswerStatus | DailyAnswerState = theirs
+        ? theirs.status
+        : !answer.send
+          ? 'draft'
+          : answer.send.confirmed
+            ? 'queued'
+            : 'unconfirmed';
+      // Settled by the next read: it is shown as a reply, or it is a draft again.
+      if (state === 'published' || state === 'cancelled') return [];
+      return [
+        {
+          id: answer.id,
+          replyThreadsId: answer.replyThreadsId,
+          text: theirs?.text ?? answer.text,
+          translation: answer.translation ?? null,
+          state,
+          errorCode: theirs?.errorCode ?? null,
+          postedBefore:
+            state === 'draft' &&
+            (answer.cancelledIds ?? []).some((id) => server(id)?.status === 'published'),
+        },
+      ];
+    });
+    // The server decides: an unfinished answer this PC does not hold is shown too.
+    const held = new Set(mine.map((answer) => answer.id));
+    for (const theirs of read.answers)
+      if (!held.has(theirs.id) && unfinished(theirs.status))
+        answers.push({
+          id: theirs.id,
+          replyThreadsId: theirs.replyThreadsId,
+          text: theirs.text,
+          translation: null,
+          state: theirs.status as DailyAnswerState,
+          errorCode: theirs.errorCode,
+          postedBefore: false,
+        });
+    // A posted answer shows as the persona's reply until a fetch stores it (2026-11-21); one with
+    // no number yet is that stored reply when the same text stands under the same reply.
+    const stored = read.replies;
+    const posted = read.answers.filter(
+      (answer) =>
+        answer.status === 'published' &&
+        !(answer.threadsId
+          ? stored.some((reply) => reply.threadsId === answer.threadsId)
+          : stored.some(
+              (reply) =>
+                reply.ownedByMe &&
+                reply.parentThreadsId === answer.replyThreadsId &&
+                reply.text.trim() === answer.text.trim(),
+            )),
+    );
     return {
       postId,
       fetchedAt: read.fetchedAt,
       rootThreadsId: read.rootThreadsId,
-      replies: read.replies.map(({ permalink, ...reply }) => ({
-        ...reply,
-        translation:
-          notes.find((note) => note.threadsId === reply.threadsId && note.text === reply.text)
-            ?.translation ?? null,
-        hasLink: permalink !== null,
-      })),
+      replies: [
+        ...stored.map(({ permalink, ...reply }) => ({
+          ...reply,
+          translation:
+            notes.find((note) => note.threadsId === reply.threadsId && note.text === reply.text)
+              ?.translation ?? null,
+          hasLink: permalink !== null,
+        })),
+        ...posted.map((answer) => ({
+          threadsId: answer.threadsId ?? answer.id,
+          parentThreadsId: answer.replyThreadsId,
+          username: '',
+          text: answer.text,
+          translation: null,
+          mediaType: 'TEXT_POST',
+          hasLink: false,
+          ownedByMe: true,
+          postedAt: answer.publishedAt ?? answer.createdAt,
+          fromAnswer: true,
+        })),
+      ],
+      answers,
     };
   }
+  /** The replies last read for this post and the signed-in user, if any. */
+  private read(context: ServiceBusinessContext, postId: string): ThreadRead | null {
+    const last = this.reads.get(postId);
+    return last && last.scope === JSON.stringify(this.scope(context)) ? last.read : null;
+  }
+  /**
+   * Runs one action of the replies window and answers with the thread of the post as last read,
+   * also after a failure, so a lost answer shows at once. `postId` is null for malformed input.
+   */
   private async withThread(
-    action: (
-      context: ServiceBusinessContext,
-    ) => Promise<{ partition: DailyPartition; thread: DailyReplyThread }>,
+    postId: string | null,
+    action: (context: ServiceBusinessContext) => Promise<DailyPartition>,
+    write = false,
   ): Promise<DailyRepliesResult> {
-    let thread = null as DailyReplyThread | null;
-    const result = await this.respond(async (context) => {
-      const done = await action(context);
-      thread = done.thread;
-      return done.partition;
+    let thread: DailyReplyThread | null = null;
+    const seen = (context: ServiceBusinessContext, partition: DailyPartition) => {
+      const read = postId ? this.read(context, postId) : null;
+      thread = read && postId ? DailyController.thread(postId, partition, read) : null;
+    };
+    const result = await (write ? this.mutate(action, seen) : this.respond(action, seen));
+    return { ...result, thread };
+  }
+  /**
+   * Brings this PC's answers of a post in line with what the server said (2026-11-21): one on
+   * Threads is forgotten, one cancelled there is a draft again under a new id, and one the server
+   * holds unfinished is sent with the server's text, also a draft or an unconfirmed send whose
+   * first request arrived late. Says whether anything changed.
+   */
+  private static settle(partition: DailyPartition, postId: string, read: ThreadRead): boolean {
+    let changed = false;
+    const kept: StoredDailyAnswer[] = [];
+    for (const answer of partition.answers ?? []) {
+      const theirs =
+        answer.postId === postId ? read.answers.find((item) => item.id === answer.id) : undefined;
+      if (!theirs) kept.push(answer);
+      else if (theirs.status === 'published') changed = true;
+      else if (theirs.status === 'cancelled') {
+        if (answer.send) {
+          DailyController.reopen(answer);
+          changed = true;
+        }
+        kept.push(answer);
+      } else {
+        if (!answer.send?.confirmed || answer.text !== theirs.text) changed = true;
+        // The Korean it was written from described the text the user changed.
+        if (answer.text !== theirs.text) answer.translation = null;
+        answer.text = theirs.text;
+        answer.send = { confirmed: true };
+        kept.push(answer);
+      }
+    }
+    if (changed) partition.answers = kept;
+    return changed;
+  }
+  /** A cancelled id cannot be sent again, so the draft it becomes gets a new one. */
+  private static reopen(answer: StoredDailyAnswer) {
+    answer.cancelledIds = [...(answer.cancelledIds ?? []), answer.id];
+    answer.id = randomUUID();
+    answer.send = null;
+  }
+  /**
+   * Reads one post's replies and answers, the only way they are read, and settles this PC's
+   * answers with them. The card's answer counts follow the read; the summary is not read again.
+   */
+  private async readThread(context: ServiceBusinessContext, postId: string) {
+    const read = await this.serverReplies(context, postId);
+    const summary = this.replySummary.get(postId);
+    if (summary?.publicationId === read.publicationId) {
+      const count = (status: AnswerStatus) =>
+        read.answers.filter((answer) => answer.status === status).length;
+      summary.answers = {
+        queued: count('queued'),
+        failed: count('failed'),
+        unknown: count('unknown'),
+      };
+    }
+    const scope = this.scope(context);
+    const before = await this.options.store.read(scope);
+    if (!DailyController.settle(structuredClone(before), postId, read))
+      return { partition: before, read };
+    this.assert(context);
+    const partition = await this.options.store.update(scope, (stored) => {
+      DailyController.settle(stored, postId, read);
+      return stored;
     });
-    return { ...result, thread: result.status === 'ok' ? thread : null };
+    return { partition, read };
+  }
+  /** The read after a change: a failure keeps what was last read, the change is already saved. */
+  private async readAfterWork(context: ServiceBusinessContext, postId: string) {
+    try {
+      return (await this.readThread(context, postId)).partition;
+    } catch (error) {
+      this.assert(context);
+      if (error instanceof ServiceApiError && error.code === 'AUTH_REQUIRED') throw error;
+      return this.options.store.read(this.scope(context));
+    }
   }
   /** Writes one server verdict into the stored post. The post may have changed meanwhile. */
   private static apply(post: StoredDailyPost, requestId: string | null, verdict: Verdict) {
@@ -666,32 +901,40 @@ export class DailyController {
   /** Runs one action and always answers with the best view that can still be read. */
   private async respond(
     action: (context: ServiceBusinessContext) => Promise<DailyPartition>,
+    seen?: (context: ServiceBusinessContext, partition: DailyPartition) => void,
   ): Promise<DailyResult> {
     let context: ServiceBusinessContext | undefined;
     try {
       context = await this.options.client.getBusinessContext();
-      return { status: 'ok', view: this.view(await action(context)), problem: null };
+      const partition = await action(context);
+      seen?.(context, partition);
+      return { status: 'ok', view: this.view(partition), problem: null };
     } catch (error) {
       let view = EMPTY;
       if (context)
         try {
           this.assert(context);
-          view = this.view(await this.options.store.read(this.scope(context)));
+          const partition = await this.options.store.read(this.scope(context));
+          seen?.(context, partition);
+          view = this.view(partition);
         } catch {
           /* No data is shown after an auth change or when the file cannot be read. */
         }
       return { status: 'error', view, problem: safeProblem(error) };
     }
   }
-  private mutate(action: (context: ServiceBusinessContext) => Promise<DailyPartition>) {
+  private mutate(
+    action: (context: ServiceBusinessContext) => Promise<DailyPartition>,
+    seen?: (context: ServiceBusinessContext, partition: DailyPartition) => void,
+  ) {
     if (this.mutating)
-      return this.respond(() => fail('daily_busy', '진행 중인 작업이 끝난 뒤 시도하세요.'));
+      return this.respond(() => fail('daily_busy', '진행 중인 작업이 끝난 뒤 시도하세요.'), seen);
     this.mutating = true;
     return this.respond(async (context) => {
       // A sync that is under way finishes first, so the two never write the file at once.
       await this.syncing?.catch(() => {});
       return action(context);
-    }).finally(() => {
+    }, seen).finally(() => {
       this.mutating = false;
     });
   }
@@ -714,13 +957,12 @@ export class DailyController {
   /** The replies of one published post, read from the server when its window opens or after work. */
   replies(input: unknown): Promise<DailyRepliesResult> {
     if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
-      return this.withThread(invalid);
+      return this.withThread(null, invalid);
     const postId = input.postId;
-    return this.withThread(async (context) => {
-      const read = await this.serverReplies(context, postId);
-      const partition = await this.options.store.read(this.scope(context));
-      return { partition, thread: DailyController.thread(postId, partition, read) };
-    });
+    return this.withThread(
+      postId,
+      async (context) => (await this.readThread(context, postId)).partition,
+    );
   }
 
   /**
@@ -728,16 +970,18 @@ export class DailyController {
    * characters; the rest waits for the next press. Long-running like `generate`.
    */
   async translateReplies(input: unknown): Promise<DailyRepliesResult> {
-    if (this.generating)
-      return this.withThread(() => fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'));
     if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
-      return this.withThread(invalid);
+      return this.withThread(null, invalid);
     const postId = input.postId;
+    if (this.generating)
+      return this.withThread(postId, () =>
+        fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'),
+      );
     this.translatingRepliesPostId = postId;
     try {
-      return await this.withThread(async (context) => {
+      return await this.withThread(postId, async (context) => {
         const scope = this.scope(context);
-        let read: Awaited<ReturnType<DailyController['serverReplies']>>;
+        let read: ThreadRead;
         let batch: DailyReply[];
         let renderings: { id: string; korean: string }[];
         try {
@@ -746,8 +990,9 @@ export class DailyController {
           if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
           const persona = before.personas.find((p) => p.id === post.personaId);
           if (!persona || persona.language === 'ko') return invalid();
-          read = await this.serverReplies(context, postId);
-          batch = dailyReplyBatch(DailyController.thread(postId, before, read).replies);
+          const settled = await this.readThread(context, postId);
+          read = settled.read;
+          batch = dailyReplyBatch(DailyController.thread(postId, settled.partition, read).replies);
           if (!batch.length) fail('daily_replies_translated', '한국어 뜻을 만들 댓글이 없습니다.');
           renderings = await this.options.translateReplies(
             persona,
@@ -761,7 +1006,7 @@ export class DailyController {
         this.assert(context);
         if (!renderings.every((item) => validDailyTranslation(item.korean)))
           fail('daily_generation', '한국어 뜻의 형식을 확인하지 못했습니다. 다시 시도하세요.');
-        const partition = await this.options.store.update(scope, (partition) => {
+        return this.options.store.update(scope, (partition) => {
           // A post deleted meanwhile keeps no renderings.
           if (!partition.posts.some((post) => post.id === postId)) return partition;
           const notes = (partition.replyNotes ??= []);
@@ -777,7 +1022,6 @@ export class DailyController {
           }
           return partition;
         });
-        return { partition, thread: DailyController.thread(postId, partition, read) };
       });
     } finally {
       this.translatingRepliesPostId = null;
@@ -786,7 +1030,10 @@ export class DailyController {
 
   /** Opens on Threads one reply of the replies last read; no address comes from the window. */
   async openReplyLink(input: unknown): Promise<DailyLinkResult> {
-    const links = this.links;
+    const last =
+      isObject(input) && typeof input.postId === 'string'
+        ? this.reads.get(input.postId)
+        : undefined;
     const scope = await this.options.client
       .getBusinessContext()
       .then((context) => JSON.stringify(this.scope(context)))
@@ -794,11 +1041,11 @@ export class DailyController {
     const url =
       isObject(input) &&
       exactKeys(input, ['postId', 'threadsId']) &&
-      links &&
-      links.scope === scope &&
-      links.postId === input.postId &&
+      last &&
+      last.scope === scope &&
       typeof input.threadsId === 'string'
-        ? links.urls.get(input.threadsId)
+        ? (last.read.replies.find((reply) => reply.threadsId === input.threadsId)?.permalink ??
+          undefined)
         : undefined;
     if (!url || !threadsLink(url))
       return {
@@ -917,6 +1164,11 @@ export class DailyController {
         if (!persona) return fail('daily_persona', '페르소나를 찾을 수 없습니다.');
         if (partition.posts.some((post) => post.personaId === personaId && post.send))
           fail('daily_persona_waiting', '휴대폰 대기 중인 글을 먼저 취소하세요.');
+        const posts = new Set(
+          partition.posts.filter((post) => post.personaId === personaId).map((post) => post.id),
+        );
+        if ((partition.answers ?? []).some((answer) => answer.send && posts.has(answer.postId)))
+          fail('daily_persona_answers', '답글을 먼저 취소하거나 올려 주세요.');
         return persona;
       };
       const stored = allowed(await this.options.store.read(scope));
@@ -928,6 +1180,12 @@ export class DailyController {
         allowed(partition);
         partition.personas = partition.personas.filter((p) => p.id !== personaId);
         partition.posts = partition.posts.filter((post) => post.personaId !== personaId);
+        // The drafts and renderings of its posts go with them.
+        const posts = new Set(partition.posts.map((post) => post.id));
+        if (partition.answers)
+          partition.answers = partition.answers.filter((answer) => posts.has(answer.postId));
+        if (partition.replyNotes)
+          partition.replyNotes = partition.replyNotes.filter((note) => posts.has(note.postId));
         return partition;
       });
     });
@@ -1308,5 +1566,282 @@ export class DailyController {
         fail('INVALID_RESPONSE', '취소 결과를 확인하지 못했습니다.');
       return finish({ kind: 'draft' });
     });
+  }
+
+  /**
+   * Adds the persona's answer draft to one reply of the replies last read (2026-11-21). A Korean
+   * draft for a persona of another language is written in that language first (long-running like
+   * `generate`) and kept as its Korean; ChatGPT is never handed the reply it answers.
+   */
+  async addAnswer(input: unknown): Promise<DailyRepliesResult> {
+    if (
+      !isObject(input) ||
+      !exactKeys(input, ['postId', 'replyThreadsId', 'text', 'fromKorean']) ||
+      !uuid(input.postId) ||
+      !threadsId(input.replyThreadsId) ||
+      typeof input.text !== 'string' ||
+      typeof input.fromKorean !== 'boolean'
+    )
+      return this.withThread(null, invalid);
+    const { postId, replyThreadsId, fromKorean } = input;
+    if (this.generating)
+      return this.withThread(postId, () =>
+        fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'),
+      );
+    const written = input.text.trim();
+    /** The rules this PC keeps; returns the persona and the publication the answer is for. */
+    const allowed = (context: ServiceBusinessContext, partition: DailyPartition) => {
+      const post = partition.posts.find((item) => item.id === postId);
+      const persona = partition.personas.find((p) => p.id === post?.personaId);
+      if (!post?.published || !persona) return fail('daily_post', '글을 찾을 수 없습니다.');
+      const read = this.read(context, postId);
+      const reply = read?.replies.find((item) => item.threadsId === replyThreadsId);
+      if (!read || !reply)
+        return fail('daily_reply', '댓글을 찾을 수 없습니다. 댓글 창을 다시 열어 주세요.');
+      if (reply.ownedByMe) return invalid();
+      if (
+        (partition.answers ?? []).some(
+          (answer) => answer.postId === postId && answer.replyThreadsId === replyThreadsId,
+        ) ||
+        read.answers.some(
+          (answer) => answer.replyThreadsId === replyThreadsId && unfinished(answer.status),
+        )
+      )
+        fail('daily_answer_exists', '이 댓글에는 이미 쓴 답글이 있습니다.');
+      if (!validDailyText(written)) fail('daily_text', '본문은 1~500자로 작성하세요.');
+      return { persona, publicationId: read.publicationId };
+    };
+    const add = (context: ServiceBusinessContext, text: string, translation: string | null) => {
+      const createdAt = this.now();
+      return this.options.store.update(this.scope(context), (partition) => {
+        const { publicationId } = allowed(context, partition);
+        (partition.answers ??= []).push({
+          id: randomUUID(),
+          postId,
+          publicationId,
+          replyThreadsId,
+          text,
+          translation,
+          createdAt,
+          send: null,
+        });
+        return partition;
+      });
+    };
+    if (!fromKorean) return this.withThread(postId, (context) => add(context, written, null), true);
+    this.composing = true;
+    try {
+      return await this.withThread(postId, async (context) => {
+        let text: string;
+        try {
+          const { persona } = allowed(context, await this.options.store.read(this.scope(context)));
+          if (persona.language === 'ko') return invalid();
+          const limit = DAILY_KOREAN_DRAFT_LIMIT[persona.language];
+          if (dailyTextLength(written) > limit)
+            fail('daily_text', `한국어 본문은 ${limit}자까지 쓸 수 있습니다.`);
+          text = await this.options.composeAnswer(persona, written);
+        } finally {
+          this.composing = false;
+        }
+        this.assert(context);
+        if (!validDailyText(text))
+          fail('daily_generation', '바꾼 답글의 형식을 확인하지 못했습니다. 다시 시도하세요.');
+        return add(context, text, written);
+      });
+    } finally {
+      this.composing = false;
+    }
+  }
+
+  /** The stored answer of one post that an edit, delete, send or cancel names. */
+  private static answerInput(input: unknown, more: string[] = []) {
+    return isObject(input) &&
+      exactKeys(input, ['postId', 'answerId', ...more]) &&
+      uuid(input.postId) &&
+      uuid(input.answerId)
+      ? { postId: input.postId, answerId: input.answerId }
+      : null;
+  }
+  private static draft(partition: DailyPartition, postId: string, answerId: string) {
+    const answer = (partition.answers ?? []).find(
+      (item) => item.id === answerId && item.postId === postId,
+    );
+    if (!answer)
+      return fail('daily_answer', '답글을 찾을 수 없습니다. 댓글 창을 다시 열어 주세요.');
+    if (answer.send) fail('daily_answer_sent', '초안만 수정하거나 삭제할 수 있습니다.');
+    return answer;
+  }
+
+  saveAnswer(input: unknown): Promise<DailyRepliesResult> {
+    const names = DailyController.answerInput(input, ['text']);
+    const text = isObject(input) && typeof input.text === 'string' ? input.text.trim() : null;
+    if (!names || text === null) return this.withThread(null, invalid);
+    const { postId, answerId } = names;
+    return this.withThread(
+      postId,
+      async (context) => {
+        // Nothing is edited while ChatGPT writes; the window does not open the editor either.
+        if (this.generating) fail('daily_busy', '글 생성이 끝난 뒤 수정하세요.');
+        if (!validDailyText(text)) fail('daily_text', '본문은 1~500자로 작성하세요.');
+        return this.options.store.update(this.scope(context), (partition) => {
+          const answer = DailyController.draft(partition, postId, answerId);
+          // The Korean it was written from described the old text.
+          if (answer.text !== text) answer.translation = null;
+          answer.text = text;
+          return partition;
+        });
+      },
+      true,
+    );
+  }
+
+  deleteAnswer(input: unknown): Promise<DailyRepliesResult> {
+    const names = DailyController.answerInput(input);
+    if (!names) return this.withThread(null, invalid);
+    const { postId, answerId } = names;
+    return this.withThread(
+      postId,
+      (context) =>
+        this.options.store.update(this.scope(context), (partition) => {
+          DailyController.draft(partition, postId, answerId);
+          partition.answers = partition.answers!.filter((answer) => answer.id !== answerId);
+          return partition;
+        }),
+      true,
+    );
+  }
+
+  /**
+   * Sends answers of one post to the phone one at a time, in the order they were written: drafts,
+   * or an answer whose send was not confirmed, repeated under the same id. Each send is written
+   * down before its call; the first one that fails stops the rest.
+   */
+  sendAnswers(input: unknown): Promise<DailyRepliesResult> {
+    if (
+      !isObject(input) ||
+      !exactKeys(input, ['postId', 'answerIds']) ||
+      !uuid(input.postId) ||
+      !Array.isArray(input.answerIds) ||
+      !input.answerIds.length ||
+      !input.answerIds.every(uuid) ||
+      new Set(input.answerIds).size !== input.answerIds.length
+    )
+      return this.withThread(null, invalid);
+    const postId = input.postId;
+    const ids = input.answerIds as string[];
+    return this.withThread(
+      postId,
+      async (context) => {
+        const scope = this.scope(context);
+        const before = await this.options.store.read(scope);
+        const chosen = (before.answers ?? [])
+          .filter((answer) => answer.postId === postId && ids.includes(answer.id))
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        if (chosen.length !== ids.length)
+          fail('daily_answer', '답글을 찾을 수 없습니다. 댓글 창을 다시 열어 주세요.');
+        const change = (answerId: string, edit: (answer: StoredDailyAnswer) => void) => {
+          this.assert(context);
+          return this.options.store.update(scope, (partition) => {
+            const answer = partition.answers?.find((item) => item.id === answerId);
+            if (answer) edit(answer);
+          });
+        };
+        for (const answer of chosen) {
+          if (!answer.send)
+            await change(answer.id, (stored) => {
+              if (stored.send || stored.text !== answer.text)
+                fail('daily_answer_changed', '보내는 중 답글이 변경되었습니다. 다시 확인하세요.');
+              stored.send = { confirmed: false };
+            });
+          let response: unknown;
+          try {
+            this.assert(context);
+            response = await this.options.client.replyRequest(
+              context,
+              'answer',
+              answer.publicationId,
+              { id: answer.id, replyThreadsId: answer.replyThreadsId, text: answer.text },
+            );
+          } catch (error) {
+            if (refusedAnswer(error))
+              await change(answer.id, (stored) => {
+                if (stored.send && !stored.send.confirmed) stored.send = null;
+              });
+            throw error;
+          }
+          this.assert(context);
+          const saved = serverAnswer(isObject(response) ? response.answer : null);
+          if (
+            !saved ||
+            saved.id !== answer.id ||
+            saved.replyThreadsId !== answer.replyThreadsId ||
+            saved.text !== answer.text
+          )
+            fail('INVALID_RESPONSE', '보낸 답글과 서버에 저장된 답글이 다릅니다.');
+          await change(answer.id, (stored) => {
+            if (stored.send) stored.send.confirmed = true;
+          });
+        }
+        return this.readAfterWork(context, postId);
+      },
+      true,
+    );
+  }
+
+  /**
+   * Takes an answer back from the phone (2026-11-21). One the server cancelled becomes a draft again
+   * under a new id; one it never received becomes a draft under its own. An answer the phone tried
+   * already is left to the phone, and the window then shows it as it is.
+   */
+  cancelAnswer(input: unknown): Promise<DailyRepliesResult> {
+    const names = DailyController.answerInput(input);
+    if (!names) return this.withThread(null, invalid);
+    const { postId, answerId } = names;
+    return this.withThread(
+      postId,
+      async (context) => {
+        const scope = this.scope(context);
+        const before = await this.options.store.read(scope);
+        const mine = (before.answers ?? []).find(
+          (answer) => answer.id === answerId && answer.postId === postId && answer.send,
+        );
+        const theirs = this.read(context, postId)?.answers.find(
+          (answer) => answer.id === answerId && unfinished(answer.status),
+        );
+        if (!mine && !theirs) fail('daily_answer', '취소할 답글을 찾을 수 없습니다.');
+        /** The server answered that it cancelled the id; false when it never received it. */
+        let cancelled = false;
+        try {
+          this.assert(context);
+          const response = await this.options.client.replyRequest(context, 'cancel', answerId);
+          this.assert(context);
+          const answer = serverAnswer(isObject(response) ? response.answer : null);
+          if (answer?.id !== answerId || answer.status !== 'cancelled')
+            fail('INVALID_RESPONSE', '취소 결과를 확인하지 못했습니다.');
+          cancelled = true;
+        } catch (error) {
+          this.assert(context);
+          // The server never recorded this send of this PC; nothing there can be posted.
+          const neverReceived =
+            mine && error instanceof ServiceApiError && error.code === 'NOT_FOUND';
+          if (!neverReceived) {
+            if (error instanceof ServiceApiError && error.code === 'ANSWER_NOT_CANCELLABLE')
+              await this.readAfterWork(context, postId);
+            throw error;
+          }
+        }
+        if (mine)
+          await this.options.store.update(scope, (partition) => {
+            const answer = partition.answers?.find((item) => item.id === answerId);
+            if (!answer?.send) return;
+            // Only an id the server cancelled is spent. One it never received stays: a first
+            // request that arrives late is then the same answer, never a second one.
+            if (cancelled) DailyController.reopen(answer);
+            else answer.send = null;
+          });
+        return this.readAfterWork(context, postId);
+      },
+      true,
+    );
   }
 }

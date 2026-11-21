@@ -133,6 +133,47 @@ describe('service login boundary reused from local-video-manager', () => {
       expect(failure.message).not.toContain('private detail');
     }
   });
+  it('saves and cancels answers on fixed paths only, with the body only where one is sent', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));
+    const client = new ServiceApiClient('https://admin.example.test', store('session'), fetcher);
+    const context = await client.getBusinessContext();
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const answer = { id, replyThreadsId: '17890', text: 'Thanks!' };
+    const last = () => fetcher.mock.lastCall!;
+    fetcher.mockResolvedValueOnce(json({ answer: {} }));
+    await client.replyRequest(context, 'answer', id, answer);
+    expect(String(last()[0])).toBe(`https://admin.example.test/api/v1/publications/${id}/answers`);
+    expect(last()[1]).toMatchObject({ method: 'POST', body: JSON.stringify(answer) });
+    fetcher.mockResolvedValueOnce(json({ answer: {} }));
+    await client.replyRequest(context, 'cancel', id);
+    expect(String(last()[0])).toBe(`https://admin.example.test/api/v1/answers/${id}/cancel`);
+    expect(last()[1]).toMatchObject({ method: 'POST' });
+    expect(last()[1]?.body).toBeUndefined();
+    const sent = fetcher.mock.calls.length;
+    for (const call of [
+      () => client.replyRequest(context, 'answer', id),
+      () => client.replyRequest(context, 'answer', '../replies', answer),
+      () => client.replyRequest(context, 'cancel', id, {}),
+      () => client.replyRequest(context, 'get', id, {}),
+    ])
+      await expect(call()).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(fetcher).toHaveBeenCalledTimes(sent);
+    for (const [operation, status, code] of [
+      ['answer', 409, 'ANSWER_PENDING'],
+      ['answer', 404, 'REPLY_NOT_FOUND'],
+      ['answer', 410, 'ACCOUNT_DELETED'],
+      ['answer', 409, 'PUBLICATION_UNAVAILABLE'],
+      ['cancel', 409, 'ANSWER_NOT_CANCELLABLE'],
+      ['cancel', 404, 'NOT_FOUND'],
+    ] as const) {
+      fetcher.mockResolvedValueOnce(json({ error: { code, message: 'private detail' } }, status));
+      const failure = (await client
+        .replyRequest(context, operation, id, operation === 'answer' ? answer : undefined)
+        .catch((error: unknown) => error)) as Error & { status: number };
+      expect(failure).toMatchObject({ code, status });
+      expect(failure.message).not.toContain('private detail');
+    }
+  });
   it('limits publication calls to fixed JSON endpoints and preserves storage failures separately from service access', async () => {
     const tokens = store('signed-session');
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));

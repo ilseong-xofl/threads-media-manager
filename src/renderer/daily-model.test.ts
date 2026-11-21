@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { DailyPersona, DailyPost, DailyReply, DailyReplyThread } from '../shared/daily';
+import type {
+  DailyAnswer,
+  DailyPersona,
+  DailyPost,
+  DailyReply,
+  DailyReplyThread,
+} from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import {
+  dailyAnswerBadges,
+  dailyAnswerNote,
   dailyAccountChoices,
   dailyAccountLocked,
   dailyDescriptionText,
@@ -204,6 +212,7 @@ describe('daily replies window', () => {
     fetchedAt: at(21, 20),
     rootThreadsId: '900',
     replies,
+    answers: [],
   });
   it('lists replies to the post newest first, each followed by the replies under it, oldest first', () => {
     const rows = dailyReplyRows(
@@ -249,5 +258,36 @@ describe('daily replies window', () => {
     expect(dailyRepliesTranslatable(thread([own, image, done]), 'en')).toBe(false);
     expect(dailyRepliesTranslatable(thread([own, reply('4', '900', 13)]), 'en')).toBe(true);
     expect(dailyRepliesTranslatable(thread([reply('4', '900', 13)]), 'ko')).toBe(false);
+  });
+});
+
+describe('daily answers', () => {
+  const answer = (state: DailyAnswer['state'], errorCode: number | null = null): DailyAnswer => ({
+    id: 'a',
+    replyThreadsId: '1',
+    text: 'Hi',
+    translation: null,
+    state,
+    errorCode,
+    postedBefore: false,
+  });
+  it('says where each answer stands, with the Meta code of a refusal', () => {
+    expect(
+      (['draft', 'unconfirmed', 'queued', 'unknown'] as const).map((state) =>
+        dailyAnswerNote(answer(state)),
+      ),
+    ).toEqual([null, '전송 확인 필요', '휴대폰 대기', '휴대폰에서 [재등록] 또는 [등록 완료]']);
+    expect(dailyAnswerNote(answer('failed'))).toBe('등록 실패');
+    expect(dailyAnswerNote(answer('failed', 190))).toBe('등록 실패 (Meta 코드 190)');
+  });
+  it('counts the answers on the phone on the card, and asks to check the ones it cannot tell', () => {
+    const summary = (queued: number, failed: number, unknown: number) => ({
+      fetchedAt: '2026-11-21T05:00:00.000Z',
+      count: 2,
+      answers: { queued, failed, unknown },
+    });
+    expect(dailyAnswerBadges(summary(0, 0, 0))).toEqual([]);
+    expect(dailyAnswerBadges(summary(2, 1, 0))).toEqual(['답글 대기 3']);
+    expect(dailyAnswerBadges(summary(0, 0, 1))).toEqual(['휴대폰에서 확인 필요']);
   });
 });

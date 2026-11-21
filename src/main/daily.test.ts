@@ -3,7 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DailyDraft, DailyPersona, DailyResult } from '../shared/daily';
+import type {
+  DailyDraft,
+  DailyPersona,
+  DailyRepliesResult,
+  DailyReplyThread,
+  DailyResult,
+} from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
 import { DailyController, dailyReplyBatch } from './daily';
@@ -11,6 +17,17 @@ import { DAILY_FILE_NAME, DailyStore } from './daily-store';
 import type { PublicationRequest } from './mobile-publication-data';
 import { ServiceApiError, type ServiceApiClient } from './service-api';
 
+interface ServerAnswer {
+  id: string;
+  replyThreadsId: string;
+  text: string;
+  status: 'queued' | 'failed' | 'unknown' | 'published' | 'cancelled';
+  threadsId: string | null;
+  errorCode: number | null;
+  createdAt: string;
+  publishedAt: string | null;
+}
+type AnswerFault = 'lose' | 'down' | 'pending';
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((p) => rm(p, { recursive: true, force: true })));
@@ -54,23 +71,86 @@ async function setup() {
     string,
     { fetchedAt: string | null; rootThreadsId: string; replies: unknown[] }
   >();
-  const replyRequest = vi.fn(async (_context: unknown, operation: string, id?: string) => {
-    if (server.replies === 'down')
-      throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
-    if (server.replies === 'old')
-      throw new ServiceApiError('댓글을 불러오지 못했습니다.', 'REPLY_REQUEST_FAILED', 404);
-    if (server.replies === 'migration')
-      throw new ServiceApiError('서버 업데이트가 필요합니다.', 'MIGRATION_REQUIRED', 503);
-    if (server.replies === 'auth')
-      throw new ServiceApiError('다시 로그인해 주세요.', 'AUTH_REQUIRED', 401);
-    if (operation === 'summary')
-      return {
-        posts: summary.map((row) => ({ ...row, answers: { queued: 0, failed: 0, unknown: 0 } })),
-      };
-    const thread = threads.get(id!);
-    if (!thread) throw new ServiceApiError('댓글을 찾을 수 없습니다.', 'NOT_FOUND', 404);
-    return { ...thread, answers: [] };
-  });
+  /** The persona's answers the server holds, by publication. */
+  const answers = new Map<string, ServerAnswer[]>();
+  /** Consumed one per answer save: 'lose' stores it and loses the reply, 'down' stores nothing. */
+  const answerFaults: (AnswerFault | undefined)[] = [];
+  /** Looked at by each answer save before it is handled, to see what this PC wrote first. */
+  const beforeAnswer = vi.fn<(body: unknown) => Promise<void>>(async () => {});
+  const open = (status: string) => ['queued', 'failed', 'unknown'].includes(status);
+  const replyRequest = vi.fn(
+    async (_context: unknown, operation: string, id?: string, body?: unknown) => {
+      if (operation === 'answer') {
+        await beforeAnswer(body);
+        const fault = answerFaults.shift();
+        if (fault === 'down')
+          throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+        if (fault === 'pending')
+          throw new ServiceApiError('끝나지 않은 답글이 있습니다.', 'ANSWER_PENDING', 409);
+        const input = body as { id: string; replyThreadsId: string; text: string };
+        const list = answers.get(id!) ?? [];
+        answers.set(id!, list);
+        let row = list.find((item) => item.id === input.id);
+        if (!row) {
+          if (
+            list.some((item) => item.replyThreadsId === input.replyThreadsId && open(item.status))
+          )
+            throw new ServiceApiError('끝나지 않은 답글이 있습니다.', 'ANSWER_PENDING', 409);
+          row = {
+            ...input,
+            status: 'queued',
+            threadsId: null,
+            errorCode: null,
+            createdAt: '2026-11-21T06:00:00.000Z',
+            publishedAt: null,
+          };
+          list.push(row);
+        }
+        if (fault === 'lose')
+          throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+        return { answer: row };
+      }
+      if (operation === 'cancel') {
+        const fault = answerFaults.shift();
+        if (fault === 'down')
+          throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+        const row = [...answers.values()].flat().find((item) => item.id === id);
+        if (!row) throw new ServiceApiError('답글을 찾을 수 없습니다.', 'NOT_FOUND', 404);
+        if (row.status === 'unknown' || row.status === 'published')
+          throw new ServiceApiError('취소할 수 없습니다.', 'ANSWER_NOT_CANCELLABLE', 409);
+        row.status = 'cancelled';
+        if (fault === 'lose')
+          throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+        return { answer: row };
+      }
+      if (server.replies === 'down')
+        throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+      if (server.replies === 'old')
+        throw new ServiceApiError('댓글을 불러오지 못했습니다.', 'REPLY_REQUEST_FAILED', 404);
+      if (server.replies === 'migration')
+        throw new ServiceApiError('서버 업데이트가 필요합니다.', 'MIGRATION_REQUIRED', 503);
+      if (server.replies === 'auth')
+        throw new ServiceApiError('다시 로그인해 주세요.', 'AUTH_REQUIRED', 401);
+      if (operation === 'summary')
+        return {
+          posts: summary.map((row) => {
+            const list = answers.get(row.publicationId) ?? [];
+            const count = (status: string) => list.filter((item) => item.status === status).length;
+            return {
+              ...row,
+              answers: {
+                queued: count('queued'),
+                failed: count('failed'),
+                unknown: count('unknown'),
+              },
+            };
+          }),
+        };
+      const thread = threads.get(id!);
+      if (!thread) throw new ServiceApiError('댓글을 찾을 수 없습니다.', 'NOT_FOUND', 404);
+      return { ...thread, answers: answers.get(id!) ?? [] };
+    },
+  );
   /** The personas the server holds. */
   const remote: DailyPersona[] = [];
   const personaRequest = vi.fn(
@@ -203,6 +283,9 @@ async function setup() {
   >(async (_persona, _post, replies) =>
     replies.map((reply) => ({ id: reply.id, korean: `뜻: ${reply.text}` })),
   );
+  const composeAnswer = vi.fn<(persona: DailyPersona, korean: string) => Promise<string>>(
+    async (_persona, korean) => `EN reply: ${korean}`,
+  );
   const openExternal = vi.fn<(url: string) => Promise<void>>(async () => {});
   let tick = 0;
   const daily = new DailyController({
@@ -213,6 +296,7 @@ async function setup() {
     translate,
     compose,
     translateReplies,
+    composeAnswer,
     openExternal,
     now: () => new Date(Date.UTC(2026, 10, 17, 0, 0, tick++)),
   });
@@ -250,6 +334,10 @@ async function setup() {
     translateReplies,
     openExternal,
     client,
+    answers,
+    answerFaults,
+    beforeAnswer,
+    composeAnswer,
   };
 }
 
@@ -973,11 +1061,27 @@ describe('daily replies', () => {
     return { ...tools, persona, post };
   }
 
+  it('skips a summary row of a post this PC did not write and keeps the rest strict', async () => {
+    const { daily, ok, post, summary, rows } = await published();
+    const shown = async () => ok(await daily.state()).posts.find((p) => p.id === post.id)?.replies;
+    const row = { publicationId: rows[0].id, fetchedAt: '2026-11-21T06:00:00.000Z', count: 1 };
+    summary.unshift({ ...row, postKey: '["sample","one"]' });
+    summary[1].count = 4;
+    expect(await shown()).toMatchObject({ count: 4 });
+    // Any other malformed field still makes the whole summary untrusted; the last one stays.
+    summary.push({ ...row, postKey: randomUUID(), count: -1 });
+    summary[1].count = 5;
+    expect(await shown()).toMatchObject({ count: 4 });
+  });
   it('shows the replies of published posts from one summary read per look, and hides them on a server without replies', async () => {
     const { daily, server, ok, post, replyRequest } = await published();
     const shown = async () => ok(await daily.state()).posts.find((p) => p.id === post.id)?.replies;
     replyRequest.mockClear();
-    expect(await shown()).toEqual({ fetchedAt: '2026-11-21T05:02:11.000Z', count: 3 });
+    expect(await shown()).toEqual({
+      fetchedAt: '2026-11-21T05:02:11.000Z',
+      count: 3,
+      answers: { queued: 0, failed: 0, unknown: 0 },
+    });
     expect(replyRequest.mock.calls.map((call) => call[1])).toEqual(['summary']);
     // Changes answer from the file without reading replies again.
     const [draft] = ok(await daily.generate({ personaId: post.personaId })).posts.filter(
@@ -986,7 +1090,11 @@ describe('daily replies', () => {
     expect(draft.replies).toBeNull();
     expect(replyRequest).toHaveBeenCalledTimes(1);
     server.replies = 'down';
-    expect(await shown()).toEqual({ fetchedAt: '2026-11-21T05:02:11.000Z', count: 3 });
+    expect(await shown()).toEqual({
+      fetchedAt: '2026-11-21T05:02:11.000Z',
+      count: 3,
+      answers: { queued: 0, failed: 0, unknown: 0 },
+    });
     for (const missing of ['old', 'migration'] as const) {
       server.replies = 'up';
       expect(await shown()).not.toBeNull();
@@ -1047,7 +1155,13 @@ describe('daily replies', () => {
     expect(translateReplies.mock.lastCall![2]).toEqual([{ id: '1', text: 'So cute!' }]);
     const done = await daily.translateReplies({ postId: post.id });
     expect(done.problem?.code).toBe('daily_replies_translated');
-    expect(done.thread).toBeNull();
+    // A refusal still answers with the replies last read, so the window keeps showing them.
+    expect(done.thread?.replies.map((r) => r.translation)).toEqual([
+      '뜻: So cute!',
+      null,
+      null,
+      '뜻: Me too',
+    ]);
     expect(translateReplies).toHaveBeenCalledTimes(2);
   });
   it('writes replies in Korean only for a persona of another language, and refuses a malformed answer', async () => {
@@ -1177,6 +1291,407 @@ describe('daily replies', () => {
     expect((await rendering).problem).toBeNull();
     expect([...seen, daily.active]).toEqual([true, true, false]);
   });
+
+  describe('answers', () => {
+    const done = (result: DailyRepliesResult) => {
+      expect(result.problem).toBeNull();
+      return result.thread!;
+    };
+    /** A published post whose replies window is open. */
+    async function opened(language: 'ko' | 'en' = 'en') {
+      const tools = await published(language);
+      done(await tools.daily.replies({ postId: tools.post.id }));
+      const publicationId = tools.rows[0].id;
+      const stored = async (): Promise<Record<string, unknown>[]> =>
+        JSON.parse(await readFile(join(tools.userData, DAILY_FILE_NAME), 'utf8')).partitions[0]
+          .answers ?? [];
+      const add = async (replyThreadsId: string, text: string, fromKorean = false) =>
+        done(
+          await tools.daily.addAnswer({ postId: tools.post.id, replyThreadsId, text, fromKorean }),
+        ).answers.find((answer) => answer.replyThreadsId === replyThreadsId)!;
+      const send = (...answerIds: string[]) =>
+        tools.daily.sendAnswers({ postId: tools.post.id, answerIds });
+      const card = async () =>
+        tools.ok(await tools.daily.state()).posts.find((p) => p.id === tools.post.id)!.replies!
+          .answers;
+      return { ...tools, publicationId, stored, add, send, card };
+    }
+
+    it('writes a draft as written, or from Korean with only the Korean and the persona handed to ChatGPT', async () => {
+      const { daily, post, add, composeAnswer, stored } = await opened();
+      expect(await add('1', '  Thanks so much!  ')).toMatchObject({
+        text: 'Thanks so much!',
+        translation: null,
+        state: 'draft',
+        errorCode: null,
+        postedBefore: false,
+      });
+      expect(composeAnswer).not.toHaveBeenCalled();
+      expect(await add('4', '나도 그래요', true)).toMatchObject({
+        text: 'EN reply: 나도 그래요',
+        translation: '나도 그래요',
+        state: 'draft',
+      });
+      // The reply being answered is never part of what ChatGPT reads.
+      expect(composeAnswer).toHaveBeenCalledTimes(1);
+      expect(composeAnswer.mock.calls[0]).toHaveLength(2);
+      expect(composeAnswer.mock.calls[0][1]).toBe('나도 그래요');
+      expect(JSON.stringify(composeAnswer.mock.calls)).not.toContain('Me too');
+      for (const [replyThreadsId, text, fromKorean, code] of [
+        ['1', 'Again', false, 'daily_answer_exists'],
+        ['2', 'Hi', false, 'daily_input'],
+        ['999', 'Hi', false, 'daily_reply'],
+        ['3', '가'.repeat(201), true, 'daily_text'],
+        ['3', ' ', false, 'daily_text'],
+      ] as const) {
+        const result = await daily.addAnswer({ postId: post.id, replyThreadsId, text, fromKorean });
+        expect(result.problem?.code).toBe(code);
+      }
+      expect(composeAnswer).toHaveBeenCalledTimes(1);
+      expect(await stored()).toHaveLength(2);
+    });
+    it('writes nothing from Korean for a Korean persona', async () => {
+      const { daily, post, composeAnswer } = await opened('ko');
+      const result = await daily.addAnswer({
+        postId: post.id,
+        replyThreadsId: '1',
+        text: '고마워요',
+        fromKorean: true,
+      });
+      expect(result.problem?.code).toBe('daily_input');
+      expect(composeAnswer).not.toHaveBeenCalled();
+    });
+    it('edits and deletes drafts only, and an edit drops the Korean it was written from', async () => {
+      const { daily, post, add, send, stored } = await opened();
+      const a = await add('1', '고마워요', true);
+      let thread = done(
+        await daily.saveAnswer({ postId: post.id, answerId: a.id, text: ' EN reply: 고마워요 ' }),
+      );
+      expect(thread.answers[0].translation).toBe('고마워요');
+      thread = done(
+        await daily.saveAnswer({ postId: post.id, answerId: a.id, text: 'Thank you!' }),
+      );
+      expect(thread.answers[0]).toMatchObject({ text: 'Thank you!', translation: null });
+      const b = await add('4', 'Same here');
+      done(await send(b.id));
+      expect(
+        (await daily.saveAnswer({ postId: post.id, answerId: b.id, text: 'x' })).problem?.code,
+      ).toBe('daily_answer_sent');
+      expect((await daily.deleteAnswer({ postId: post.id, answerId: b.id })).problem?.code).toBe(
+        'daily_answer_sent',
+      );
+      thread = done(await daily.deleteAnswer({ postId: post.id, answerId: a.id }));
+      expect(thread.answers.map((answer) => answer.id)).toEqual([b.id]);
+      expect((await stored()).map((answer) => answer.id)).toEqual([b.id]);
+    });
+    it('sends the drafts one by one in the order written, writing each send down first, and stops at the first refusal', async () => {
+      const { add, send, stored, answers, answerFaults, beforeAnswer, publicationId, card } =
+        await opened();
+      const a = await add('1', 'One');
+      const b = await add('3', 'Two');
+      const c = await add('4', 'Three');
+      const seen: unknown[] = [];
+      beforeAnswer.mockImplementation(async (body) => {
+        const { id } = body as { id: string };
+        seen.push([id, (await stored()).find((answer) => answer.id === id)?.send]);
+      });
+      answerFaults.push(undefined, 'pending');
+      const result = await send(c.id, a.id, b.id);
+      expect(result.problem?.code).toBe('ANSWER_PENDING');
+      expect(seen).toEqual([
+        [a.id, { confirmed: false }],
+        [b.id, { confirmed: false }],
+      ]);
+      expect(answers.get(publicationId)!.map((x) => [x.id, x.replyThreadsId, x.text])).toEqual([
+        [a.id, '1', 'One'],
+      ]);
+      // The refused one goes back to a draft under its own id; the rest were not sent.
+      expect(result.thread!.answers.map((x) => [x.id, x.state])).toEqual([
+        [a.id, 'queued'],
+        [b.id, 'draft'],
+        [c.id, 'draft'],
+      ]);
+      expect((await stored()).map((x) => x.send)).toEqual([{ confirmed: true }, null, null]);
+      const rest = done(await send(b.id, c.id));
+      expect(rest.answers.map((x) => x.state)).toEqual(['queued', 'queued', 'queued']);
+      // The card counts what waits on the phone.
+      expect(await card()).toEqual({ queued: 3, failed: 0, unknown: 0 });
+    });
+    it('keeps a send whose answer was lost as unconfirmed and repeats it under the same id', async () => {
+      const { daily, post, add, send, stored, answers, answerFaults, publicationId, replyRequest } =
+        await opened();
+      const a = await add('1', 'One');
+      const b = await add('4', 'Two');
+      answerFaults.push('lose', 'down');
+      for (const id of [a.id, b.id]) {
+        const result = await send(id);
+        expect(result.problem?.code).toBe('SERVICE_UNAVAILABLE');
+        expect(result.thread!.answers.find((x) => x.id === id)!.state).toBe('unconfirmed');
+        expect((await stored()).find((x) => x.id === id)!.send).toEqual({ confirmed: false });
+      }
+      // The server decides: it kept the first and never got the second.
+      let thread = done(await daily.replies({ postId: post.id }));
+      expect(thread.answers.map((x) => [x.id, x.state])).toEqual([
+        [a.id, 'queued'],
+        [b.id, 'unconfirmed'],
+      ]);
+      expect((await stored()).map((x) => x.send)).toEqual([
+        { confirmed: true },
+        { confirmed: false },
+      ]);
+      thread = done(await send(b.id));
+      expect(thread.answers.map((x) => x.state)).toEqual(['queued', 'queued']);
+      expect(answers.get(publicationId)!.map((x) => x.id)).toEqual([a.id, b.id]);
+      expect(
+        replyRequest.mock.calls
+          .filter((call) => call[1] === 'answer')
+          .map((call) => (call[3] as { id: string }).id),
+      ).toEqual([a.id, b.id, b.id]);
+    });
+    it("follows the server's states, and forgets an answer once it is on Threads", async () => {
+      const { daily, post, add, send, stored, answers, publicationId, threads, card } =
+        await opened();
+      const a = await add('1', 'One');
+      const b = await add('3', 'Two');
+      const c = await add('4', 'Three');
+      done(await send(a.id, b.id, c.id));
+      const [ra, rb, rc] = answers.get(publicationId)!;
+      Object.assign(ra, { status: 'failed', errorCode: 190 });
+      rb.status = 'unknown';
+      Object.assign(rc, { status: 'published', threadsId: '77' });
+      threads
+        .get(publicationId)!
+        .replies.push(reply('77', 'Three', { ownedByMe: true, parentThreadsId: '4' }));
+      const thread = done(await daily.replies({ postId: post.id }));
+      expect(thread.answers.map((x) => [x.id, x.state, x.errorCode])).toEqual([
+        [a.id, 'failed', 190],
+        [b.id, 'unknown', null],
+      ]);
+      expect(thread.replies.find((r) => r.threadsId === '77')?.ownedByMe).toBe(true);
+      expect((await stored()).map((x) => x.id)).toEqual([a.id, b.id]);
+      expect(await card()).toEqual({ queued: 0, failed: 1, unknown: 1 });
+    });
+    it('cancels back to a draft under a new id, and notes a cancelled send the phone posted anyway', async () => {
+      const { daily, post, add, send, stored, answers, answerFaults, publicationId } =
+        await opened();
+      const a = await add('1', 'One');
+      done(await send(a.id));
+      let thread = done(await daily.cancelAnswer({ postId: post.id, answerId: a.id }));
+      const [draft] = thread.answers;
+      expect(draft).toMatchObject({ replyThreadsId: '1', text: 'One', state: 'draft' });
+      expect(draft.postedBefore).toBe(false);
+      expect(draft.id).not.toBe(a.id);
+      expect(answers.get(publicationId)![0]).toMatchObject({ id: a.id, status: 'cancelled' });
+      expect((await stored())[0]).toMatchObject({ id: draft.id, send: null, cancelledIds: [a.id] });
+      // The phone was already posting it.
+      Object.assign(answers.get(publicationId)![0], { status: 'published', threadsId: '55' });
+      thread = done(await daily.replies({ postId: post.id }));
+      expect(thread.answers).toEqual([{ ...draft, postedBefore: true }]);
+      // A cancel whose reply was lost is finished by the next read, again under a new id.
+      done(await send(draft.id));
+      answerFaults.push('lose');
+      expect(
+        (await daily.cancelAnswer({ postId: post.id, answerId: draft.id })).problem?.code,
+      ).toBe('SERVICE_UNAVAILABLE');
+      thread = done(await daily.replies({ postId: post.id }));
+      expect(thread.answers).toEqual([expect.objectContaining({ state: 'draft', text: 'One' })]);
+      expect(thread.answers[0].id).not.toBe(draft.id);
+      expect((await stored())[0].cancelledIds).toEqual([a.id, draft.id]);
+    });
+    it('leaves an answer the phone already tried to the phone, and cancels one the server never got', async () => {
+      const { daily, post, add, send, answers, answerFaults, publicationId, stored } =
+        await opened();
+      const a = await add('1', 'One');
+      const b = await add('4', 'Two');
+      done(await send(a.id));
+      answers.get(publicationId)![0].status = 'unknown';
+      const refused = await daily.cancelAnswer({ postId: post.id, answerId: a.id });
+      expect(refused.problem?.code).toBe('ANSWER_NOT_CANCELLABLE');
+      expect(refused.thread!.answers[0]).toMatchObject({ id: a.id, state: 'unknown' });
+      answerFaults.push('down');
+      expect((await send(b.id)).problem?.code).toBe('SERVICE_UNAVAILABLE');
+      // Nothing of it reached the server, so it is a draft again under the same id: a first
+      // request that arrives late is then the same answer, never a second one.
+      let thread = done(await daily.cancelAnswer({ postId: post.id, answerId: b.id }));
+      expect(thread.answers[1]).toEqual(
+        expect.objectContaining({ id: b.id, state: 'draft', text: 'Two' }),
+      );
+      expect((await stored())[1]).toMatchObject({ id: b.id, send: null });
+      expect((await stored())[1].cancelledIds).toBeUndefined();
+      expect(answers.get(publicationId)!.map((x) => x.id)).toEqual([a.id]);
+      done(await daily.saveAnswer({ postId: post.id, answerId: b.id, text: 'Two, edited' }));
+      answers.get(publicationId)!.push({
+        id: b.id,
+        replyThreadsId: '4',
+        text: 'Two',
+        status: 'queued',
+        threadsId: null,
+        errorCode: null,
+        createdAt: '2026-11-21T06:00:00.000Z',
+        publishedAt: null,
+      });
+      // The server holds it after all: its state and its text win.
+      thread = done(await daily.replies({ postId: post.id }));
+      expect(thread.answers[1]).toEqual(
+        expect.objectContaining({ id: b.id, state: 'queued', text: 'Two' }),
+      );
+      expect((await stored())[1]).toMatchObject({
+        id: b.id,
+        text: 'Two',
+        send: { confirmed: true },
+      });
+    });
+    it("shows a posted answer as the persona's reply before the replies are fetched again, once only", async () => {
+      const { daily, post, add, send, answers, publicationId, threads } = await opened();
+      const a = await add('1', 'One');
+      const b = await add('4', 'Two');
+      done(await send(a.id, b.id));
+      const [ra, rb] = answers.get(publicationId)!;
+      Object.assign(ra, {
+        status: 'published',
+        threadsId: '77',
+        publishedAt: '2026-11-21T07:00:00.000Z',
+      });
+      // Confirmed by hand on the phone: no number yet.
+      rb.status = 'published';
+      const mine = (thread: DailyReplyThread) =>
+        thread.replies
+          .filter((r) => r.ownedByMe)
+          .map((r) => [r.threadsId, r.parentThreadsId, r.text, r.fromAnswer ?? false]);
+      let thread = done(await daily.replies({ postId: post.id }));
+      expect(mine(thread)).toEqual([
+        ['2', '1', 'Thank you', false],
+        ['77', '1', 'One', true],
+        [b.id, '4', 'Two', true],
+      ]);
+      expect(thread.replies.find((r) => r.threadsId === '77')).toMatchObject({
+        hasLink: false,
+        postedAt: '2026-11-21T07:00:00.000Z',
+      });
+      // Both replies may be answered again.
+      expect(thread.answers).toEqual([]);
+      // Once fetched, each shows as the stored reply only.
+      threads
+        .get(publicationId)!
+        .replies.push(
+          reply('77', 'One', { ownedByMe: true, parentThreadsId: '1' }),
+          reply('78', ' Two ', { ownedByMe: true, parentThreadsId: '4' }),
+        );
+      thread = done(await daily.replies({ postId: post.id }));
+      expect(mine(thread)).toEqual([
+        ['2', '1', 'Thank you', false],
+        ['77', '1', 'One', false],
+        ['78', '4', ' Two ', false],
+      ]);
+    });
+    it('settles the answers on every read of a post, writing replies in Korean too', async () => {
+      const { daily, post, add, send, answers, publicationId, stored } = await opened();
+      const a = await add('1', 'One');
+      done(await send(a.id));
+      answers.get(publicationId)![0].status = 'published';
+      const translated = await daily.translateReplies({ postId: post.id });
+      expect(translated.problem).toBeNull();
+      expect(await stored()).toEqual([]);
+    });
+    it('keeps the replies read for each post apart, so a late read of another does not replace them', async () => {
+      const tools = await opened();
+      const { daily, post, rows, summary, threads, ok, persona } = tools;
+      const other = ok(await daily.state()).posts.find(
+        (p) => p.personaId === persona.id && p.state === 'draft',
+      )!;
+      ok(await daily.send({ postId: other.id }));
+      rows[1].rootStatus = 'published';
+      summary.push({
+        postKey: other.id,
+        publicationId: rows[1].id,
+        fetchedAt: '2026-11-21T05:02:11.000Z',
+        count: 1,
+      });
+      threads.set(rows[1].id, {
+        fetchedAt: '2026-11-21T05:02:11.000Z',
+        rootThreadsId: '901',
+        replies: [reply('21', 'Hello', { parentThreadsId: '901' })],
+      });
+      ok(await daily.state());
+      done(await daily.replies({ postId: other.id }));
+      // The window of the first post answers late, after the other one opened.
+      done(await daily.replies({ postId: post.id }));
+      const added = await daily.addAnswer({
+        postId: other.id,
+        replyThreadsId: '21',
+        text: 'Hi!',
+        fromKorean: false,
+      });
+      expect(added.problem).toBeNull();
+      expect(added.thread!.answers.map((x) => x.replyThreadsId)).toEqual(['21']);
+      expect((await daily.openReplyLink({ postId: other.id, threadsId: '21' })).status).toBe('ok');
+      expect((await daily.openReplyLink({ postId: post.id, threadsId: '1' })).status).toBe('ok');
+    });
+    it('updates the card from the read after a send or a cancel, without reading the summary again', async () => {
+      const { daily, post, add, send, replyRequest } = await opened();
+      const a = await add('1', 'One');
+      replyRequest.mockClear();
+      const card = (result: DailyRepliesResult) =>
+        result.view.posts.find((p) => p.id === post.id)!.replies!.answers;
+      expect(card(await send(a.id))).toEqual({ queued: 1, failed: 0, unknown: 0 });
+      expect(card(await daily.cancelAnswer({ postId: post.id, answerId: a.id }))).toEqual({
+        queued: 0,
+        failed: 0,
+        unknown: 0,
+      });
+      expect(replyRequest.mock.calls.map((call) => call[1])).not.toContain('summary');
+    });
+    it('shows an unfinished answer only the server holds, and can take it back', async () => {
+      const { daily, post, answers, publicationId, stored } = await opened();
+      const id = randomUUID();
+      answers.set(publicationId, [
+        {
+          id,
+          replyThreadsId: '4',
+          text: 'From elsewhere',
+          status: 'failed',
+          threadsId: null,
+          errorCode: 100,
+          createdAt: '2026-11-21T06:00:00.000Z',
+          publishedAt: null,
+        },
+      ]);
+      let thread = done(await daily.replies({ postId: post.id }));
+      expect(thread.answers).toEqual([
+        {
+          id,
+          replyThreadsId: '4',
+          text: 'From elsewhere',
+          translation: null,
+          state: 'failed',
+          errorCode: 100,
+          postedBefore: false,
+        },
+      ]);
+      thread = done(await daily.cancelAnswer({ postId: post.id, answerId: id }));
+      expect(thread.answers).toEqual([]);
+      expect(await stored()).toEqual([]);
+    });
+    it('keeps a persona while an answer is on the phone, and deletes its drafts and renderings with it', async () => {
+      const { daily, post, persona, add, send, userData, ok } = await opened();
+      ok(await daily.translateReplies({ postId: post.id }));
+      const a = await add('1', 'One');
+      await add('4', 'Two');
+      done(await send(a.id));
+      const refused = await daily.deletePersona({ personaId: persona.id });
+      expect(refused.problem).toEqual({
+        code: 'daily_persona_answers',
+        message: '답글을 먼저 취소하거나 올려 주세요.',
+      });
+      done(await daily.cancelAnswer({ postId: post.id, answerId: a.id }));
+      ok(await daily.deletePersona({ personaId: persona.id }));
+      const file = JSON.parse(await readFile(join(userData, DAILY_FILE_NAME), 'utf8'))
+        .partitions[0];
+      expect(file.posts).toEqual([]);
+      expect(file.answers).toEqual([]);
+      expect(file.replyNotes).toEqual([]);
+    });
+  });
 });
 
 describe('daily storage boundaries', () => {
@@ -1230,5 +1745,39 @@ describe('daily storage boundaries', () => {
     file.partitions[0].replyNotes = [{ ...kept, translation: '' }];
     await writeFile(path, JSON.stringify(file));
     expect((await daily.state()).problem?.code).toBe('daily_storage');
+  });
+  it('keeps answers through a file an earlier version wrote back, and drops those whose post is gone', async () => {
+    const { daily, userData, persona, ok } = await setup();
+    const p = await persona();
+    const [post] = ok(await daily.generate({ personaId: p.id })).posts;
+    const path = join(userData, DAILY_FILE_NAME);
+    const file = JSON.parse(await readFile(path, 'utf8'));
+    expect(file.partitions[0].answers).toBeUndefined();
+    const kept = {
+      id: randomUUID(),
+      postId: post.id,
+      publicationId: randomUUID(),
+      replyThreadsId: '17',
+      text: 'Hi',
+      translation: '안녕',
+      createdAt: '2026-11-21T00:00:00.000Z',
+      send: { confirmed: true },
+      cancelledIds: [randomUUID()],
+      future: { kept: true },
+    };
+    // An earlier version deleted a persona and kept the field it did not know.
+    file.partitions[0].answers = [kept, { ...kept, id: randomUUID(), postId: randomUUID() }];
+    await writeFile(path, JSON.stringify(file));
+    ok(await daily.savePost({ postId: post.id, text: '고친 글' }));
+    expect(JSON.parse(await readFile(path, 'utf8')).partitions[0].answers).toEqual([kept]);
+    for (const broken of [
+      [{ ...kept, send: {} }],
+      [{ ...kept, replyThreadsId: 'x' }],
+      [kept, kept],
+    ]) {
+      file.partitions[0].answers = broken;
+      await writeFile(path, JSON.stringify(file));
+      expect((await daily.state()).problem?.code).toBe('daily_storage');
+    }
   });
 });

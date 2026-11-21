@@ -710,3 +710,40 @@ button.daily-card-translate:hover:not(:disabled) {
   display: inline;
   font-size: 13px;
 }
+.daily-answer {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-left: 3px solid #c9cbf3;
+  border-radius: 8px;
+  background: #f6f6fd;
+}
+.daily-answer.is-empty {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.daily-answer.is-failed,
+.daily-answer.is-unknown,
+.daily-answer.is-unconfirmed {
+  border-left-color: #e3a34b;
+}
+.daily-answer-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: #4a4cc0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.daily-answer-to {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8f9fb;
+  color: #5b6575;
+  font-size: 13px;
+}

@@ -11,6 +11,7 @@ import type { DailyState } from './use-daily';
 import {
   dailyAccountName,
   dailyAccountRow,
+  dailyAnswerBadges,
   dailyColumnCount,
   dailyDay,
   dailyInitial,
@@ -205,11 +206,14 @@ export function DailyBoard({
       </ManagedThreadsActionDialog>
     );
   } else if (dialog?.kind === 'replies' && dialogPost?.state === 'published' && postPersona) {
+    const row = dailyAccountRow(postPersona.accountId, accounts.accounts);
     dialogElement = (
       <DailyRepliesDialog
         post={dialogPost}
         persona={postPersona}
         daily={daily}
+        account={row ? dailyAccountName(row) : '계정 없음'}
+        sendBlock={dailySendBlock(postPersona, accounts.accounts, accounts.loaded)}
         onClose={closeReplies}
       />
     );
@@ -619,6 +623,12 @@ function PersonaColumn({
                         </button>
                       ) : (
                         <span>댓글 없음 · {dailyTime(post.replies.fetchedAt)} 조회</span>
+                      ))}
+                    {post.replies &&
+                      dailyAnswerBadges(post.replies).map((badge) => (
+                        <span key={badge} className="daily-card-note">
+                          {badge}
+                        </span>
                       ))}
                   </div>
                 </article>

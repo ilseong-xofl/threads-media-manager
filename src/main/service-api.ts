@@ -517,33 +517,44 @@ export class ServiceApiClient {
     return result;
   }
   /**
-   * Replies to published daily posts, read-only and on fixed paths (2026-11-21): the summary of
-   * every post whose replies were fetched, or the replies of one publication. The phone fetches
-   * them from Meta; this PC only reads what the server stored.
+   * Replies to published daily posts on fixed paths (2026-11-21): the summary of every post whose
+   * replies were fetched, the replies of one publication, and the persona's answers to them
+   * (`answer` saves one for the phone to post, `cancel` takes one back). The phone talks to
+   * Meta; this PC only talks to the server.
    */
   async replyRequest(
     context: ServiceBusinessContext,
-    operation: 'summary' | 'get',
+    operation: 'summary' | 'get' | 'answer' | 'cancel',
     id?: string,
+    body?: unknown,
   ): Promise<unknown> {
     this.assertBusinessContext(context);
     const saved = this.businessContexts.get(context)!;
     if ((await this.tokenStore.read()) !== saved.token)
       throw new ServiceApiError('로그인이 변경되었습니다.', 'AUTH_CHANGED', 401);
     this.assertBusinessContext(context);
+    const paths = {
+      summary: () => '/api/v1/replies?libraryId=daily',
+      get: () => `/api/v1/publications/${id}/replies`,
+      answer: () => `/api/v1/publications/${id}/answers`,
+      cancel: () => `/api/v1/answers/${id}/cancel`,
+    } as const;
     if (
-      operation === 'summary'
+      !Object.hasOwn(paths, operation) ||
+      (operation === 'summary'
         ? id !== undefined
-        : operation !== 'get' ||
-          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id ?? '')
+        : !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+            id ?? '',
+          )) ||
+      (operation === 'answer' ? !object(body) : body !== undefined)
     )
       throw new ServiceApiError('댓글 정보를 확인하세요.', 'VALIDATION_FAILED', 400);
+    const answering = operation === 'answer' || operation === 'cancel';
     const response = await this.request(
-      operation === 'summary'
-        ? '/api/v1/replies?libraryId=daily'
-        : `/api/v1/publications/${id}/replies`,
-      'GET',
+      paths[operation](),
+      answering ? 'POST' : 'GET',
       saved.token,
+      body,
     );
     this.assertBusinessContext(context);
     if (!response.ok) {
@@ -572,12 +583,31 @@ export class ServiceApiClient {
           'SERVICE_UNAVAILABLE',
           response.status,
         );
+      const answerMessages: Record<string, string> = {
+        MIGRATION_REQUIRED: '답글을 보낼 서버 업데이트가 필요합니다. 관리자에게 확인해 주세요.',
+        NOT_FOUND:
+          operation === 'cancel'
+            ? '취소할 답글을 서버에서 찾을 수 없습니다.'
+            : '글을 찾을 수 없습니다. 일상 화면을 다시 확인하세요.',
+        REPLY_NOT_FOUND: '답글을 달 댓글을 찾을 수 없습니다. 댓글 창을 다시 열어 주세요.',
+        ANSWER_PENDING: '이 댓글에는 휴대폰에서 아직 올리지 않은 답글이 있습니다.',
+        ANSWER_CONFLICT: '서버에 다른 내용으로 저장된 답글입니다. 댓글 창을 다시 열어 주세요.',
+        ANSWER_NOT_CANCELLABLE:
+          '휴대폰이 이미 올리려고 한 답글이라 취소할 수 없습니다. 휴대폰에서 [재등록] 또는 [등록 완료]를 눌러 주세요.',
+        ACCOUNT_DELETED: '삭제된 계정의 글이라 답글을 보낼 수 없습니다.',
+        PUBLICATION_UNAVAILABLE: '삭제·종료된 등록본에는 답글을 보낼 수 없습니다.',
+      };
       throw new ServiceApiError(
-        code === 'MIGRATION_REQUIRED'
-          ? '댓글을 읽을 서버 업데이트가 필요합니다. 관리자에게 확인해 주세요.'
-          : code === 'NOT_FOUND'
-            ? '댓글을 찾을 수 없습니다. 일상 화면을 다시 확인하세요.'
-            : '댓글을 불러오지 못했습니다. 다시 시도해 주세요.',
+        answering
+          ? (answerMessages[code] ??
+              (operation === 'cancel'
+                ? '답글 보내기를 취소하지 못했습니다. 다시 시도해 주세요.'
+                : '답글을 서버에 보내지 못했습니다. 다시 시도해 주세요.'))
+          : code === 'MIGRATION_REQUIRED'
+            ? '댓글을 읽을 서버 업데이트가 필요합니다. 관리자에게 확인해 주세요.'
+            : code === 'NOT_FOUND'
+              ? '댓글을 찾을 수 없습니다. 일상 화면을 다시 확인하세요.'
+              : '댓글을 불러오지 못했습니다. 다시 시도해 주세요.',
         code,
         response.status,
       );

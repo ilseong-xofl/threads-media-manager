@@ -58,6 +58,8 @@ export interface DailyReplySummary {
   fetchedAt: string;
   /** Replies by other people; the account's own replies are not counted. */
   count: number;
+  /** The persona's answers the phone still has to post (2026-11-21), by the server's state. */
+  answers: { queued: number; failed: number; unknown: number };
 }
 
 /** One reply to a published post, as the server keeps it. No copy is stored on this PC. */
@@ -77,6 +79,32 @@ export interface DailyReply {
   /** Written by the persona's own account. */
   ownedByMe: boolean;
   postedAt: string;
+  /**
+   * An answer the phone reported posted, shown from the answer until a fetch stores the reply
+   * (2026-11-21). Its username is not known here; `threadsId` is the answer id while it has none.
+   */
+  fromAnswer?: true;
+}
+
+/**
+ * Where one answer to a reply stands (2026-11-21). `draft`: only on this PC. `unconfirmed`: sent
+ * but the server's answer was lost. `queued`: waiting on the phone. `failed`: Meta refused it.
+ * `unknown`: the phone does not know whether it reached Threads.
+ */
+export type DailyAnswerState = 'draft' | 'unconfirmed' | 'queued' | 'failed' | 'unknown';
+
+/** The persona's answer to one reply. Once it is on Threads it is shown as a reply instead. */
+export interface DailyAnswer {
+  id: string;
+  replyThreadsId: string;
+  text: string;
+  /** The Korean it was written from, for a persona of another language. */
+  translation: string | null;
+  state: DailyAnswerState;
+  /** Meta's error code of a failed answer, when the phone reported one. */
+  errorCode: number | null;
+  /** Drafts only: an earlier send of this draft was cancelled but reached Threads anyway. */
+  postedBefore: boolean;
 }
 
 /** The replies of one published post, newest first as the server sends them. */
@@ -85,6 +113,8 @@ export interface DailyReplyThread {
   fetchedAt: string | null;
   rootThreadsId: string | null;
   replies: DailyReply[];
+  /** The answers not yet on Threads, at most one for each reply, in the order they were written. */
+  answers: DailyAnswer[];
 }
 
 /** One written post as the generator returns it. */
@@ -154,6 +184,27 @@ export interface AddDailyPostInput {
   /** The text is a Korean draft to be written in the persona's language first. */
   fromKorean: boolean;
 }
+export interface AddDailyAnswerInput {
+  postId: string;
+  replyThreadsId: string;
+  text: string;
+  /** The text is a Korean draft to be written in the persona's language first. */
+  fromKorean: boolean;
+}
+export interface SaveDailyAnswerInput {
+  postId: string;
+  answerId: string;
+  text: string;
+}
+export interface DailyAnswerInput {
+  postId: string;
+  answerId: string;
+}
+export interface SendDailyAnswersInput {
+  postId: string;
+  /** Drafts, or one answer whose send was not confirmed; sent one by one in the order written. */
+  answerIds: string[];
+}
 export interface CancelDailySendInput {
   postId: string;
   /** Required when the phone already tried (`DailyPost.started`); the user confirmed the warning. */
@@ -183,6 +234,14 @@ export interface DailyMethods {
   translateDailyReplies(input: DailyPostInput): Promise<DailyRepliesResult>;
   /** Opens one reply of the replies last read on Threads, in the browser. */
   openDailyReplyLink(input: DailyReplyLinkInput): Promise<DailyLinkResult>;
+  /** Adds an answer draft to one reply: as written, or from Korean into the persona's language. */
+  addDailyAnswer(input: AddDailyAnswerInput): Promise<DailyRepliesResult>;
+  saveDailyAnswer(input: SaveDailyAnswerInput): Promise<DailyRepliesResult>;
+  deleteDailyAnswer(input: DailyAnswerInput): Promise<DailyRepliesResult>;
+  /** Sends answers of one post to the phone one by one, stopping at the first that fails. */
+  sendDailyAnswers(input: SendDailyAnswersInput): Promise<DailyRepliesResult>;
+  /** Takes an answer back from the phone; one of this PC becomes a draft again. */
+  cancelDailyAnswer(input: DailyAnswerInput): Promise<DailyRepliesResult>;
 }
 
 export const dailyTextLength = (text: string) => [...text].length;

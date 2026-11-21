@@ -105,7 +105,7 @@
 - 요청 본문 한도: 지금은 모든 경로가 16KiB다(`src/server/http/body.ts:14`). 댓글 100개는 본문만으로도 넘는다. `parseJsonBody`에 경로별 한도를 받게 하고 **댓글 저장 경로만 512KiB**로 둔다(구현하며 256KiB에서 올림 — 4바이트 글자 500자 본문과 긴 링크 100건이 256KiB를 넘는다. 이 경로는 로그인을 확인한 뒤에만 본문을 읽는다). 다른 경로는 16KiB 그대로다.
 - 모바일 웹은 응답의 모르는 필드를 무시하므로(타입만 있고 엄격 검사 없음) 기존 응답에 필드를 더해도 옛 웹이 깨지지 않는다. PC는 휴대폰용 응답을 읽지 않는다.
 - 새 테이블이 없으면 `replies`·`answers`를 빼고 보낸다(웹은 기능을 숨긴다). 웹은 `replies`가 있을 때만 새 경로를 부르므로 새 경로의 503이 휴대폰에 닿지 않는다 — 휴대폰은 503을 받으면 화면 전체를 잠그기 때문에(`App.tsx:283`) 검사에 넣는다.
-- **내 답글로 자동 정리**: 댓글을 저장할 때, `unknown` 답글의 대상 댓글 아래에 내가 쓴 글(`ownedByMe`)이 같은 본문으로 있으면 그 답글을 `published`로 바꾸고 번호를 채운다(`closed`에 센다). 직접 [등록 완료]로 바꿔 번호가 없는 답글도 같은 방법으로 번호를 채운다. 사람이 Threads 앱에서 남의 댓글 아래를 찾아 확인하는 일을 줄이고, PC 목록에 같은 답글이 두 줄로 보이지 않게 한다.
+- **내 답글로 자동 정리**: 댓글을 저장할 때, `unknown` 답글의 대상 댓글 아래에 내가 쓴 글(`ownedByMe`)이 같은 본문으로 있으면 그 답글을 `published`로 바꾸고 번호를 채운다(`closed`에 센다). 답글을 PC에서 보낸 시각 이후에 쓴 글만 맞춘다(시계 차이 1분 허용) — 예전에 Threads 앱에서 같은 말을 직접 단 적이 있어도 그 글로 닫히지 않는다. 직접 [등록 완료]로 바꿔 번호가 없는 답글도 같은 방법으로 번호를 채운다. 사람이 Threads 앱에서 남의 댓글 아래를 찾아 확인하는 일을 줄이고, PC 목록에 같은 답글이 두 줄로 보이지 않게 한다.
 - 고유 제약 위반은 지금 모두 "이미 등록되었거나 연결된 계정입니다"로 바뀐다(`threads/service.ts:141-148`). 새 경로는 넣기 전에 직접 확인해 맞는 코드로 답한다.
 - **등록 완료 목록의 한계**: 7일의 기준은 올라간 시각이 아니라 PC에서 보낸 시각이다(지금 그대로). 마지막 답글이 올라가면 7일이 지난 글은 탭에서 빠지므로 그 답글에 달린 대댓글은 가져올 수 없다. 7일이 지난 글은 올라간 시각 순서대로 목록 아래쪽에 온다.
 
@@ -115,7 +115,7 @@
 | --- | --- |
 | `GET /api/v1/replies?libraryId=daily` | 댓글을 조회했거나 답글이 있는 글의 요약: `{ posts: [{ postKey, publicationId, fetchedAt, count, answers: { queued, failed, unknown } }] }`. PC는 일상 화면을 읽을 때 **이 한 번**만 부른다(글마다 부르지 않는다) |
 | `GET /api/v1/publications/:id/replies` | 그 글의 댓글(`owned_by_me` 포함, 최신 500개까지)과 답글 전부: `{ fetchedAt, replies: [...], answers: [{ id, replyThreadsId, text, status, threadsId, errorCode, createdAt, publishedAt }] }` |
-| `POST /api/v1/publications/:id/answers` | `{ id, replyThreadsId, text }` → `queued`. 같은 id·같은 내용이면 기존 것을 돌려주고, 같은 id·다른 내용이면 409. 그 댓글에 끝나지 않은 답글이 이미 있으면 409 `ANSWER_PENDING` |
+| `POST /api/v1/publications/:id/answers` | `{ id, replyThreadsId, text }` → `queued`. 같은 id·같은 내용이면 기존 것을 돌려주고, 같은 id·다른 내용이면 409. 그 댓글에 끝나지 않은 답글이 이미 있으면 409 `ANSWER_PENDING`, 삭제·종료된 등록본이면 409 `PUBLICATION_UNAVAILABLE`(휴대폰 목록에 나오지 않는 글이라 답글을 올릴 수 없다) |
 | `POST /api/v1/answers/:id/cancel` | `queued`·`failed` → `cancelled`. 이미 `cancelled`면 그대로 성공으로 답한다(응답을 잃고 다시 보낸 경우). `unknown`·`published`는 409(휴대폰에서 확인해야 한다) |
 
 기존 등록본 응답(`publicSnapshot`)은 그대로 둔다. PC 0.1.12 이하는 새 경로를 모르고 지금처럼 돈다.
