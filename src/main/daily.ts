@@ -4,9 +4,14 @@ import {
   DAILY_DESCRIPTION_LIMIT,
   DAILY_KOREAN_DRAFT_LIMIT,
   DAILY_NAME_LIMIT,
+  DAILY_TEXT_LIMIT,
   type DailyDraft,
+  type DailyLinkResult,
   type DailyPersona,
   type DailyPost,
+  type DailyRepliesResult,
+  type DailyReply,
+  type DailyReplyThread,
   type DailyResult,
   type DailyView,
   type DailyWaitingNote,
@@ -16,6 +21,7 @@ import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
 import {
   DAILY_LIBRARY_ID,
+  threadsId,
   validDailyText,
   validDailyTranslation,
   type DailyPartition,
@@ -30,6 +36,7 @@ import {
   uuid,
   type PublicationRequest,
 } from './mobile-publication-data';
+import { validUrl } from './open-post-link';
 import { ServiceApiError, type ServiceApiClient, type ServiceBusinessContext } from './service-api';
 
 type Client = Pick<
@@ -39,6 +46,7 @@ type Client = Pick<
   | 'publicationRequest'
   | 'managedThreadsRequest'
   | 'personaRequest'
+  | 'replyRequest'
 >;
 interface Store {
   read(scope: DailyScope): Promise<DailyPartition>;
@@ -54,6 +62,14 @@ interface Options {
   translate(persona: DailyPersona, text: string): Promise<string>;
   /** Writes a Korean draft as a post in the persona's language. Throws a readable ViewError. */
   compose(persona: DailyPersona, korean: string): Promise<string>;
+  /** Says in Korean what replies to one post say, by reply id. Throws a readable ViewError. */
+  translateReplies(
+    persona: DailyPersona,
+    post: string,
+    replies: { id: string; text: string }[],
+  ): Promise<{ id: string; korean: string }[]>;
+  /** Opens an https address in the user's browser. */
+  openExternal(url: string): Promise<void>;
   now?: () => Date;
 }
 /** What the server last said about one send. Memory only; rebuilt by `state()`. */
@@ -70,8 +86,112 @@ const EMPTY: DailyView = {
   posts: [],
   generatingPersonaId: null,
   translatingPostId: null,
+  translatingRepliesPostId: null,
   unsyncedPersonas: 0,
 };
+/** How much reply text one [한국어 뜻 보기] hands to ChatGPT (2026-11-21): the result fits 64KiB and 180s. */
+const REPLY_BATCH = 4000;
+/** The server's summary of one post's replies. Memory only; rebuilt when the board is read. */
+interface ReplySummary {
+  publicationId: string;
+  fetchedAt: string;
+  count: number;
+}
+/** One reply as the server sends it to this PC. */
+interface ServerReply {
+  threadsId: string;
+  parentThreadsId: string;
+  username: string;
+  text: string;
+  permalink: string | null;
+  mediaType: string;
+  ownedByMe: boolean;
+  postedAt: string;
+}
+/**
+ * The server cannot show replies: an older build without the routes, or one whose tables are not
+ * created. The board then simply shows no replies, as before.
+ */
+const noReplyStore = (error: unknown) =>
+  error instanceof ServiceApiError &&
+  (error.code === 'MIGRATION_REQUIRED' ||
+    (error.code === 'REPLY_REQUEST_FAILED' && error.status === 404));
+/** Only a Threads page is opened from a reply (2026-11-21), never another site it may name. */
+const THREADS_HOSTS = ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net'];
+const threadsLink = (url: string) =>
+  validUrl(url) &&
+  new URL(url).protocol === 'https:' &&
+  THREADS_HOSTS.includes(new URL(url).hostname);
+function replySummaries(value: unknown): Map<string, ReplySummary> | null {
+  if (!isObject(value) || !Array.isArray(value.posts)) return null;
+  const summaries = new Map<string, ReplySummary>();
+  for (const row of value.posts) {
+    if (
+      !isObject(row) ||
+      !uuid(row.postKey) ||
+      !uuid(row.publicationId) ||
+      !timestamp(row.fetchedAt) ||
+      !Number.isSafeInteger(row.count) ||
+      (row.count as number) < 0
+    )
+      return null;
+    summaries.set(row.postKey, {
+      publicationId: row.publicationId,
+      fetchedAt: row.fetchedAt,
+      count: row.count as number,
+    });
+  }
+  return summaries;
+}
+function serverReply(value: unknown): ServerReply | null {
+  if (
+    !isObject(value) ||
+    !threadsId(value.threadsId) ||
+    !threadsId(value.parentThreadsId) ||
+    typeof value.username !== 'string' ||
+    !value.username ||
+    value.username.length > 100 ||
+    typeof value.text !== 'string' ||
+    dailyTextLength(value.text) > DAILY_TEXT_LIMIT ||
+    !(
+      value.permalink === null ||
+      (typeof value.permalink === 'string' &&
+        value.permalink.startsWith('https://') &&
+        value.permalink.length <= 500)
+    ) ||
+    typeof value.mediaType !== 'string' ||
+    !value.mediaType ||
+    value.mediaType.length > 40 ||
+    typeof value.ownedByMe !== 'boolean' ||
+    !timestamp(value.postedAt)
+  )
+    return null;
+  return {
+    threadsId: value.threadsId,
+    parentThreadsId: value.parentThreadsId,
+    username: value.username,
+    text: value.text,
+    permalink: value.permalink,
+    mediaType: value.mediaType,
+    ownedByMe: value.ownedByMe,
+    postedAt: value.postedAt,
+  };
+}
+/**
+ * The replies the next [한국어 뜻 보기] writes in Korean: other people's replies with text and no
+ * rendering, in the server's order (newest first), until the text would pass `limit` characters.
+ */
+export function dailyReplyBatch(replies: DailyReply[], limit = REPLY_BATCH): DailyReply[] {
+  const batch: DailyReply[] = [];
+  let length = 0;
+  for (const reply of replies) {
+    if (reply.ownedByMe || !reply.text.trim() || reply.translation !== null) continue;
+    length += dailyTextLength(reply.text);
+    if (length > limit) break;
+    batch.push(reply);
+  }
+  return batch;
+}
 /**
  * The server has nowhere to keep personas: an older build without the routes, or one whose table
  * is not created. A persona the server never held (`synced` is not true) may then be changed on
@@ -175,8 +295,16 @@ export class DailyController {
   private mutating = false;
   private generatingPersonaId: string | null = null;
   private translatingPostId: string | null = null;
+  private translatingRepliesPostId: string | null = null;
   private composing = false;
   private readonly remote = new Map<string, Remote>();
+  /** By post id; empty while the server cannot show replies. */
+  private replySummary = new Map<string, ReplySummary>();
+  /**
+   * Threads addresses of the replies last read, the only ones a link may open. `scope` is the
+   * service and user they were read for; after a change of either they are not used.
+   */
+  private links: { scope: string; postId: string; urls: Map<string, string> } | null = null;
   /** A sync with the server that is under way; changes wait for it. */
   private syncing: Promise<void> | null = null;
   /** Server personas the last sync left out because another persona here uses their account. */
@@ -188,7 +316,12 @@ export class DailyController {
   }
   /** ChatGPT is writing: posts, a Korean rendering, or a post from a Korean draft. */
   get generating(): boolean {
-    return this.generatingPersonaId !== null || this.translatingPostId !== null || this.composing;
+    return (
+      this.generatingPersonaId !== null ||
+      this.translatingPostId !== null ||
+      this.translatingRepliesPostId !== null ||
+      this.composing
+    );
   }
   get active(): boolean {
     return this.mutating || this.generating;
@@ -354,15 +487,19 @@ export class DailyController {
           text: post.text,
           translation: post.translation ?? null,
           createdAt: post.createdAt,
+          replies: null,
         };
-        if (post.published)
+        if (post.published) {
+          const replies = this.replySummary.get(post.id);
           return {
             ...base,
             state: 'published',
             note: null,
             started: false,
             sentAt: post.published.sentAt,
+            replies: replies ? { fetchedAt: replies.fetchedAt, count: replies.count } : null,
           };
+        }
         if (!post.send)
           return { ...base, state: 'draft', note: null, started: false, sentAt: null };
         const remote = this.remote.get(post.id);
@@ -377,7 +514,91 @@ export class DailyController {
       }),
       generatingPersonaId: this.generatingPersonaId,
       translatingPostId: this.translatingPostId,
+      translatingRepliesPostId: this.translatingRepliesPostId,
     };
+  }
+  /**
+   * Reads which published posts have replies, once per look at the board (2026-11-21). A server
+   * without replies leaves them out; any other failure keeps what was last read.
+   */
+  private async readReplySummary(context: ServiceBusinessContext) {
+    try {
+      this.assert(context);
+      const summaries = replySummaries(await this.options.client.replyRequest(context, 'summary'));
+      this.assert(context);
+      if (summaries) this.replySummary = summaries;
+    } catch (error) {
+      this.assert(context);
+      if (noReplyStore(error)) this.replySummary = new Map();
+      else if (error instanceof ServiceApiError && error.code === 'AUTH_REQUIRED') throw error;
+    }
+  }
+  /** The replies the server keeps for one published post. Nothing of them is stored here. */
+  private async serverReplies(context: ServiceBusinessContext, postId: string) {
+    const summary = this.replySummary.get(postId);
+    if (!summary)
+      return fail('daily_replies', '댓글을 찾을 수 없습니다. 일상 화면을 다시 확인하세요.');
+    this.assert(context);
+    const raw = await this.options.client.replyRequest(context, 'get', summary.publicationId);
+    this.assert(context);
+    const replies =
+      isObject(raw) && Array.isArray(raw.replies) ? raw.replies.map(serverReply) : null;
+    if (
+      !isObject(raw) ||
+      !(raw.fetchedAt === null || timestamp(raw.fetchedAt)) ||
+      !(raw.rootThreadsId === null || threadsId(raw.rootThreadsId)) ||
+      !replies ||
+      replies.some((reply) => !reply)
+    )
+      return fail('INVALID_RESPONSE', '댓글 목록을 확인하지 못했습니다.');
+    const read = {
+      fetchedAt: raw.fetchedAt as string | null,
+      rootThreadsId: raw.rootThreadsId as string | null,
+      replies: replies as ServerReply[],
+    };
+    this.links = {
+      scope: JSON.stringify(this.scope(context)),
+      postId,
+      urls: new Map(
+        read.replies.flatMap((reply) =>
+          reply.permalink ? [[reply.threadsId, reply.permalink]] : [],
+        ),
+      ),
+    };
+    return read;
+  }
+  /** The replies with this PC's Korean renderings, each only for the text it was written for. */
+  private static thread(
+    postId: string,
+    partition: DailyPartition,
+    read: Awaited<ReturnType<DailyController['serverReplies']>>,
+  ): DailyReplyThread {
+    const notes = (partition.replyNotes ?? []).filter((note) => note.postId === postId);
+    return {
+      postId,
+      fetchedAt: read.fetchedAt,
+      rootThreadsId: read.rootThreadsId,
+      replies: read.replies.map(({ permalink, ...reply }) => ({
+        ...reply,
+        translation:
+          notes.find((note) => note.threadsId === reply.threadsId && note.text === reply.text)
+            ?.translation ?? null,
+        hasLink: permalink !== null,
+      })),
+    };
+  }
+  private async withThread(
+    action: (
+      context: ServiceBusinessContext,
+    ) => Promise<{ partition: DailyPartition; thread: DailyReplyThread }>,
+  ): Promise<DailyRepliesResult> {
+    let thread = null as DailyReplyThread | null;
+    const result = await this.respond(async (context) => {
+      const done = await action(context);
+      thread = done.thread;
+      return done.partition;
+    });
+    return { ...result, thread: result.status === 'ok' ? thread : null };
   }
   /** Writes one server verdict into the stored post. The post may have changed meanwhile. */
   private static apply(post: StoredDailyPost, requestId: string | null, verdict: Verdict) {
@@ -484,8 +705,121 @@ export class DailyController {
         });
         await this.syncing;
       }
-      return this.refresh(context);
+      const partition = await this.refresh(context);
+      await this.readReplySummary(context);
+      return partition;
     });
+  }
+
+  /** The replies of one published post, read from the server when its window opens or after work. */
+  replies(input: unknown): Promise<DailyRepliesResult> {
+    if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
+      return this.withThread(invalid);
+    const postId = input.postId;
+    return this.withThread(async (context) => {
+      const read = await this.serverReplies(context, postId);
+      const partition = await this.options.store.read(this.scope(context));
+      return { partition, thread: DailyController.thread(postId, partition, read) };
+    });
+  }
+
+  /**
+   * Writes in Korean the replies of one post that have none, in one ChatGPT call of up to 4,000
+   * characters; the rest waits for the next press. Long-running like `generate`.
+   */
+  async translateReplies(input: unknown): Promise<DailyRepliesResult> {
+    if (this.generating)
+      return this.withThread(() => fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'));
+    if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
+      return this.withThread(invalid);
+    const postId = input.postId;
+    this.translatingRepliesPostId = postId;
+    try {
+      return await this.withThread(async (context) => {
+        const scope = this.scope(context);
+        let read: Awaited<ReturnType<DailyController['serverReplies']>>;
+        let batch: DailyReply[];
+        let renderings: { id: string; korean: string }[];
+        try {
+          const before = await this.options.store.read(scope);
+          const post = before.posts.find((item) => item.id === postId);
+          if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
+          const persona = before.personas.find((p) => p.id === post.personaId);
+          if (!persona || persona.language === 'ko') return invalid();
+          read = await this.serverReplies(context, postId);
+          batch = dailyReplyBatch(DailyController.thread(postId, before, read).replies);
+          if (!batch.length) fail('daily_replies_translated', '한국어 뜻을 만들 댓글이 없습니다.');
+          renderings = await this.options.translateReplies(
+            persona,
+            post.text,
+            batch.map((reply) => ({ id: reply.threadsId, text: reply.text })),
+          );
+        } finally {
+          // Every view built from here on, for success or failure, shows the work as over.
+          this.translatingRepliesPostId = null;
+        }
+        this.assert(context);
+        if (!renderings.every((item) => validDailyTranslation(item.korean)))
+          fail('daily_generation', '한국어 뜻의 형식을 확인하지 못했습니다. 다시 시도하세요.');
+        const partition = await this.options.store.update(scope, (partition) => {
+          // A post deleted meanwhile keeps no renderings.
+          if (!partition.posts.some((post) => post.id === postId)) return partition;
+          const notes = (partition.replyNotes ??= []);
+          for (const { id, korean } of renderings) {
+            const reply = batch.find((item) => item.threadsId === id);
+            if (!reply) continue;
+            const note = { postId, threadsId: id, text: reply.text, translation: korean };
+            const index = notes.findIndex(
+              (item) => item.postId === postId && item.threadsId === id,
+            );
+            if (index >= 0) notes[index] = note;
+            else notes.push(note);
+          }
+          return partition;
+        });
+        return { partition, thread: DailyController.thread(postId, partition, read) };
+      });
+    } finally {
+      this.translatingRepliesPostId = null;
+    }
+  }
+
+  /** Opens on Threads one reply of the replies last read; no address comes from the window. */
+  async openReplyLink(input: unknown): Promise<DailyLinkResult> {
+    const links = this.links;
+    const scope = await this.options.client
+      .getBusinessContext()
+      .then((context) => JSON.stringify(this.scope(context)))
+      .catch(() => null);
+    const url =
+      isObject(input) &&
+      exactKeys(input, ['postId', 'threadsId']) &&
+      links &&
+      links.scope === scope &&
+      links.postId === input.postId &&
+      typeof input.threadsId === 'string'
+        ? links.urls.get(input.threadsId)
+        : undefined;
+    if (!url || !threadsLink(url))
+      return {
+        status: 'error',
+        problem: {
+          code: 'link_invalid',
+          message: 'Threads 링크를 열 수 없습니다. 댓글 창을 다시 열어 주세요.',
+        },
+      };
+    try {
+      await this.options.openExternal(url);
+      return { status: 'ok', problem: null };
+    } catch {
+      return {
+        status: 'error',
+        problem: {
+          code: 'link_open_failed',
+          message: '브라우저에서 링크를 열지 못했습니다. 기본 브라우저 설정을 확인하세요.',
+        },
+      };
+    }
   }
 
   savePersona(input: unknown): Promise<DailyResult> {

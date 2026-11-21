@@ -604,6 +604,9 @@ const daily: DailyController = new DailyController({
   generate: (persona, recentPosts, today) => dailyGenerator.generate(persona, recentPosts, today),
   translate: (persona, text) => dailyGenerator.translate(persona, text),
   compose: (persona, korean) => dailyGenerator.compose(persona, korean),
+  translateReplies: (persona, post, replies) =>
+    dailyGenerator.translateReplies(persona, post, replies),
+  openExternal: (url) => shell.openExternal(url, { activate: true }),
 });
 async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
   try {

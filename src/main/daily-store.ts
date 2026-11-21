@@ -43,11 +43,23 @@ export interface StoredDailyPost {
 export interface StoredDailyPersona extends DailyPersona {
   synced?: boolean;
 }
+/**
+ * What one reply to a published post says in Korean (2026-11-21), with the reply text it was
+ * written for: a reply edited on Threads no longer matches and goes without it.
+ */
+export interface StoredReplyNote {
+  postId: string;
+  threadsId: string;
+  text: string;
+  translation: string;
+}
 export interface DailyPartition {
   service: string;
   ownerId: string;
   personas: StoredDailyPersona[];
   posts: StoredDailyPost[];
+  /** Absent in files written before replies were read. */
+  replyNotes?: StoredReplyNote[];
 }
 export interface DailyFile {
   version: 1;
@@ -123,6 +135,16 @@ function validPost(v: unknown): v is StoredDailyPost {
       (isObject(v.published) && (v.published.sentAt === null || timestamp(v.published.sentAt))))
   );
 }
+export const threadsId = (v: unknown): v is string => typeof v === 'string' && /^\d{1,40}$/.test(v);
+function validNote(v: unknown): v is StoredReplyNote {
+  return (
+    isObject(v) &&
+    uuid(v.postId) &&
+    threadsId(v.threadsId) &&
+    validDailyText(v.text) &&
+    validDailyTranslation(v.translation)
+  );
+}
 /** Checks the fields this version uses. Unknown fields are kept as they are. */
 export function validDailyFile(v: unknown): v is DailyFile {
   if (!isObject(v) || v.version !== 1 || !Array.isArray(v.partitions)) return false;
@@ -137,7 +159,9 @@ export function validDailyFile(v: unknown): v is DailyFile {
       !Array.isArray(p.personas) ||
       !Array.isArray(p.posts) ||
       !p.personas.every(validPersona) ||
-      !p.posts.every(validPost)
+      !p.posts.every(validPost) ||
+      (p.replyNotes !== undefined &&
+        (!Array.isArray(p.replyNotes) || !p.replyNotes.every(validNote)))
     )
       return false;
     const scope = JSON.stringify([p.service, p.ownerId]);
@@ -184,6 +208,12 @@ export class DailyStore {
       throw unreadable();
     }
     if (!validDailyFile(value)) throw unreadable();
+    // An older version that deleted a persona left the notes of its posts behind; drop them.
+    for (const partition of value.partitions) {
+      const posts = new Set(partition.posts.map((post) => post.id));
+      if (partition.replyNotes)
+        partition.replyNotes = partition.replyNotes.filter((note) => posts.has(note.postId));
+    }
     return value;
   }
   private async save(file: DailyFile): Promise<void> {

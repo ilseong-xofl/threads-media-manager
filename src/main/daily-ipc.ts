@@ -1,5 +1,5 @@
 import { IPC } from '../shared/contracts';
-import type { DailyResult } from '../shared/daily';
+import type { DailyLinkResult, DailyRepliesResult, DailyResult } from '../shared/daily';
 
 interface DailyActions {
   state(): Promise<DailyResult>;
@@ -12,6 +12,9 @@ interface DailyActions {
   deletePost(input: unknown): Promise<DailyResult>;
   send(input: unknown): Promise<DailyResult>;
   cancelSend(input: unknown): Promise<DailyResult>;
+  replies(input: unknown): Promise<DailyRepliesResult>;
+  translateReplies(input: unknown): Promise<DailyRepliesResult>;
+  openReplyLink(input: unknown): Promise<DailyLinkResult>;
 }
 
 /** Called only after the main frame and service-access checks. No arbitrary endpoint IPC. */
@@ -19,7 +22,7 @@ export function handleDailyRequest(
   channel: string,
   args: unknown[],
   daily: DailyActions,
-): Promise<DailyResult> {
+): Promise<DailyResult | DailyLinkResult> {
   if (channel === IPC.daily) {
     if (args.length) throw new Error('Unexpected arguments');
     return daily.state();
@@ -44,6 +47,12 @@ export function handleDailyRequest(
       return daily.send(args[0]);
     case IPC.cancelDailySend:
       return daily.cancelSend(args[0]);
+    case IPC.dailyReplies:
+      return daily.replies(args[0]);
+    case IPC.translateDailyReplies:
+      return daily.translateReplies(args[0]);
+    case IPC.openDailyReplyLink:
+      return daily.openReplyLink(args[0]);
     default:
       throw new Error('Unsupported daily operation');
   }

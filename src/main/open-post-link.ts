@@ -1,6 +1,6 @@
 import type { CollectionView, PostLinkResult } from '../shared/contracts';
 
-function validUrl(value: unknown): value is string {
+export function validUrl(value: unknown): value is string {
   if (
     typeof value !== 'string' ||
     !value ||

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   CancelDailySendInput,
   DailyMethods,
+  DailyReplyThread,
   DailyResult,
   DailyView,
   SaveDailyPersonaInput,
@@ -20,10 +21,20 @@ export interface DailyViewState {
   translating: string | null;
   /** A Korean draft is being written in a persona's language. */
   composing: boolean;
+  /** The replies of the open replies window, once read. */
+  replies: DailyReplyThread | null;
+  /** The post whose replies this window is writing in Korean, until the call returns. */
+  translatingReplies: string | null;
 }
 
-/** `generate`, `translate` and `compose` are the long ChatGPT calls; one runs at a time. */
-type CallKind = 'read' | 'write' | 'generate' | 'translate' | 'compose';
+/**
+ * `generate`, `translate`, `compose` and `translate-replies` are the long ChatGPT calls; one runs
+ * at a time. `replies` reads the replies of the open window.
+ */
+type CallKind =
+  'read' | 'write' | 'generate' | 'translate' | 'compose' | 'replies' | 'translate-replies';
+const chatGpt = (kind: CallKind) =>
+  kind === 'generate' || kind === 'translate' || kind === 'compose' || kind === 'translate-replies';
 
 /**
  * Applies every mutation result's view and ignores late answers: results from before a
@@ -39,6 +50,7 @@ export function createDailyController(
       posts: [],
       generatingPersonaId: null,
       translatingPostId: null,
+      translatingRepliesPostId: null,
       unsyncedPersonas: 0,
     },
     loaded: false,
@@ -46,7 +58,11 @@ export function createDailyController(
     generating: null,
     translating: null,
     composing: false,
+    replies: null,
+    translatingReplies: null,
   };
+  /** The post of the open replies window; answers for another post are dropped. */
+  let repliesPostId: string | null = null;
   let enabled = false;
   let generation = 0;
   let reading = false;
@@ -64,18 +80,29 @@ export function createDailyController(
         ? { generating: id }
         : kind === 'translate'
           ? { translating: id }
-          : { composing: id !== null };
-  async function call(kind: CallKind, action: () => Promise<DailyResult>, id = '') {
+          : kind === 'translate-replies'
+            ? { translatingReplies: id }
+            : kind === 'compose'
+              ? { composing: id !== null }
+              : {};
+  async function call(
+    kind: CallKind,
+    action: () => Promise<DailyResult & { thread?: DailyReplyThread | null }>,
+    id = '',
+  ) {
     if (!enabled) return false;
+    const reads = kind === 'read' || kind === 'replies';
     if (kind === 'read' && reading) {
       readAgain = true;
       return false;
     }
     if (kind === 'write' && state.busy) return false;
     if (
-      kind !== 'read' &&
-      kind !== 'write' &&
-      (state.generating !== null || state.translating !== null || state.composing)
+      chatGpt(kind) &&
+      (state.generating !== null ||
+        state.translating !== null ||
+        state.composing ||
+        state.translatingReplies !== null)
     )
       return false;
     const request = generation;
@@ -85,10 +112,13 @@ export function createDailyController(
     let failed = false;
     try {
       const result = await action();
-      if (kind !== 'read') finishedChanges += 1;
+      if (!reads) finishedChanges += 1;
       if (!enabled || request !== generation) return false;
-      if (kind === 'read' && finishedChanges !== changesBefore) return false;
-      update({ view: result.view, loaded: true });
+      // Replies are read from the server as they are; only the board view can be overtaken.
+      if (result.thread && result.thread.postId === repliesPostId)
+        update({ replies: result.thread });
+      if (!reads || finishedChanges === changesBefore) update({ view: result.view, loaded: true });
+      else if (kind === 'read') return false;
       if (result.status !== 'ok') {
         effects.notify(result.problem?.message ?? '일상 작업을 마치지 못했습니다.', true);
         return false;
@@ -96,13 +126,15 @@ export function createDailyController(
       return true;
     } catch {
       failed = true;
-      if (kind !== 'read') finishedChanges += 1;
+      if (!reads) finishedChanges += 1;
       if (enabled && request === generation) {
         update({ loaded: true });
         effects.notify(
           kind === 'read'
             ? '일상 정보를 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
-            : '일상 작업 결과를 확인하지 못했습니다. 보드의 상태를 다시 확인하세요.',
+            : kind === 'replies'
+              ? '댓글을 불러오지 못했습니다. 잠시 후 다시 시도하세요.'
+              : '일상 작업 결과를 확인하지 못했습니다. 보드의 상태를 다시 확인하세요.',
           true,
         );
       }
@@ -116,7 +148,7 @@ export function createDailyController(
             readAgain = false;
             void refresh();
           }
-        } else if (failed || request !== generation) void refresh();
+        } else if (kind !== 'replies' && (failed || request !== generation)) void refresh();
       }
     }
   }
@@ -178,6 +210,24 @@ export function createDailyController(
     cancel(input: CancelDailySendInput) {
       return call('write', () => api.cancelDailySend(input));
     },
+    /** Opens the replies window of a published post and reads its replies. */
+    openReplies(postId: string) {
+      repliesPostId = postId;
+      update({ replies: null });
+      return call('replies', () => api.getDailyReplies({ postId }));
+    },
+    closeReplies() {
+      repliesPostId = null;
+      update({ replies: null });
+    },
+    translateReplies(postId: string) {
+      return call('translate-replies', () => api.translateDailyReplies({ postId }), postId);
+    },
+    async openReplyLink(postId: string, threadsId: string) {
+      const result = await api.openDailyReplyLink({ postId, threadsId }).catch(() => null);
+      if (result?.status !== 'ok')
+        effects.notify(result?.problem?.message ?? 'Threads 링크를 열지 못했습니다.', true);
+    },
   };
 }
 
@@ -200,6 +250,9 @@ export function useDaily(enabled: boolean) {
         deleteDailyPost: (input) => window.threadsMedia.deleteDailyPost(input),
         sendDailyPost: (input) => window.threadsMedia.sendDailyPost(input),
         cancelDailySend: (input) => window.threadsMedia.cancelDailySend(input),
+        getDailyReplies: (input) => window.threadsMedia.getDailyReplies(input),
+        translateDailyReplies: (input) => window.threadsMedia.translateDailyReplies(input),
+        openDailyReplyLink: (input) => window.threadsMedia.openDailyReplyLink(input),
       },
       { notify: (message, error) => notifyRef.current({ message, error }) },
     ),
@@ -220,16 +273,24 @@ export function useDaily(enabled: boolean) {
     generatingPersonaId: state.generating ?? state.view.generatingPersonaId,
     /** The post whose Korean rendering is being written, by this window or the main process. */
     translatingPostId: state.translating ?? state.view.translatingPostId,
+    /** The post whose replies are being written in Korean, by this window or the main process. */
+    translatingRepliesPostId: state.translatingReplies ?? state.view.translatingRepliesPostId,
     /** ChatGPT is writing something; one such call runs at a time and nothing is edited meanwhile. */
     writing:
       state.generating !== null ||
       state.translating !== null ||
       state.composing ||
+      state.translatingReplies !== null ||
       state.view.generatingPersonaId !== null ||
-      state.view.translatingPostId !== null,
+      state.view.translatingPostId !== null ||
+      state.view.translatingRepliesPostId !== null,
     /** A call that must finish before an update restart. */
     working:
-      state.busy || state.generating !== null || state.translating !== null || state.composing,
+      state.busy ||
+      state.generating !== null ||
+      state.translating !== null ||
+      state.composing ||
+      state.translatingReplies !== null,
   };
 }
 

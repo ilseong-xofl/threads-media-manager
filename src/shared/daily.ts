@@ -49,6 +49,42 @@ export interface DailyPost {
   started: boolean;
   /** When the server accepted the send; null for drafts and unconfirmed sends. */
   sentAt: string | null;
+  /** Published posts whose replies the phone has fetched (2026-11-21); null otherwise. */
+  replies: DailyReplySummary | null;
+}
+
+/** The server's summary of the replies of one published post. */
+export interface DailyReplySummary {
+  fetchedAt: string;
+  /** Replies by other people; the account's own replies are not counted. */
+  count: number;
+}
+
+/** One reply to a published post, as the server keeps it. No copy is stored on this PC. */
+export interface DailyReply {
+  threadsId: string;
+  /** The post or reply this one answers; the post itself for a reply made to the post. */
+  parentThreadsId: string;
+  username: string;
+  /** May be empty for a reply that is only an image or a video. */
+  text: string;
+  /** What the reply says in Korean, kept on this PC for the text it was written for. */
+  translation: string | null;
+  /** Meta's media_type as it came. */
+  mediaType: string;
+  /** The reply can be opened on Threads. */
+  hasLink: boolean;
+  /** Written by the persona's own account. */
+  ownedByMe: boolean;
+  postedAt: string;
+}
+
+/** The replies of one published post, newest first as the server sends them. */
+export interface DailyReplyThread {
+  postId: string;
+  fetchedAt: string | null;
+  rootThreadsId: string | null;
+  replies: DailyReply[];
 }
 
 /** One written post as the generator returns it. */
@@ -64,6 +100,8 @@ export interface DailyView {
   generatingPersonaId: string | null;
   /** The post whose Korean rendering is being written right now, if any. */
   translatingPostId: string | null;
+  /** The post whose replies are being written in Korean right now, if any. */
+  translatingRepliesPostId: string | null;
   /**
    * Personas the server is not known to hold (2026-11-18): the phone shows a persona only when
    * the server has it. Counts this PC's personas the last sync could not confirm or upload, and
@@ -75,6 +113,20 @@ export interface DailyView {
 export interface DailyResult {
   status: 'ok' | 'error';
   view: DailyView;
+  problem: Problem | null;
+}
+
+export interface DailyRepliesResult extends DailyResult {
+  /** The replies that were read; null when the call failed. */
+  thread: DailyReplyThread | null;
+}
+
+export interface DailyReplyLinkInput {
+  postId: string;
+  threadsId: string;
+}
+export interface DailyLinkResult {
+  status: 'ok' | 'error';
   problem: Problem | null;
 }
 
@@ -125,6 +177,12 @@ export interface DailyMethods {
   sendDailyPost(input: DailyPostInput): Promise<DailyResult>;
   /** Takes a sent post back to a draft. */
   cancelDailySend(input: CancelDailySendInput): Promise<DailyResult>;
+  /** Reads the replies of one published post from the server. */
+  getDailyReplies(input: DailyPostInput): Promise<DailyRepliesResult>;
+  /** Writes in Korean the replies of one post that have no rendering yet, as many as fit at once. */
+  translateDailyReplies(input: DailyPostInput): Promise<DailyRepliesResult>;
+  /** Opens one reply of the replies last read on Threads, in the browser. */
+  openDailyReplyLink(input: DailyReplyLinkInput): Promise<DailyLinkResult>;
 }
 
 export const dailyTextLength = (text: string) => [...text].length;

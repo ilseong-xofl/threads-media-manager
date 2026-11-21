@@ -102,7 +102,7 @@
 | `GET /api/v1/mobile/publications/:id/replies?cursor=` | — | 저장된 댓글을 작성 시각 최신순으로 20개씩: `{ replies: [{ threadsId, parentThreadsId, parentUsername, username, text, permalink, mediaType, ownedByMe, postedAt }], nextCursor }`. 대댓글도 한 줄로 섞어 보내고 누구의 댓글에 단 것인지(`parentUsername`)를 붙인다. Meta를 부르지 않으므로 브라우저와 옛 앱에서도 된다 |
 | `GET /api/v1/mobile/publications/:id` (기존) | — | 위 `replies`와 `answers: [{ id, replyThreadsId, replyUsername, replyText, replyPermalink, text, status, errorCode }]`(끝나지 않은 것만, 작성순) 추가 |
 
-- 요청 본문 한도: 지금은 모든 경로가 16KiB다(`src/server/http/body.ts:14`). 댓글 100개는 본문만 최대 150KB쯤이라 넘는다. `parseJsonBody`에 경로별 한도를 받게 하고 **댓글 저장 경로만 256KiB**로 둔다. 다른 경로는 16KiB 그대로다.
+- 요청 본문 한도: 지금은 모든 경로가 16KiB다(`src/server/http/body.ts:14`). 댓글 100개는 본문만으로도 넘는다. `parseJsonBody`에 경로별 한도를 받게 하고 **댓글 저장 경로만 512KiB**로 둔다(구현하며 256KiB에서 올림 — 4바이트 글자 500자 본문과 긴 링크 100건이 256KiB를 넘는다. 이 경로는 로그인을 확인한 뒤에만 본문을 읽는다). 다른 경로는 16KiB 그대로다.
 - 모바일 웹은 응답의 모르는 필드를 무시하므로(타입만 있고 엄격 검사 없음) 기존 응답에 필드를 더해도 옛 웹이 깨지지 않는다. PC는 휴대폰용 응답을 읽지 않는다.
 - 새 테이블이 없으면 `replies`·`answers`를 빼고 보낸다(웹은 기능을 숨긴다). 웹은 `replies`가 있을 때만 새 경로를 부르므로 새 경로의 503이 휴대폰에 닿지 않는다 — 휴대폰은 503을 받으면 화면 전체를 잠그기 때문에(`App.tsx:283`) 검사에 넣는다.
 - **내 답글로 자동 정리**: 댓글을 저장할 때, `unknown` 답글의 대상 댓글 아래에 내가 쓴 글(`ownedByMe`)이 같은 본문으로 있으면 그 답글을 `published`로 바꾸고 번호를 채운다(`closed`에 센다). 직접 [등록 완료]로 바꿔 번호가 없는 답글도 같은 방법으로 번호를 채운다. 사람이 Threads 앱에서 남의 댓글 아래를 찾아 확인하는 일을 줄이고, PC 목록에 같은 답글이 두 줄로 보이지 않게 한다.

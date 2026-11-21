@@ -627,3 +627,86 @@ button.daily-card-translate:hover:not(:disabled) {
 .daily-form-actions .daily-form-delete {
   margin-right: auto;
 }
+
+/* Replies to a published post (2026-11-21). */
+.daily-card-meta button.daily-card-replies {
+  min-height: 0;
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.daily-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.daily-replies-post {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e0e4eb;
+  border-radius: 12px;
+  background: #f8f9fb;
+}
+.daily-replies-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(420px, calc(100vh - 360px));
+  overflow-y: auto;
+}
+.daily-replies-empty {
+  padding: 16px 0;
+  color: #5b6575;
+  text-align: center;
+}
+.daily-reply {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e3e6ec;
+  border-radius: 12px;
+  background: #fff;
+}
+.daily-reply.is-nested {
+  margin-left: 24px;
+  background: #fbfbfd;
+}
+.daily-reply-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: #5b6575;
+  font-size: 12px;
+}
+.daily-reply-head strong {
+  color: #17202e;
+  font-size: 13px;
+}
+.daily-reply-tag {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #e9ebf1;
+  color: #566072;
+  font-weight: 600;
+}
+.daily-reply-tag.is-mine {
+  background: #eaeafa;
+  color: #4a4cc0;
+}
+.daily-reply-to {
+  color: #5b6575;
+  font-size: 12px;
+}
+.daily-reply-media {
+  color: #5b6575;
+  font-weight: 600;
+}
+.daily-reply .daily-card-body button.daily-card-translate {
+  display: inline;
+  font-size: 13px;
+}

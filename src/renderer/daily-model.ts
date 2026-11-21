@@ -1,4 +1,12 @@
-import type { DailyPersona, DailyPost, DailyView, DailyWaitingNote } from '../shared/daily';
+import type { CaptionLanguage } from '../shared/contracts';
+import type {
+  DailyPersona,
+  DailyPost,
+  DailyReply,
+  DailyReplyThread,
+  DailyView,
+  DailyWaitingNote,
+} from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import { mobileAccountChoices } from './mobile-publication-model';
 
@@ -132,6 +140,75 @@ export function dailyNeedsTranslation(view: DailyView, postId: string) {
   const post = view.posts.find((item) => item.id === postId);
   const persona = post && view.personas.find((item) => item.id === post.personaId);
   return !!persona && persona.language !== 'ko' && post.translation === null;
+}
+
+/** One line of the replies window. */
+export interface DailyReplyRow {
+  reply: DailyReply;
+  /** Shown indented under the reply to the post it belongs to. */
+  nested: boolean;
+  /** At the top level although it answers a reply that was not fetched. */
+  orphan: boolean;
+  /** Whose reply a nested one answers, when that is not the reply it is shown under. */
+  to: string | null;
+}
+
+/**
+ * The order of the replies window (2026-11-21): replies to the post newest first, each followed
+ * by every reply under it, oldest first and indented once. A reply whose parent was not fetched
+ * (only the newest replies are) stands at the top level, marked as a reply to a reply.
+ */
+export function dailyReplyRows(thread: DailyReplyThread): DailyReplyRow[] {
+  const byId = new Map(thread.replies.map((reply) => [reply.threadsId, reply]));
+  /** The top-level reply this one is shown under; itself when it is at the top level. */
+  const head = (reply: DailyReply) => {
+    const seen = new Set<string>();
+    let current = reply;
+    while (current.parentThreadsId !== thread.rootThreadsId && !seen.has(current.threadsId)) {
+      const parent = byId.get(current.parentThreadsId);
+      if (!parent) break;
+      seen.add(current.threadsId);
+      current = parent;
+    }
+    return current;
+  };
+  const posted = (reply: DailyReply) => Date.parse(reply.postedAt) || 0;
+  const heads = new Map(thread.replies.map((reply) => [reply.threadsId, head(reply)]));
+  return thread.replies
+    .filter((reply) => heads.get(reply.threadsId) === reply)
+    .sort((a, b) => posted(b) - posted(a))
+    .flatMap((top) => [
+      { reply: top, nested: false, orphan: top.parentThreadsId !== thread.rootThreadsId, to: null },
+      ...thread.replies
+        .filter((reply) => reply !== top && heads.get(reply.threadsId) === top)
+        .sort((a, b) => posted(a) - posted(b))
+        .map((reply) => ({
+          reply,
+          nested: true,
+          orphan: false,
+          to:
+            reply.parentThreadsId === top.threadsId
+              ? null
+              : (byId.get(reply.parentThreadsId)?.username ?? null),
+        })),
+    ]);
+}
+
+/** What a reply carries besides text. A carousel may mix both and is named as images. */
+export function dailyReplyMedia(mediaType: string) {
+  if (mediaType === 'IMAGE' || mediaType === 'CAROUSEL_ALBUM') return '[이미지]';
+  if (mediaType === 'VIDEO') return '[영상]';
+  return null;
+}
+
+/** [한국어 뜻 보기] is offered while another person's reply with text has no rendering. */
+export function dailyRepliesTranslatable(thread: DailyReplyThread, language: CaptionLanguage) {
+  return (
+    language !== 'ko' &&
+    thread.replies.some(
+      (reply) => !reply.ownedByMe && reply.text.trim() !== '' && reply.translation === null,
+    )
+  );
 }
 
 export const dailyInitial = (name: string) => [...name.trim()][0] ?? '?';

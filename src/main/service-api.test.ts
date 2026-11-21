@@ -91,6 +91,48 @@ describe('service login boundary reused from local-video-manager', () => {
       expect(failure.message).not.toContain('private detail');
     }
   });
+  it('reads replies only on fixed paths and tells an older server from a missing table', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));
+    const client = new ServiceApiClient('https://admin.example.test', store('session'), fetcher);
+    const context = await client.getBusinessContext();
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const last = () => [fetcher.mock.lastCall![1]?.method, String(fetcher.mock.lastCall![0])];
+    fetcher.mockResolvedValueOnce(json({ posts: [] }));
+    await expect(client.replyRequest(context, 'summary')).resolves.toEqual({ posts: [] });
+    expect(last()).toEqual(['GET', 'https://admin.example.test/api/v1/replies?libraryId=daily']);
+    fetcher.mockResolvedValueOnce(json({ replies: [] }));
+    await client.replyRequest(context, 'get', id);
+    expect(last()).toEqual(['GET', `https://admin.example.test/api/v1/publications/${id}/replies`]);
+    expect(fetcher.mock.lastCall![1]?.body).toBeUndefined();
+    const sent = fetcher.mock.calls.length;
+    for (const call of [
+      () => client.replyRequest(context, 'get', '../answers'),
+      () => client.replyRequest(context, 'get'),
+      () => client.replyRequest(context, 'summary', id),
+      () => client.replyRequest(context, 'answer' as 'get', id),
+    ])
+      await expect(call()).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(fetcher).toHaveBeenCalledTimes(sent);
+    // An older server has no such route and answers with a page, not a JSON error.
+    fetcher.mockResolvedValueOnce(new Response('<html>Not Found</html>', { status: 404 }));
+    await expect(client.replyRequest(context, 'summary')).rejects.toMatchObject({
+      code: 'REPLY_REQUEST_FAILED',
+      status: 404,
+    });
+    for (const [status, code, expected] of [
+      [404, 'NOT_FOUND', 'NOT_FOUND'],
+      [503, 'MIGRATION_REQUIRED', 'MIGRATION_REQUIRED'],
+      [500, 'UNEXPECTED_ERROR', 'SERVICE_UNAVAILABLE'],
+      [403, 'FORBIDDEN', 'AUTH_REQUIRED'],
+    ] as const) {
+      fetcher.mockResolvedValueOnce(json({ error: { code, message: 'private detail' } }, status));
+      const failure = (await client
+        .replyRequest(context, 'get', id)
+        .catch((error: unknown) => error)) as Error;
+      expect(failure).toMatchObject({ code: expected });
+      expect(failure.message).not.toContain('private detail');
+    }
+  });
   it('limits publication calls to fixed JSON endpoints and preserves storage failures separately from service access', async () => {
     const tokens = store('signed-session');
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));

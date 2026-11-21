@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DailyDraft, DailyPersona, DailyResult } from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
-import { DailyController } from './daily';
+import { DailyController, dailyReplyBatch } from './daily';
 import { DAILY_FILE_NAME, DailyStore } from './daily-store';
 import type { PublicationRequest } from './mobile-publication-data';
 import { ServiceApiError, type ServiceApiClient } from './service-api';
@@ -44,7 +44,33 @@ async function setup() {
     loseAnswer: false,
     /** Holds the next persona list until released, to look at a sync under way. */
     hold: null as Promise<void> | null,
+    /** The reply routes: 'old' as a build without them, 'migration' as a missing table. */
+    replies: 'up' as 'up' | 'down' | 'old' | 'migration' | 'auth',
   };
+  /** The server's reply summary and the replies of each publication. */
+  const summary: { postKey: string; publicationId: string; fetchedAt: string; count: number }[] =
+    [];
+  const threads = new Map<
+    string,
+    { fetchedAt: string | null; rootThreadsId: string; replies: unknown[] }
+  >();
+  const replyRequest = vi.fn(async (_context: unknown, operation: string, id?: string) => {
+    if (server.replies === 'down')
+      throw new ServiceApiError('서비스에 연결할 수 없습니다.', 'SERVICE_UNAVAILABLE', 503);
+    if (server.replies === 'old')
+      throw new ServiceApiError('댓글을 불러오지 못했습니다.', 'REPLY_REQUEST_FAILED', 404);
+    if (server.replies === 'migration')
+      throw new ServiceApiError('서버 업데이트가 필요합니다.', 'MIGRATION_REQUIRED', 503);
+    if (server.replies === 'auth')
+      throw new ServiceApiError('다시 로그인해 주세요.', 'AUTH_REQUIRED', 401);
+    if (operation === 'summary')
+      return {
+        posts: summary.map((row) => ({ ...row, answers: { queued: 0, failed: 0, unknown: 0 } })),
+      };
+    const thread = threads.get(id!);
+    if (!thread) throw new ServiceApiError('댓글을 찾을 수 없습니다.', 'NOT_FOUND', 404);
+    return { ...thread, answers: [] };
+  });
   /** The personas the server holds. */
   const remote: DailyPersona[] = [];
   const personaRequest = vi.fn(
@@ -147,6 +173,7 @@ async function setup() {
     managedThreadsRequest: vi.fn(async () => ({ accounts })),
     publicationRequest,
     personaRequest,
+    replyRequest,
   } as unknown as Pick<
     ServiceApiClient,
     | 'getBusinessContext'
@@ -154,6 +181,7 @@ async function setup() {
     | 'publicationRequest'
     | 'managedThreadsRequest'
     | 'personaRequest'
+    | 'replyRequest'
   >;
   const drafts = (...texts: string[]): DailyDraft[] =>
     texts.map((text) => ({ text, translation: null }));
@@ -166,6 +194,16 @@ async function setup() {
   const compose = vi.fn<(persona: DailyPersona, korean: string) => Promise<string>>(
     async (_persona, korean) => `EN: ${korean}`,
   );
+  const translateReplies = vi.fn<
+    (
+      persona: DailyPersona,
+      post: string,
+      replies: { id: string; text: string }[],
+    ) => Promise<{ id: string; korean: string }[]>
+  >(async (_persona, _post, replies) =>
+    replies.map((reply) => ({ id: reply.id, korean: `뜻: ${reply.text}` })),
+  );
+  const openExternal = vi.fn<(url: string) => Promise<void>>(async () => {});
   let tick = 0;
   const daily = new DailyController({
     client,
@@ -174,6 +212,8 @@ async function setup() {
     generate,
     translate,
     compose,
+    translateReplies,
+    openExternal,
     now: () => new Date(Date.UTC(2026, 10, 17, 0, 0, tick++)),
   });
   const ok = (result: DailyResult) => {
@@ -204,6 +244,12 @@ async function setup() {
     persona,
     draft,
     creates,
+    summary,
+    threads,
+    replyRequest,
+    translateReplies,
+    openExternal,
+    client,
   };
 }
 
@@ -879,6 +925,260 @@ describe('daily sends', () => {
   });
 });
 
+describe('daily replies', () => {
+  const reply = (threadsId: string, text: string, extra: Record<string, unknown> = {}) => ({
+    threadsId,
+    parentThreadsId: '900',
+    username: `user${threadsId}`,
+    text,
+    permalink: `https://www.threads.com/@user${threadsId}/post/${threadsId}`,
+    mediaType: 'TEXT_POST',
+    ownedByMe: false,
+    postedAt: `2026-11-21T0${9 - Number(threadsId.length)}:00:00.000Z`,
+    ...extra,
+  });
+  /** A published post of a persona writing in `language`, with fetched replies on the server. */
+  async function published(language: 'ko' | 'en' = 'en') {
+    const tools = await setup();
+    const { daily, rows, ok, summary, threads } = tools;
+    const persona = ok(
+      await daily.savePersona({
+        name: 'Renter',
+        accountId: 'account-a',
+        language,
+        description: '나이: 27세',
+      }),
+    ).personas[0];
+    const [post] = ok(await daily.generate({ personaId: persona.id })).posts;
+    ok(await daily.send({ postId: post.id }));
+    rows[0].rootStatus = 'published';
+    summary.push({
+      postKey: post.id,
+      publicationId: rows[0].id,
+      fetchedAt: '2026-11-21T05:02:11.000Z',
+      count: 3,
+    });
+    threads.set(rows[0].id, {
+      fetchedAt: '2026-11-21T05:02:11.000Z',
+      rootThreadsId: '900',
+      replies: [
+        reply('1', 'Cute!'),
+        reply('2', 'Thank you', { ownedByMe: true, parentThreadsId: '1' }),
+        reply('3', '', { mediaType: 'IMAGE' }),
+        reply('4', 'Me too', { permalink: null }),
+      ],
+    });
+    // The window opens from a card of the board, which read the summary.
+    ok(await daily.state());
+    return { ...tools, persona, post };
+  }
+
+  it('shows the replies of published posts from one summary read per look, and hides them on a server without replies', async () => {
+    const { daily, server, ok, post, replyRequest } = await published();
+    const shown = async () => ok(await daily.state()).posts.find((p) => p.id === post.id)?.replies;
+    replyRequest.mockClear();
+    expect(await shown()).toEqual({ fetchedAt: '2026-11-21T05:02:11.000Z', count: 3 });
+    expect(replyRequest.mock.calls.map((call) => call[1])).toEqual(['summary']);
+    // Changes answer from the file without reading replies again.
+    const [draft] = ok(await daily.generate({ personaId: post.personaId })).posts.filter(
+      (p) => p.state === 'draft',
+    );
+    expect(draft.replies).toBeNull();
+    expect(replyRequest).toHaveBeenCalledTimes(1);
+    server.replies = 'down';
+    expect(await shown()).toEqual({ fetchedAt: '2026-11-21T05:02:11.000Z', count: 3 });
+    for (const missing of ['old', 'migration'] as const) {
+      server.replies = 'up';
+      expect(await shown()).not.toBeNull();
+      server.replies = missing;
+      expect(await shown()).toBeNull();
+    }
+    server.replies = 'auth';
+    expect((await daily.state()).problem?.code).toBe('AUTH_REQUIRED');
+  });
+  it("reads one post's replies with this PC's renderings, and drops a rendering once the reply changed", async () => {
+    const { daily, post, threads, rows, translateReplies, userData } = await published();
+    const first = await daily.replies({ postId: post.id });
+    expect(first.problem).toBeNull();
+    expect(first.thread).toMatchObject({ postId: post.id, rootThreadsId: '900' });
+    expect(
+      first.thread!.replies.map((r) => [r.threadsId, r.translation, r.hasLink, r.ownedByMe]),
+    ).toEqual([
+      ['1', null, true, false],
+      ['2', null, true, true],
+      ['3', null, true, false],
+      ['4', null, false, false],
+    ]);
+    // Only other people's replies with text go to ChatGPT, newest first, with the post as context.
+    const translated = await daily.translateReplies({ postId: post.id });
+    expect(translated.problem).toBeNull();
+    expect(translateReplies).toHaveBeenCalledWith(
+      expect.objectContaining({ id: post.personaId }),
+      post.text,
+      [
+        { id: '1', text: 'Cute!' },
+        { id: '4', text: 'Me too' },
+      ],
+    );
+    expect(translated.view.translatingRepliesPostId).toBeNull();
+    expect(translated.thread!.replies.map((r) => r.translation)).toEqual([
+      '뜻: Cute!',
+      null,
+      null,
+      '뜻: Me too',
+    ]);
+    // The rendering is kept with the text it was written for; no copy of the replies is stored.
+    const stored = JSON.parse(await readFile(join(userData, DAILY_FILE_NAME), 'utf8'))
+      .partitions[0];
+    expect(stored.replyNotes).toEqual([
+      { postId: post.id, threadsId: '1', text: 'Cute!', translation: '뜻: Cute!' },
+      { postId: post.id, threadsId: '4', text: 'Me too', translation: '뜻: Me too' },
+    ]);
+    expect(JSON.stringify(stored)).not.toContain('user1');
+    threads.get(rows[0].id)!.replies[0] = reply('1', 'So cute!');
+    const edited = await daily.replies({ postId: post.id });
+    expect(edited.thread!.replies.map((r) => r.translation)).toEqual([
+      null,
+      null,
+      null,
+      '뜻: Me too',
+    ]);
+    await daily.translateReplies({ postId: post.id });
+    expect(translateReplies.mock.lastCall![2]).toEqual([{ id: '1', text: 'So cute!' }]);
+    const done = await daily.translateReplies({ postId: post.id });
+    expect(done.problem?.code).toBe('daily_replies_translated');
+    expect(done.thread).toBeNull();
+    expect(translateReplies).toHaveBeenCalledTimes(2);
+  });
+  it('writes replies in Korean only for a persona of another language, and refuses a malformed answer', async () => {
+    const korean = await published('ko');
+    expect((await korean.daily.translateReplies({ postId: korean.post.id })).problem?.code).toBe(
+      'daily_input',
+    );
+    expect(korean.translateReplies).not.toHaveBeenCalled();
+    const { daily, post, translateReplies, threads, rows } = await published();
+    translateReplies.mockResolvedValueOnce([
+      { id: '1', korean: ' ' },
+      { id: '4', korean: '뜻' },
+    ]);
+    expect((await daily.translateReplies({ postId: post.id })).problem?.code).toBe(
+      'daily_generation',
+    );
+    threads.get(rows[0].id)!.replies.push({ threadsId: 'not-a-number' });
+    expect((await daily.replies({ postId: post.id })).problem?.code).toBe('INVALID_RESPONSE');
+    expect((await daily.replies({ postId: randomUUID() })).problem?.code).toBe('daily_replies');
+  });
+  it('hands ChatGPT at most 4,000 characters of replies at once', () => {
+    const replies = Array.from({ length: 9 }, (_, index) => ({
+      threadsId: String(index + 1),
+      parentThreadsId: '900',
+      username: 'someone',
+      text: 'あ'.repeat(500),
+      translation: null,
+      mediaType: 'TEXT_POST',
+      hasLink: true,
+      ownedByMe: false,
+      postedAt: '2026-11-21T05:00:00.000Z',
+    }));
+    expect(dailyReplyBatch(replies).map((r) => r.threadsId)).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+    ]);
+    replies[0].translation = '뜻' as never;
+    expect(dailyReplyBatch(replies)).toHaveLength(8);
+    expect(dailyReplyBatch(replies)[0].threadsId).toBe('2');
+  });
+  it('opens on Threads only a reply of the replies last read', async () => {
+    const { daily, post, openExternal } = await published();
+    expect((await daily.openReplyLink({ postId: post.id, threadsId: '1' })).problem?.code).toBe(
+      'link_invalid',
+    );
+    await daily.replies({ postId: post.id });
+    expect(await daily.openReplyLink({ postId: post.id, threadsId: '1' })).toEqual({
+      status: 'ok',
+      problem: null,
+    });
+    expect(openExternal).toHaveBeenCalledWith('https://www.threads.com/@user1/post/1');
+    for (const input of [
+      { postId: post.id, threadsId: '4' },
+      { postId: randomUUID(), threadsId: '1' },
+      { postId: post.id, threadsId: '1', url: 'https://example.test' },
+    ])
+      expect((await daily.openReplyLink(input)).problem?.code).toBe('link_invalid');
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+  it('opens only Threads pages, whatever address a reply carries', async () => {
+    const { daily, post, openExternal, threads, rows } = await published();
+    const replies = threads.get(rows[0].id)!.replies;
+    replies.push(
+      reply('11', 'a', { permalink: 'https://evil.test/@user/post/11' }),
+      reply('12', 'b', { permalink: 'https://threads.net.evil.test/@user/post/12' }),
+      reply('13', 'c', { permalink: 'https://user@www.threads.com/@user/post/13' }),
+      reply('14', 'd', { permalink: 'https://threads.net/@user/post/14' }),
+    );
+    await daily.replies({ postId: post.id });
+    for (const threadsId of ['11', '12', '13'])
+      expect(await daily.openReplyLink({ postId: post.id, threadsId })).toEqual({
+        status: 'error',
+        problem: {
+          code: 'link_invalid',
+          message: 'Threads 링크를 열 수 없습니다. 댓글 창을 다시 열어 주세요.',
+        },
+      });
+    expect(openExternal).not.toHaveBeenCalled();
+    expect((await daily.openReplyLink({ postId: post.id, threadsId: '14' })).status).toBe('ok');
+    expect(openExternal).toHaveBeenCalledWith('https://threads.net/@user/post/14');
+  });
+  it('does not open the replies read for another user', async () => {
+    const { daily, post, openExternal, client } = await published();
+    await daily.replies({ postId: post.id });
+    vi.mocked(client.getBusinessContext).mockResolvedValueOnce({ ownerId: 'employee-b' });
+    expect((await daily.openReplyLink({ postId: post.id, threadsId: '1' })).problem?.code).toBe(
+      'link_invalid',
+    );
+    vi.mocked(client.getBusinessContext).mockRejectedValueOnce(
+      new ServiceApiError('직원 계정으로 다시 로그인해 주세요.', 'AUTH_REQUIRED', 401),
+    );
+    expect((await daily.openReplyLink({ postId: post.id, threadsId: '1' })).problem?.code).toBe(
+      'link_invalid',
+    );
+    expect(openExternal).not.toHaveBeenCalled();
+    expect((await daily.openReplyLink({ postId: post.id, threadsId: '1' })).status).toBe('ok');
+  });
+  it("counts writing replies in Korean as work from the server read to ChatGPT's answer, like a post's rendering", async () => {
+    const { daily, post, replyRequest, translateReplies, translate } = await published();
+    const seen: boolean[] = [];
+    const read = replyRequest.getMockImplementation()!;
+    replyRequest.mockImplementationOnce(async (...args) => {
+      seen.push(daily.active);
+      return read(...args);
+    });
+    translateReplies.mockImplementationOnce(async (_persona, _post, replies) => {
+      seen.push(daily.active);
+      return replies.map((item) => ({ id: item.id, korean: `뜻: ${item.text}` }));
+    });
+    const running = daily.translateReplies({ postId: post.id });
+    seen.push(daily.active);
+    expect((await running).problem).toBeNull();
+    expect([...seen, daily.active]).toEqual([true, true, true, false]);
+    seen.length = 0;
+    translate.mockImplementationOnce(async (_persona, text) => {
+      seen.push(daily.active);
+      return `뜻: ${text}`;
+    });
+    const rendering = daily.translatePost({ postId: post.id });
+    seen.push(daily.active);
+    expect((await rendering).problem).toBeNull();
+    expect([...seen, daily.active]).toEqual([true, true, false]);
+  });
+});
+
 describe('daily storage boundaries', () => {
   it('keeps each service and user apart and never overwrites a file it cannot read', async () => {
     const { daily, userData, persona } = await setup();
@@ -912,5 +1212,23 @@ describe('daily storage boundaries', () => {
     const after = JSON.parse(await readFile(path, 'utf8'));
     expect(after.partitions[0].personas[0].future).toEqual({ kept: true });
     expect(after.partitions[0].posts).toHaveLength(3);
+  });
+  it('reads reply renderings beside a file of an earlier version and drops those whose post is gone', async () => {
+    const { daily, userData, persona, ok } = await setup();
+    const p = await persona();
+    const [post] = ok(await daily.generate({ personaId: p.id })).posts;
+    const path = join(userData, DAILY_FILE_NAME);
+    const file = JSON.parse(await readFile(path, 'utf8'));
+    expect(file.partitions[0].replyNotes).toBeUndefined();
+    // An earlier version deleted a persona and kept the field it did not know.
+    const kept = { postId: post.id, threadsId: '1', text: 'Cute!', translation: '귀엽다' };
+    const left = { postId: randomUUID(), threadsId: '2', text: 'Hi', translation: '안녕' };
+    file.partitions[0].replyNotes = [kept, left];
+    await writeFile(path, JSON.stringify(file));
+    ok(await daily.savePost({ postId: post.id, text: '고친 글' }));
+    expect(JSON.parse(await readFile(path, 'utf8')).partitions[0].replyNotes).toEqual([kept]);
+    file.partitions[0].replyNotes = [{ ...kept, translation: '' }];
+    await writeFile(path, JSON.stringify(file));
+    expect((await daily.state()).problem?.code).toBe('daily_storage');
   });
 });

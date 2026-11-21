@@ -4,6 +4,7 @@ import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import { Icon } from './Icon';
 import { DailyPersonaDialog } from './DailyPersonaDialog';
 import { DailyPostDialog } from './DailyPostDialog';
+import { DailyRepliesDialog } from './DailyRepliesDialog';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
 import { useManagedThreads } from './use-managed-threads';
 import type { DailyState } from './use-daily';
@@ -36,7 +37,8 @@ type Dialog =
   | { kind: 'post'; postId: string }
   | { kind: 'write'; personaId: string }
   | { kind: 'cancel'; postId: string }
-  | { kind: 'send'; postId: string };
+  | { kind: 'send'; postId: string }
+  | { kind: 'replies'; postId: string };
 
 export function DailyBoard({
   daily,
@@ -84,7 +86,10 @@ export function DailyBoard({
       ? (personas.find((persona) => persona.id === dialog.personaId) ?? null)
       : null;
   const dialogPost =
-    dialog?.kind === 'post' || dialog?.kind === 'cancel' || dialog?.kind === 'send'
+    dialog?.kind === 'post' ||
+    dialog?.kind === 'cancel' ||
+    dialog?.kind === 'send' ||
+    dialog?.kind === 'replies'
       ? (posts.find((post) => post.id === dialog.postId) ?? null)
       : null;
   const postPersona = personas.find(
@@ -92,6 +97,10 @@ export function DailyBoard({
       persona.id === (dialog?.kind === 'write' ? dialog.personaId : dialogPost?.personaId),
   );
   const closeDialog = () => setDialog(null);
+  const closeReplies = () => {
+    daily.closeReplies();
+    setDialog(null);
+  };
   let dialogElement: ReactNode = null;
   if (dialog?.kind === 'persona' && (dialog.personaId === null || dialogPersona)) {
     dialogElement = (
@@ -195,6 +204,15 @@ export function DailyBoard({
         </div>
       </ManagedThreadsActionDialog>
     );
+  } else if (dialog?.kind === 'replies' && dialogPost?.state === 'published' && postPersona) {
+    dialogElement = (
+      <DailyRepliesDialog
+        post={dialogPost}
+        persona={postPersona}
+        daily={daily}
+        onClose={closeReplies}
+      />
+    );
   }
   const dialogOpen = dialogElement !== null;
   useEffect(() => {
@@ -211,6 +229,14 @@ export function DailyBoard({
       if (index >= 0) setStart(dailyWindowFor(index, start, next.length, columns));
     }
     return saved;
+  }
+  function openReplies(post: DailyPost) {
+    setDialog({ kind: 'replies', postId: post.id });
+    // A window whose replies could not be read closes; the toast says why.
+    void daily.openReplies(post.id).then((read) => {
+      if (!read)
+        setDialog((open) => (open?.kind === 'replies' && open.postId === post.id ? null : open));
+    });
   }
   function cancelSend(post: DailyPost) {
     if (post.started) setDialog({ kind: 'cancel', postId: post.id });
@@ -316,6 +342,7 @@ export function DailyBoard({
                 onEdit={(post) => setDialog({ kind: 'post', postId: post.id })}
                 onSend={(post) => setDialog({ kind: 'send', postId: post.id })}
                 onCancel={cancelSend}
+                onReplies={openReplies}
               />
             ))}
           </div>
@@ -386,6 +413,7 @@ function PersonaColumn({
   onEdit,
   onSend,
   onCancel,
+  onReplies,
 }: {
   persona: DailyPersona;
   color: string;
@@ -397,6 +425,7 @@ function PersonaColumn({
   onEdit(post: DailyPost): void;
   onSend(post: DailyPost): void;
   onCancel(post: DailyPost): void;
+  onReplies(post: DailyPost): void;
 }) {
   const groups = groupDailyPosts(daily.view.posts, persona.id);
   const generating = daily.generatingPersonaId === persona.id;
@@ -579,6 +608,18 @@ function PersonaColumn({
                   {post.translation && <p className="daily-card-translation">{post.translation}</p>}
                   <div className="daily-card-meta">
                     <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
+                    {post.replies &&
+                      (post.replies.count > 0 ? (
+                        <button
+                          type="button"
+                          className="daily-card-replies"
+                          onClick={() => onReplies(post)}
+                        >
+                          댓글 {post.replies.count}
+                        </button>
+                      ) : (
+                        <span>댓글 없음 · {dailyTime(post.replies.fetchedAt)} 조회</span>
+                      ))}
                   </div>
                 </article>
               ))}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DailyResult, DailyView } from '../shared/daily';
+import type { DailyRepliesResult, DailyResult, DailyView } from '../shared/daily';
 import { createDailyController } from './use-daily';
 
 const view = (name: string, generatingPersonaId: string | null = null): DailyView => ({
@@ -9,6 +9,7 @@ const view = (name: string, generatingPersonaId: string | null = null): DailyVie
   posts: [],
   generatingPersonaId,
   translatingPostId: null,
+  translatingRepliesPostId: null,
   unsyncedPersonas: 0,
 });
 const ok = (name: string): DailyResult => ({ status: 'ok', view: view(name), problem: null });
@@ -33,6 +34,9 @@ function setup() {
     deleteDailyPost: vi.fn().mockResolvedValue(ok('post-deleted')),
     sendDailyPost: vi.fn().mockResolvedValue(ok('sent')),
     cancelDailySend: vi.fn().mockResolvedValue(ok('cancelled')),
+    getDailyReplies: vi.fn(),
+    translateDailyReplies: vi.fn(),
+    openDailyReplyLink: vi.fn().mockResolvedValue({ status: 'ok', problem: null }),
   };
   const effects = { notify: vi.fn() };
   return { api, effects, controller: createDailyController(api, effects) };
@@ -103,6 +107,7 @@ describe('daily board requests', () => {
             note: null,
             started: false,
             sentAt: null,
+            replies: null,
           },
         ],
       },
@@ -243,5 +248,92 @@ describe('daily board requests', () => {
     );
     expect(api.getDaily).toHaveBeenCalledTimes(2);
     expect(shownName(controller)).toBe('after-loss');
+  });
+});
+
+describe('daily replies window', () => {
+  const thread = (postId: string, translation: string | null = null) => ({
+    postId,
+    fetchedAt: '2026-11-21T05:02:11.000Z',
+    rootThreadsId: '900',
+    replies: [
+      {
+        threadsId: '1',
+        parentThreadsId: '900',
+        username: 'someone',
+        text: 'Cute!',
+        translation,
+        mediaType: 'TEXT_POST',
+        hasLink: true,
+        ownedByMe: false,
+        postedAt: '2026-11-21T05:00:00.000Z',
+      },
+    ],
+  });
+  const read = (postId: string, translation: string | null = null): DailyRepliesResult => ({
+    ...ok('read'),
+    thread: thread(postId, translation),
+  });
+  it('shows the replies of the window that is open and ignores a late answer for another', async () => {
+    const { api, controller, effects } = setup();
+    controller.setEnabled(true);
+    await settle();
+    const first = deferred<DailyRepliesResult>();
+    api.getDailyReplies.mockReturnValueOnce(first.promise).mockResolvedValueOnce(read('post-2'));
+    const opening = controller.openReplies('post-1');
+    expect(controller.getSnapshot().replies).toBeNull();
+    expect(await controller.openReplies('post-2')).toBe(true);
+    first.resolve(read('post-1'));
+    await opening;
+    expect(controller.getSnapshot().replies?.postId).toBe('post-2');
+    controller.closeReplies();
+    expect(controller.getSnapshot().replies).toBeNull();
+    api.getDailyReplies.mockRejectedValueOnce(new Error('IPC failed'));
+    expect(await controller.openReplies('post-3')).toBe(false);
+    expect(effects.notify).toHaveBeenCalledWith(expect.stringContaining('댓글'), true);
+    expect(api.getDailyReplies.mock.calls).toEqual([
+      [{ postId: 'post-1' }],
+      [{ postId: 'post-2' }],
+      [{ postId: 'post-3' }],
+    ]);
+  });
+  it('writes replies in Korean as the one ChatGPT call, and keeps the shown replies when it fails', async () => {
+    const { api, controller, effects } = setup();
+    controller.setEnabled(true);
+    await settle();
+    api.getDailyReplies.mockResolvedValueOnce(read('post-1'));
+    await controller.openReplies('post-1');
+    const translated = deferred<DailyRepliesResult>();
+    api.translateDailyReplies.mockReturnValueOnce(translated.promise);
+    const translating = controller.translateReplies('post-1');
+    expect(controller.getSnapshot().translatingReplies).toBe('post-1');
+    expect(await controller.generate('p1')).toBe(false);
+    expect(api.generateDailyPosts).not.toHaveBeenCalled();
+    translated.resolve(read('post-1', '귀엽다'));
+    expect(await translating).toBe(true);
+    expect(controller.getSnapshot()).toMatchObject({ translatingReplies: null });
+    expect(controller.getSnapshot().replies?.replies[0].translation).toBe('귀엽다');
+    api.translateDailyReplies.mockResolvedValueOnce({
+      ...ok('failed'),
+      status: 'error',
+      problem: { code: 'daily_generation', message: '한국어 뜻을 생성하지 못했습니다.' },
+      thread: null,
+    });
+    expect(await controller.translateReplies('post-1')).toBe(false);
+    expect(effects.notify).toHaveBeenLastCalledWith('한국어 뜻을 생성하지 못했습니다.', true);
+    expect(controller.getSnapshot().replies?.replies[0].translation).toBe('귀엽다');
+  });
+  it('opens a reply on Threads by its ids and says so when it cannot', async () => {
+    const { api, controller, effects } = setup();
+    controller.setEnabled(true);
+    await controller.openReplyLink('post-1', '1');
+    expect(api.openDailyReplyLink).toHaveBeenCalledWith({ postId: 'post-1', threadsId: '1' });
+    expect(effects.notify).not.toHaveBeenCalled();
+    api.openDailyReplyLink.mockResolvedValueOnce({
+      status: 'error',
+      problem: { code: 'link_invalid', message: 'Threads 링크를 열 수 없습니다.' },
+    });
+    await controller.openReplyLink('post-1', '2');
+    expect(effects.notify).toHaveBeenCalledWith('Threads 링크를 열 수 없습니다.', true);
   });
 });

@@ -12,6 +12,8 @@ export function mobilePublicationBlocks(channel: string, active: boolean): boole
       IPC.capabilities,
       IPC.managedThreadsAccounts,
       IPC.daily,
+      IPC.dailyReplies,
+      IPC.openDailyReplyLink,
       IPC.draftNote,
     ].some((read) => read === channel)
   );

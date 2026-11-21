@@ -11,6 +11,8 @@ describe('publication and local mutation barrier', () => {
       IPC.managedThreadsAccounts,
       IPC.current,
       IPC.daily,
+      IPC.dailyReplies,
+      IPC.openDailyReplyLink,
       IPC.draftNote,
     ])
       expect(mobilePublicationBlocks(read, true)).toBe(false);
@@ -28,6 +30,7 @@ describe('publication and local mutation barrier', () => {
       IPC.generateDailyPosts,
       IPC.generatePostComment,
       IPC.translateDailyPost,
+      IPC.translateDailyReplies,
       IPC.addDailyPost,
       IPC.saveDailyPersona,
     ])

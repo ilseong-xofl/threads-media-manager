@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DailyPersona, DailyPost } from '../shared/daily';
+import type { DailyPersona, DailyPost, DailyReply, DailyReplyThread } from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import {
   dailyAccountChoices,
@@ -14,6 +14,9 @@ import {
   dailyTime,
   dailyWindow,
   dailyWindowFor,
+  dailyReplyMedia,
+  dailyReplyRows,
+  dailyRepliesTranslatable,
   groupDailyPosts,
 } from './daily-model';
 
@@ -30,6 +33,7 @@ function post(id: string, change: Partial<DailyPost> = {}): DailyPost {
     note: null,
     started: false,
     sentAt: null,
+    replies: null,
     ...change,
   };
 }
@@ -174,5 +178,76 @@ describe('daily persona description', () => {
     expect(dailyDescriptionValues('30세 여성. 전업주부')).toEqual(['', '', '', '', '', '', '']);
     const values = ['30세', '전업주부', '남편', '수원', '육아', '반말', '1~2개'];
     expect(dailyDescriptionValues(dailyDescriptionText(values))).toEqual(values);
+  });
+});
+
+describe('daily replies window', () => {
+  const reply = (
+    threadsId: string,
+    parentThreadsId: string,
+    hour: number,
+    change: Partial<DailyReply> = {},
+  ): DailyReply => ({
+    threadsId,
+    parentThreadsId,
+    username: `user${threadsId}`,
+    text: `text ${threadsId}`,
+    translation: null,
+    mediaType: 'TEXT_POST',
+    hasLink: true,
+    ownedByMe: false,
+    postedAt: at(21, hour),
+    ...change,
+  });
+  const thread = (replies: DailyReply[]): DailyReplyThread => ({
+    postId: 'post',
+    fetchedAt: at(21, 20),
+    rootThreadsId: '900',
+    replies,
+  });
+  it('lists replies to the post newest first, each followed by the replies under it, oldest first', () => {
+    const rows = dailyReplyRows(
+      thread([
+        // Newest first, as the server sends them.
+        reply('6', '5', 15),
+        reply('5', '1', 14),
+        reply('4', '900', 13),
+        reply('3', '1', 12),
+        reply('2', '900', 11),
+        reply('1', '900', 10),
+      ]),
+    );
+    expect(rows.map((row) => [row.reply.threadsId, row.nested, row.orphan, row.to])).toEqual([
+      ['4', false, false, null],
+      ['2', false, false, null],
+      ['1', false, false, null],
+      ['3', true, false, null],
+      ['5', true, false, null],
+      // Under a reply that is itself nested, it says whose reply it answers.
+      ['6', true, false, 'user5'],
+    ]);
+  });
+  it('keeps a reply whose parent was not fetched at the top level, marked as a reply to a reply', () => {
+    const rows = dailyReplyRows(
+      thread([reply('8', '7', 16), reply('7', '404', 15), reply('2', '900', 11)]),
+    );
+    expect(rows.map((row) => [row.reply.threadsId, row.nested, row.orphan])).toEqual([
+      ['7', false, true],
+      ['8', true, false],
+      ['2', false, false],
+    ]);
+    // Replies that point at each other still end, each at the top.
+    expect(dailyReplyRows(thread([reply('1', '2', 10), reply('2', '1', 11)]))).toHaveLength(2);
+  });
+  it('names images and videos, and offers Korean only for other people’s replies in another language', () => {
+    expect(['IMAGE', 'CAROUSEL_ALBUM', 'VIDEO', 'TEXT_POST', 'AUDIO'].map(dailyReplyMedia)).toEqual(
+      ['[이미지]', '[이미지]', '[영상]', null, null],
+    );
+    const own = reply('1', '900', 10, { ownedByMe: true });
+    const image = reply('2', '900', 11, { text: ' ', mediaType: 'IMAGE' });
+    const done = reply('3', '900', 12, { translation: '뜻' });
+    expect(dailyRepliesTranslatable(thread([own, image, done]), 'en')).toBe(false);
+    expect(dailyRepliesTranslatable(thread([own, reply('4', '900', 13)]), 'en')).toBe(true);
+    expect(dailyRepliesTranslatable(thread([reply('4', '900', 13)]), 'ko')).toBe(false);
   });
 });

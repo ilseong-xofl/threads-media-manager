@@ -516,6 +516,76 @@ export class ServiceApiClient {
     this.assertBusinessContext(context);
     return result;
   }
+  /**
+   * Replies to published daily posts, read-only and on fixed paths (2026-11-21): the summary of
+   * every post whose replies were fetched, or the replies of one publication. The phone fetches
+   * them from Meta; this PC only reads what the server stored.
+   */
+  async replyRequest(
+    context: ServiceBusinessContext,
+    operation: 'summary' | 'get',
+    id?: string,
+  ): Promise<unknown> {
+    this.assertBusinessContext(context);
+    const saved = this.businessContexts.get(context)!;
+    if ((await this.tokenStore.read()) !== saved.token)
+      throw new ServiceApiError('로그인이 변경되었습니다.', 'AUTH_CHANGED', 401);
+    this.assertBusinessContext(context);
+    if (
+      operation === 'summary'
+        ? id !== undefined
+        : operation !== 'get' ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id ?? '')
+    )
+      throw new ServiceApiError('댓글 정보를 확인하세요.', 'VALIDATION_FAILED', 400);
+    const response = await this.request(
+      operation === 'summary'
+        ? '/api/v1/replies?libraryId=daily'
+        : `/api/v1/publications/${id}/replies`,
+      'GET',
+      saved.token,
+    );
+    this.assertBusinessContext(context);
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.advanceEpoch();
+        this.pending = undefined;
+        await this.tokenStore.clear();
+      }
+      const failure: unknown = await response.json().catch(() => null);
+      const code =
+        object(failure) &&
+        object(failure.error) &&
+        typeof failure.error.code === 'string' &&
+        /^[A-Z_]{1,80}$/.test(failure.error.code)
+          ? failure.error.code
+          : 'REPLY_REQUEST_FAILED';
+      if (response.status === 401 || response.status === 403)
+        throw new ServiceApiError(
+          '서비스에 다시 로그인해 주세요.',
+          'AUTH_REQUIRED',
+          response.status,
+        );
+      if (response.status >= 500 && code !== 'MIGRATION_REQUIRED')
+        throw new ServiceApiError(
+          '서비스에 연결할 수 없습니다.',
+          'SERVICE_UNAVAILABLE',
+          response.status,
+        );
+      throw new ServiceApiError(
+        code === 'MIGRATION_REQUIRED'
+          ? '댓글을 읽을 서버 업데이트가 필요합니다. 관리자에게 확인해 주세요.'
+          : code === 'NOT_FOUND'
+            ? '댓글을 찾을 수 없습니다. 일상 화면을 다시 확인하세요.'
+            : '댓글을 불러오지 못했습니다. 다시 시도해 주세요.',
+        code,
+        response.status,
+      );
+    }
+    const result = await this.read(response);
+    this.assertBusinessContext(context);
+    return result;
+  }
   async signIn(accountId: string, password: string): Promise<AppAuthState> {
     const email = serviceEmailFromId(accountId);
     if (!email || !password || password.length > ACCOUNT_PASSWORD_MAX_LENGTH)
