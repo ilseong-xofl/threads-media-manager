@@ -514,7 +514,7 @@ DB 통합 검사는 전용 loopback PostgreSQL 11.22와 합성 설정을 사용�
 | 마지막 업로드 확인 이미지 | `ilseong/threads-admin-api:v0.1.0-dev.20261021.1` | `ilseong/threads-mobile-web:v0.1.0-dev.20261021.1` |
 | 사용자 확인 | 2026-10-21 `.20261021.1` 개발 서버 배포 완료 통보 | 2026-10-21 `.20261021.1` 개발 서버 배포 완료 통보 |
 
-운영 도메인은 `threads-admin.ilscp.net`, `threads-mobile.ilscp.net`으로 정했다. 운영 포트 3008/3009는 예제이며 운영 완료 상태가 아니다. Nginx Proxy Manager는 **개발 인스턴스와 다른 서버**다. 개발 접속 timeout은 사용자가 막힌 3006/3007 포트를 열어 해결했다. 동일 서버/localhost proxy로 가정하지 않는다.
+운영 도메인은 `threads-admin.ilscp.net`, `threads-mobile.ilscp.net`으로 정했다. 운영 포트는 관리자/API 4001(`threads-admin.ilscp.net`), 모바일 웹 4002(`threads-mobile.ilscp.net`)로 정했다(2026-11-23 사용자 결정 — 운영 서버가 3000번대를 이미 쓴다. 예전 예제 3008/3009를 대체). 운영 서버 방화벽의 4001·4002는 사용자가 열었다(2026-11-23 사용자 보고). 운영 배포 완료 상태는 아니다. Nginx Proxy Manager는 **개발 인스턴스와 다른 서버**다. 개발 접속 timeout은 사용자가 막힌 3006/3007 포트를 열어 해결했다. 동일 서버/localhost proxy로 가정하지 않는다.
 
 구형 서버 Docker 19.03.5에서 초기 Bookworm 기반 Node 이미지가 worker thread 시작 전에 실패했다. 기존 TFS와 같은 Alpine 기반 `.2`로 바꿨고 사용자 배포에서 관리자 서비스 시작을 확인했다. 서버 Docker 업그레이드나 seccomp 완화로 무작정 돌아가지 않는다.
 
