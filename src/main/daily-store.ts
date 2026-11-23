@@ -72,6 +72,13 @@ export interface StoredDailyAnswer {
   /** Earlier ids of this draft whose sends were cancelled; the phone may have posted one anyway. */
   cancelledIds?: string[];
 }
+/** The fetch of a post's replies that its window last showed on this PC (2026-11-23). */
+export interface StoredReplySeen {
+  postId: string;
+  fetchedAt: string;
+  /** Replies by other people that fetch had. */
+  count: number;
+}
 export interface DailyPartition {
   service: string;
   ownerId: string;
@@ -79,6 +86,8 @@ export interface DailyPartition {
   posts: StoredDailyPost[];
   /** Absent in files written before replies were read. */
   replyNotes?: StoredReplyNote[];
+  /** Absent in files written before new replies were marked. */
+  replySeen?: StoredReplySeen[];
   /** Absent in files written before answers were written. */
   answers?: StoredDailyAnswer[];
 }
@@ -166,6 +175,15 @@ function validNote(v: unknown): v is StoredReplyNote {
     validDailyTranslation(v.translation)
   );
 }
+function validSeen(v: unknown): v is StoredReplySeen {
+  return (
+    isObject(v) &&
+    uuid(v.postId) &&
+    timestamp(v.fetchedAt) &&
+    Number.isSafeInteger(v.count) &&
+    (v.count as number) >= 0
+  );
+}
 function validAnswer(v: unknown): v is StoredDailyAnswer {
   return (
     isObject(v) &&
@@ -199,6 +217,8 @@ export function validDailyFile(v: unknown): v is DailyFile {
       !p.posts.every(validPost) ||
       (p.replyNotes !== undefined &&
         (!Array.isArray(p.replyNotes) || !p.replyNotes.every(validNote))) ||
+      (p.replySeen !== undefined &&
+        (!Array.isArray(p.replySeen) || !p.replySeen.every(validSeen))) ||
       (p.answers !== undefined && (!Array.isArray(p.answers) || !p.answers.every(validAnswer)))
     )
       return false;
@@ -253,6 +273,8 @@ export class DailyStore {
       const posts = new Set(partition.posts.map((post) => post.id));
       if (partition.replyNotes)
         partition.replyNotes = partition.replyNotes.filter((note) => posts.has(note.postId));
+      if (partition.replySeen)
+        partition.replySeen = partition.replySeen.filter((seen) => posts.has(seen.postId));
       if (partition.answers)
         partition.answers = partition.answers.filter((answer) => posts.has(answer.postId));
     }

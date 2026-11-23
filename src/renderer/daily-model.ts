@@ -153,6 +153,10 @@ export interface DailyReplyRow {
   orphan: boolean;
   /** Whose reply a nested one answers, when that is not the reply it is shown under. */
   to: string | null;
+  /** The first reply seen before, with newer ones above it: the line between them goes here. */
+  divider: boolean;
+  /** Someone's new reply under a reply seen before, which the line cannot show: it gets a tag. */
+  fresh: boolean;
 }
 
 /**
@@ -176,24 +180,35 @@ export function dailyReplyRows(thread: DailyReplyThread): DailyReplyRow[] {
   };
   const posted = (reply: DailyReply) => Date.parse(reply.postedAt) || 0;
   const heads = new Map(thread.replies.map((reply) => [reply.threadsId, head(reply)]));
-  return thread.replies
+  const tops = thread.replies
     .filter((reply) => heads.get(reply.threadsId) === reply)
-    .sort((a, b) => posted(b) - posted(a))
-    .flatMap((top) => [
-      { reply: top, nested: false, orphan: top.parentThreadsId !== thread.rootThreadsId, to: null },
-      ...thread.replies
-        .filter((reply) => reply !== top && heads.get(reply.threadsId) === top)
-        .sort((a, b) => posted(a) - posted(b))
-        .map((reply) => ({
-          reply,
-          nested: true,
-          orphan: false,
-          to:
-            reply.parentThreadsId === top.threadsId
-              ? null
-              : (byId.get(reply.parentThreadsId)?.username ?? null),
-        })),
-    ]);
+    .sort((a, b) => posted(b) - posted(a));
+  // Newest first, so the new ones stand together at the top (2026-11-23).
+  const firstSeen = tops.some((top) => top.fresh) ? tops.find((top) => !top.fresh) : undefined;
+  return tops.flatMap((top) => [
+    {
+      reply: top,
+      nested: false,
+      orphan: top.parentThreadsId !== thread.rootThreadsId,
+      to: null,
+      divider: top === firstSeen,
+      fresh: false,
+    },
+    ...thread.replies
+      .filter((reply) => reply !== top && heads.get(reply.threadsId) === top)
+      .sort((a, b) => posted(a) - posted(b))
+      .map((reply) => ({
+        reply,
+        nested: true,
+        orphan: false,
+        to:
+          reply.parentThreadsId === top.threadsId
+            ? null
+            : (byId.get(reply.parentThreadsId)?.username ?? null),
+        divider: false,
+        fresh: !!reply.fresh && !reply.ownedByMe && !top.fresh,
+      })),
+  ]);
 }
 
 /** What a reply carries besides text. A carousel may mix both and is named as images. */

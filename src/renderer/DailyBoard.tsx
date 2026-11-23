@@ -433,6 +433,16 @@ function PersonaColumn({
 }) {
   const groups = groupDailyPosts(daily.view.posts, persona.id);
   const generating = daily.generatingPersonaId === persona.id;
+  // 2026-11-23: what is still to go out and what is on Threads are two tabs; drafts come first.
+  const [tab, setTab] = useState<'drafts' | 'published'>('drafts');
+  const drafts = groups.drafts.length;
+  const draftsBefore = useRef(drafts);
+  // A new draft, written or being written, is shown where it lands.
+  useEffect(() => {
+    if (generating || drafts > draftsBefore.current) setTab('drafts');
+    draftsBefore.current = drafts;
+  }, [generating, drafts]);
+  const freshReplies = groups.published.reduce((sum, post) => sum + (post.replies?.fresh ?? 0), 0);
   // ChatGPT writes one thing at a time, and no post is written or edited by hand meanwhile.
   const { writing } = daily;
   const empty =
@@ -499,143 +509,185 @@ function PersonaColumn({
       {empty ? (
         <div className="daily-column-empty">이 페르소나의 글이 여기에 쌓입니다.</div>
       ) : (
-        <div className="daily-posts">
-          {(groups.drafts.length > 0 || generating) && (
-            <>
-              <div className="daily-group-title">
-                초안{groups.drafts.length > 0 ? ` ${groups.drafts.length}` : ''}
-              </div>
-              {generating &&
-                [0, 1, 2].map((index) => (
-                  <div key={index} className="daily-card-skeleton" aria-hidden="true">
-                    <div />
-                    <div />
-                    <div />
-                  </div>
-                ))}
-              {groups.drafts.map((post) => (
-                <article key={post.id} className="daily-card">
-                  <button
-                    type="button"
-                    className="daily-card-text"
-                    aria-label="초안 수정"
-                    disabled={daily.busy || writing}
-                    onClick={() => onEdit(post)}
-                  >
-                    {post.text}
-                  </button>
-                  {post.translation ? (
-                    <p className="daily-card-translation">{post.translation}</p>
-                  ) : daily.translatingPostId === post.id ? (
-                    <p className="daily-card-translation">한국어 뜻 만드는 중…</p>
-                  ) : (
-                    persona.language !== 'ko' && (
-                      <button
-                        type="button"
-                        className="daily-card-translate"
-                        disabled={!daily.loaded || writing}
-                        onClick={() => void daily.translate(post.id)}
-                      >
-                        한국어 뜻 보기
-                      </button>
-                    )
-                  )}
-                  <div className="daily-card-footer">
-                    <span>{dailyTime(post.createdAt)} 생성</span>
-                    <div className="daily-card-actions">
-                      <button
-                        type="button"
-                        className="daily-icon-button"
-                        aria-label="초안 삭제"
-                        disabled={daily.busy}
-                        onClick={() => void daily.deletePost(post.id)}
-                      >
-                        <Icon name="trash" />
-                      </button>
-                      <button
-                        type="button"
-                        className="primary daily-card-send"
-                        disabled={daily.busy || !!sendBlock}
-                        title={sendBlock ?? undefined}
-                        onClick={() => onSend(post)}
-                      >
-                        모바일로 보내기
-                      </button>
+        <>
+          <div className="daily-post-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'drafts'}
+              className={tab === 'drafts' ? 'is-active' : ''}
+              onClick={() => setTab('drafts')}
+            >
+              초안 {drafts}
+              {groups.waiting.length > 0 && (
+                <span className="daily-post-tab-note">대기 {groups.waiting.length}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'published'}
+              className={tab === 'published' ? 'is-active' : ''}
+              onClick={() => setTab('published')}
+            >
+              등록 완료 {groups.published.length}
+              {freshReplies > 0 && (
+                <span className="daily-post-tab-fresh">새 댓글 {freshReplies}</span>
+              )}
+            </button>
+          </div>
+          <div className="daily-posts">
+            {tab === 'drafts' && drafts + groups.waiting.length === 0 && !generating && (
+              <div className="daily-column-empty">초안이 없습니다.</div>
+            )}
+            {tab === 'published' && groups.published.length === 0 && (
+              <div className="daily-column-empty">등록 완료된 글이 없습니다.</div>
+            )}
+            {tab === 'drafts' && (groups.drafts.length > 0 || generating) && (
+              <>
+                {generating &&
+                  [0, 1, 2].map((index) => (
+                    <div key={index} className="daily-card-skeleton" aria-hidden="true">
+                      <div />
+                      <div />
+                      <div />
                     </div>
-                  </div>
-                </article>
-              ))}
-            </>
-          )}
-          {groups.waiting.length > 0 && (
-            <>
-              <div className="daily-group-title">휴대폰 대기 {groups.waiting.length}</div>
-              {groups.waiting.map((post) => {
-                const note = dailyNoteLabel(post.note);
-                return (
-                  <article key={post.id} className="daily-card is-waiting">
-                    <p className="daily-card-body">{post.text}</p>
-                    {post.translation && (
+                  ))}
+                {groups.drafts.map((post) => (
+                  <article key={post.id} className="daily-card">
+                    <button
+                      type="button"
+                      className="daily-card-text"
+                      aria-label="초안 수정"
+                      disabled={daily.busy || writing}
+                      onClick={() => onEdit(post)}
+                    >
+                      {post.text}
+                    </button>
+                    {post.translation ? (
                       <p className="daily-card-translation">{post.translation}</p>
+                    ) : daily.translatingPostId === post.id ? (
+                      <p className="daily-card-translation">한국어 뜻 만드는 중…</p>
+                    ) : (
+                      persona.language !== 'ko' && (
+                        <button
+                          type="button"
+                          className="daily-card-translate"
+                          disabled={!daily.loaded || writing}
+                          onClick={() => void daily.translate(post.id)}
+                        >
+                          한국어 뜻 보기
+                        </button>
+                      )
                     )}
-                    <div className="daily-card-meta">
-                      {post.sentAt && <span>{dailyTime(post.sentAt)} 보냄</span>}
-                      {note && <span className="daily-card-note">{note}</span>}
-                    </div>
-                    <div className="daily-card-actions is-end">
-                      <button type="button" disabled={daily.busy} onClick={() => onCancel(post)}>
-                        보내기 취소
-                      </button>
-                      {post.note === 'unconfirmed' && (
+                    <div className="daily-card-footer">
+                      <span>{dailyTime(post.createdAt)} 생성</span>
+                      <div className="daily-card-actions">
+                        <button
+                          type="button"
+                          className="daily-icon-button"
+                          aria-label="초안 삭제"
+                          disabled={daily.busy}
+                          onClick={() => void daily.deletePost(post.id)}
+                        >
+                          <Icon name="trash" />
+                        </button>
                         <button
                           type="button"
                           className="primary daily-card-send"
                           disabled={daily.busy || !!sendBlock}
                           title={sendBlock ?? undefined}
-                          onClick={() => void daily.send(post.id)}
+                          onClick={() => onSend(post)}
                         >
-                          다시 보내기
+                          모바일로 보내기
                         </button>
-                      )}
+                      </div>
                     </div>
                   </article>
-                );
-              })}
-            </>
-          )}
-          {groups.published.length > 0 && (
-            <>
-              <div className="daily-group-title">등록 완료 {groups.published.length}</div>
-              {groups.published.map((post) => (
-                <article key={post.id} className="daily-card is-published">
-                  <p className="daily-card-body">{post.text}</p>
-                  {post.translation && <p className="daily-card-translation">{post.translation}</p>}
-                  <div className="daily-card-meta">
-                    <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
-                    {post.replies &&
-                      (post.replies.count > 0 ? (
-                        <button
-                          type="button"
-                          className="daily-card-replies"
-                          onClick={() => onReplies(post)}
-                        >
-                          댓글 {post.replies.count}
+                ))}
+              </>
+            )}
+            {tab === 'drafts' && groups.waiting.length > 0 && (
+              <>
+                <div className="daily-group-title">휴대폰 대기 {groups.waiting.length}</div>
+                {groups.waiting.map((post) => {
+                  const note = dailyNoteLabel(post.note);
+                  return (
+                    <article key={post.id} className="daily-card is-waiting">
+                      <p className="daily-card-body">{post.text}</p>
+                      {post.translation && (
+                        <p className="daily-card-translation">{post.translation}</p>
+                      )}
+                      <div className="daily-card-meta">
+                        {post.sentAt && <span>{dailyTime(post.sentAt)} 보냄</span>}
+                        {note && <span className="daily-card-note">{note}</span>}
+                      </div>
+                      <div className="daily-card-actions is-end">
+                        <button type="button" disabled={daily.busy} onClick={() => onCancel(post)}>
+                          보내기 취소
                         </button>
-                      ) : (
-                        <span>댓글 없음 · {dailyTime(post.replies.fetchedAt)} 조회</span>
-                      ))}
-                    {post.replies &&
-                      dailyAnswerBadges(post.replies).map((badge) => (
-                        <span key={badge} className="daily-card-note">
-                          {badge}
-                        </span>
-                      ))}
-                  </div>
-                </article>
-              ))}
-            </>
-          )}
-        </div>
+                        {post.note === 'unconfirmed' && (
+                          <button
+                            type="button"
+                            className="primary daily-card-send"
+                            disabled={daily.busy || !!sendBlock}
+                            title={sendBlock ?? undefined}
+                            onClick={() => void daily.send(post.id)}
+                          >
+                            다시 보내기
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </>
+            )}
+            {tab === 'published' && groups.published.length > 0 && (
+              <>
+                {groups.published.map((post) => (
+                  <article key={post.id} className="daily-card is-published">
+                    <p className="daily-card-body">{post.text}</p>
+                    {post.translation && (
+                      <p className="daily-card-translation">{post.translation}</p>
+                    )}
+                    <div className="daily-card-meta">
+                      <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
+                      {post.replies &&
+                        (post.replies.count > 0 ? (
+                          <>
+                            <span className="daily-card-replies-time">
+                              {dailyTime(post.replies.fetchedAt)} 조회
+                            </span>
+                            {/* New replies take the badge's place until the window is opened. */}
+                            <button
+                              type="button"
+                              className={`daily-card-replies ${post.replies.fresh > 0 ? 'is-fresh' : ''}`}
+                              onClick={() => onReplies(post)}
+                            >
+                              {post.replies.fresh > 0
+                                ? `새 댓글 ${post.replies.fresh}`
+                                : `댓글 ${post.replies.count}`}
+                            </button>
+                          </>
+                        ) : (
+                          <span className="daily-card-replies-none">
+                            댓글 없음 · {dailyTime(post.replies.fetchedAt)} 조회
+                          </span>
+                        ))}
+                      {post.replies &&
+                        dailyAnswerBadges(post.replies).map((badge) => (
+                          <span key={badge} className="daily-card-note">
+                            {badge}
+                          </span>
+                        ))}
+                    </div>
+                  </article>
+                ))}
+              </>
+            )}
+          </div>
+        </>
       )}
     </section>
   );

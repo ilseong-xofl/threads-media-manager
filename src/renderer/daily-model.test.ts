@@ -248,6 +248,43 @@ describe('daily replies window', () => {
     // Replies that point at each other still end, each at the top.
     expect(dailyReplyRows(thread([reply('1', '2', 10), reply('2', '1', 11)]))).toHaveLength(2);
   });
+  it('draws a line under the replies that came since the last look, and tags a new one under an older reply', () => {
+    const fresh = { fresh: true } as const;
+    const rows = dailyReplyRows(
+      thread([
+        reply('7', '5', 16, fresh),
+        reply('6', '3', 15, fresh),
+        reply('5', '900', 14, fresh),
+        reply('4', '900', 13, fresh),
+        reply('3', '900', 12),
+        reply('2', '900', 11),
+      ]),
+    );
+    expect(rows.map((row) => [row.reply.threadsId, row.divider, row.fresh])).toEqual([
+      ['5', false, false],
+      // Under a new reply everything is new: the line says so, no tag.
+      ['7', false, false],
+      ['4', false, false],
+      // The first reply seen before: the line goes above it.
+      ['3', true, false],
+      ['6', false, true],
+      ['2', false, false],
+    ]);
+    // Our own new reply under an older one needs no tag.
+    expect(
+      dailyReplyRows(
+        thread([reply('6', '3', 15, { fresh: true, ownedByMe: true }), reply('3', '900', 12)]),
+      ).map((row) => [row.divider, row.fresh]),
+    ).toEqual([
+      [false, false],
+      [false, false],
+    ]);
+    // Nothing older (a first look) or nothing new: no line.
+    const lines = (replies: DailyReply[]) =>
+      dailyReplyRows(thread(replies)).filter((row) => row.divider).length;
+    expect(lines([reply('2', '900', 11, fresh), reply('1', '900', 10, fresh)])).toBe(0);
+    expect(lines([reply('2', '900', 11), reply('1', '900', 10)])).toBe(0);
+  });
   it('names images and videos, and offers Korean only for other people’s replies in another language', () => {
     expect(['IMAGE', 'CAROUSEL_ALBUM', 'VIDEO', 'TEXT_POST', 'AUDIO'].map(dailyReplyMedia)).toEqual(
       ['[이미지]', '[이미지]', '[영상]', null, null],
@@ -284,6 +321,7 @@ describe('daily answers', () => {
     const summary = (queued: number, failed: number, unknown: number) => ({
       fetchedAt: '2026-11-21T05:00:00.000Z',
       count: 2,
+      fresh: 0,
       answers: { queued, failed, unknown },
     });
     expect(dailyAnswerBadges(summary(0, 0, 0))).toEqual([]);

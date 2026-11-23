@@ -383,6 +383,11 @@ export class DailyController {
    * used. Memory only.
    */
   private readonly reads = new Map<string, { scope: string; read: ThreadRead }>();
+  /**
+   * By post, the fetch its window had shown before it was opened this time (null: never opened).
+   * Replies written after it are marked new for as long as that window stays open (2026-11-23).
+   */
+  private readonly seenBefore = new Map<string, string | null>();
   /** A sync with the server that is under way; changes wait for it. */
   private syncing: Promise<void> | null = null;
   /** Server personas the last sync left out because another persona here uses their account. */
@@ -569,6 +574,8 @@ export class DailyController {
         };
         if (post.published) {
           const replies = this.replySummary.get(post.id);
+          // New on the card: what came since the window last showed this post's replies.
+          const seen = partition.replySeen?.find((item) => item.postId === post.id);
           return {
             ...base,
             state: 'published',
@@ -576,7 +583,12 @@ export class DailyController {
             started: false,
             sentAt: post.published.sentAt,
             replies: replies
-              ? { fetchedAt: replies.fetchedAt, count: replies.count, answers: replies.answers }
+              ? {
+                  fetchedAt: replies.fetchedAt,
+                  count: replies.count,
+                  fresh: Math.max(0, replies.count - (seen?.count ?? 0)),
+                  answers: replies.answers,
+                }
               : null,
           };
         }
@@ -650,7 +662,13 @@ export class DailyController {
     postId: string,
     partition: DailyPartition,
     read: ThreadRead,
+    seenBefore?: string | null,
   ): DailyReplyThread {
+    // Both times are the server's ISO strings, so they compare as text.
+    const fresh = (postedAt: string) =>
+      seenBefore !== undefined && (seenBefore === null || postedAt > seenBefore)
+        ? { fresh: true as const }
+        : {};
     const notes = (partition.replyNotes ?? []).filter((note) => note.postId === postId);
     const mine = (partition.answers ?? [])
       .filter((answer) => answer.postId === postId)
@@ -721,6 +739,7 @@ export class DailyController {
             notes.find((note) => note.threadsId === reply.threadsId && note.text === reply.text)
               ?.translation ?? null,
           hasLink: permalink !== null,
+          ...fresh(reply.postedAt),
         })),
         ...posted.map((answer) => ({
           threadsId: answer.threadsId ?? answer.id,
@@ -732,7 +751,8 @@ export class DailyController {
           hasLink: false,
           ownedByMe: true,
           postedAt: answer.publishedAt ?? answer.createdAt,
-          fromAnswer: true,
+          fromAnswer: true as const,
+          ...fresh(answer.publishedAt ?? answer.createdAt),
         })),
       ],
       answers,
@@ -755,7 +775,10 @@ export class DailyController {
     let thread: DailyReplyThread | null = null;
     const seen = (context: ServiceBusinessContext, partition: DailyPartition) => {
       const read = postId ? this.read(context, postId) : null;
-      thread = read && postId ? DailyController.thread(postId, partition, read) : null;
+      thread =
+        read && postId
+          ? DailyController.thread(postId, partition, read, this.seenBefore.get(postId))
+          : null;
     };
     const result = await (write ? this.mutate(action, seen) : this.respond(action, seen));
     return { ...result, thread };
@@ -959,10 +982,24 @@ export class DailyController {
     if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
       return this.withThread(null, invalid);
     const postId = input.postId;
-    return this.withThread(
-      postId,
-      async (context) => (await this.readThread(context, postId)).partition,
-    );
+    return this.withThread(postId, async (context) => {
+      const { partition, read } = await this.readThread(context, postId);
+      // Opening the window is the look: what it shows now is no longer new on the card.
+      const seen = partition.replySeen?.find((item) => item.postId === postId);
+      this.seenBefore.set(postId, seen?.fetchedAt ?? null);
+      const count = read.replies.filter((reply) => !reply.ownedByMe).length;
+      if (!read.fetchedAt || (seen?.fetchedAt === read.fetchedAt && seen.count === count))
+        return partition;
+      const next = { postId, fetchedAt: read.fetchedAt, count };
+      this.assert(context);
+      return this.options.store.update(this.scope(context), (stored) => {
+        stored.replySeen = [
+          ...(stored.replySeen ?? []).filter((item) => item.postId !== postId),
+          next,
+        ];
+        return stored;
+      });
+    });
   }
 
   /**
@@ -970,9 +1007,18 @@ export class DailyController {
    * characters; the rest waits for the next press. Long-running like `generate`.
    */
   async translateReplies(input: unknown): Promise<DailyRepliesResult> {
-    if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
+    if (
+      !isObject(input) ||
+      !uuid(input.postId) ||
+      !(
+        exactKeys(input, ['postId']) ||
+        (exactKeys(input, ['postId', 'threadsId']) && threadsId(input.threadsId))
+      )
+    )
       return this.withThread(null, invalid);
     const postId = input.postId;
+    // One reply from its own button, or every reply still without Korean.
+    const only = typeof input.threadsId === 'string' ? input.threadsId : null;
     if (this.generating)
       return this.withThread(postId, () =>
         fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'),
@@ -992,7 +1038,10 @@ export class DailyController {
           if (!persona || persona.language === 'ko') return invalid();
           const settled = await this.readThread(context, postId);
           read = settled.read;
-          batch = dailyReplyBatch(DailyController.thread(postId, settled.partition, read).replies);
+          const replies = DailyController.thread(postId, settled.partition, read).replies;
+          batch = dailyReplyBatch(
+            only === null ? replies : replies.filter((reply) => reply.threadsId === only),
+          );
           if (!batch.length) fail('daily_replies_translated', '한국어 뜻을 만들 댓글이 없습니다.');
           renderings = await this.options.translateReplies(
             persona,
@@ -1186,6 +1235,8 @@ export class DailyController {
           partition.answers = partition.answers.filter((answer) => posts.has(answer.postId));
         if (partition.replyNotes)
           partition.replyNotes = partition.replyNotes.filter((note) => posts.has(note.postId));
+        if (partition.replySeen)
+          partition.replySeen = partition.replySeen.filter((seen) => posts.has(seen.postId));
         return partition;
       });
     });

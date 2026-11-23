@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import type { DailyAnswer, DailyPersona, DailyPost, DailyReply } from '../shared/daily';
 import { DailyPostDialog } from './DailyPostDialog';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
@@ -196,48 +196,65 @@ export function DailyRepliesDialog({
           ) : thread.replies.length === 0 ? (
             <p className="daily-replies-empty">가져온 댓글이 없습니다.</p>
           ) : (
-            dailyReplyRows(thread).map(({ reply, nested, orphan, to }) => {
+            dailyReplyRows(thread).map(({ reply, nested, orphan, to, divider, fresh }) => {
               const media = dailyReplyMedia(reply.mediaType);
               return (
-                <article
-                  key={reply.threadsId}
-                  className={`daily-reply ${nested ? 'is-nested' : ''}`}
-                >
-                  <div className="daily-reply-head">
-                    <strong>{reply.fromAnswer ? account : `@${reply.username}`}</strong>
-                    <span>{dailyTime(reply.postedAt)}</span>
-                    {orphan && <span className="daily-reply-tag">대댓글</span>}
-                    {reply.ownedByMe && <span className="daily-reply-tag is-mine">내 답글</span>}
-                  </div>
-                  {to && <p className="daily-reply-to">↳ @{to}에게</p>}
-                  {(reply.text || media) && (
-                    <p className="daily-card-body">
-                      {reply.text}
-                      {media && (
-                        <>
-                          {reply.text ? ' ' : ''}
-                          <span className="daily-reply-media">{media}</span>
-                          {reply.hasLink && (
-                            <>
-                              {' '}
-                              <button
-                                type="button"
-                                className="daily-card-translate"
-                                onClick={() => void daily.openReplyLink(post.id, reply.threadsId)}
-                              >
-                                Threads에서 보기
-                              </button>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </p>
+                <Fragment key={reply.threadsId}>
+                  {divider && (
+                    <div className="daily-replies-divider" role="separator">
+                      <span>이전 댓글</span>
+                    </div>
                   )}
-                  {reply.translation && (
-                    <p className="daily-card-translation">{reply.translation}</p>
-                  )}
-                  {!reply.ownedByMe && answerCell(reply)}
-                </article>
+                  <article className={`daily-reply ${nested ? 'is-nested' : ''}`}>
+                    <div className="daily-reply-head">
+                      <strong>{reply.fromAnswer ? account : `@${reply.username}`}</strong>
+                      <span>{dailyTime(reply.postedAt)}</span>
+                      {orphan && <span className="daily-reply-tag">대댓글</span>}
+                      {fresh && <span className="daily-reply-tag is-fresh">새 댓글</span>}
+                      {reply.ownedByMe && <span className="daily-reply-tag is-mine">내 답글</span>}
+                      {persona.language !== 'ko' &&
+                        !reply.ownedByMe &&
+                        reply.text.trim() !== '' && (
+                          <button
+                            type="button"
+                            className="daily-reply-translate"
+                            disabled={reply.translation !== null || !daily.loaded || daily.writing}
+                            onClick={() => void daily.translateReplies(post.id, reply.threadsId)}
+                          >
+                            번역
+                          </button>
+                        )}
+                    </div>
+                    {to && <p className="daily-reply-to">↳ @{to}에게</p>}
+                    {(reply.text || media) && (
+                      <p className="daily-card-body">
+                        {reply.text}
+                        {media && (
+                          <>
+                            {reply.text ? ' ' : ''}
+                            <span className="daily-reply-media">{media}</span>
+                            {reply.hasLink && (
+                              <>
+                                {' '}
+                                <button
+                                  type="button"
+                                  className="daily-card-translate"
+                                  onClick={() => void daily.openReplyLink(post.id, reply.threadsId)}
+                                >
+                                  Threads에서 보기
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </p>
+                    )}
+                    {reply.translation && (
+                      <p className="daily-card-translation">{reply.translation}</p>
+                    )}
+                    {!reply.ownedByMe && answerCell(reply)}
+                  </article>
+                </Fragment>
               );
             })
           )}
@@ -249,7 +266,7 @@ export function DailyRepliesDialog({
               disabled={!daily.loaded || daily.writing}
               onClick={() => void daily.translateReplies(post.id)}
             >
-              {translating ? '한국어 뜻 만드는 중…' : '한국어 뜻 보기'}
+              {translating ? '번역 중…' : '전체 번역'}
             </button>
           )}
           {drafts.length > 0 && (

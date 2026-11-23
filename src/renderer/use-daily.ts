@@ -220,8 +220,13 @@ export function createDailyController(
       repliesPostId = null;
       update({ replies: null });
     },
-    translateReplies(postId: string) {
-      return call('translate-replies', () => api.translateDailyReplies({ postId }), postId);
+    /** Every reply still without Korean, or with `threadsId` that one reply. */
+    translateReplies(postId: string, threadsId?: string) {
+      return call(
+        'translate-replies',
+        () => api.translateDailyReplies(threadsId ? { postId, threadsId } : { postId }),
+        postId,
+      );
     },
     /** Adds an answer draft to a reply; `fromKorean` has it written in the persona's language. */
     addAnswer(postId: string, replyThreadsId: string, text: string, fromKorean: boolean) {

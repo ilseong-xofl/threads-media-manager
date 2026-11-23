@@ -299,6 +299,46 @@ button.daily-generate:disabled {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* Drafts and posted, one at a time (2026-11-23). */
+.daily-post-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #e6e8ef;
+}
+.daily-post-tabs button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #566072;
+  font-size: 13px;
+  font-weight: 600;
+}
+.daily-post-tabs button.is-active {
+  background: #fff;
+  color: #17202e;
+  box-shadow: 0 1px 2px #17202e14;
+}
+.daily-post-tab-note {
+  color: #b45309;
+  font-size: 11px;
+}
+/* New replies wait under the other tab. */
+.daily-post-tab-fresh {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #dcf5e7;
+  color: #177245;
+  font-size: 11px;
+}
 .daily-group-title {
   padding: 8px 4px 0;
   color: #566072;
@@ -629,13 +669,31 @@ button.daily-card-translate:hover:not(:disabled) {
 }
 
 /* Replies to a published post (2026-11-21). */
+/* The last fetch sits at the right end of the row, with the [댓글 n] button after it. */
+.daily-card-meta .daily-card-replies-none,
+.daily-card-meta .daily-card-replies-time {
+  margin-left: auto;
+}
 .daily-card-meta button.daily-card-replies {
   min-height: 0;
-  margin-left: auto;
   padding: 4px 10px;
+  border: 0;
   border-radius: 999px;
+  background: #eaeafa;
+  color: #4a4cc0;
   font-size: 12px;
   font-weight: 600;
+}
+.daily-card-meta button.daily-card-replies:hover {
+  background: #dcdcf6;
+}
+/* Replies that came since the window was last opened. */
+.daily-card-meta button.daily-card-replies.is-fresh {
+  background: #dcf5e7;
+  color: #177245;
+}
+.daily-card-meta button.daily-card-replies.is-fresh:hover {
+  background: #c9efda;
 }
 .daily-replies {
   display: flex;
@@ -687,6 +745,15 @@ button.daily-card-translate:hover:not(:disabled) {
   color: #17202e;
   font-size: 13px;
 }
+/* One reply in Korean, at the right end of its head line; off once it has one. */
+.daily-reply-head button.daily-reply-translate {
+  min-height: 0;
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
 .daily-reply-tag {
   padding: 1px 6px;
   border-radius: 6px;
@@ -697,6 +764,25 @@ button.daily-card-translate:hover:not(:disabled) {
 .daily-reply-tag.is-mine {
   background: #eaeafa;
   color: #4a4cc0;
+}
+.daily-reply-tag.is-fresh {
+  background: #dcf5e7;
+  color: #177245;
+}
+/* Between the replies that came since the last look and the ones seen before. */
+.daily-replies-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #177245;
+  font-size: 12px;
+  font-weight: 600;
+}
+.daily-replies-divider::before,
+.daily-replies-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid #a9dfc1;
 }
 .daily-reply-to {
   color: #5b6575;

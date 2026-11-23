@@ -1080,6 +1080,7 @@ describe('daily replies', () => {
     expect(await shown()).toEqual({
       fetchedAt: '2026-11-21T05:02:11.000Z',
       count: 3,
+      fresh: 3,
       answers: { queued: 0, failed: 0, unknown: 0 },
     });
     expect(replyRequest.mock.calls.map((call) => call[1])).toEqual(['summary']);
@@ -1093,6 +1094,7 @@ describe('daily replies', () => {
     expect(await shown()).toEqual({
       fetchedAt: '2026-11-21T05:02:11.000Z',
       count: 3,
+      fresh: 3,
       answers: { queued: 0, failed: 0, unknown: 0 },
     });
     for (const missing of ['old', 'migration'] as const) {
@@ -1103,6 +1105,63 @@ describe('daily replies', () => {
     }
     server.replies = 'auth';
     expect((await daily.state()).problem?.code).toBe('AUTH_REQUIRED');
+  });
+  it('writes one chosen reply in Korean, and leaves it out of the next whole run', async () => {
+    const { daily, post, translateReplies } = await published();
+    await daily.replies({ postId: post.id });
+    const one = await daily.translateReplies({ postId: post.id, threadsId: '4' });
+    expect(one.problem).toBeNull();
+    expect(translateReplies).toHaveBeenCalledTimes(1);
+    expect(translateReplies.mock.lastCall![2]).toEqual([{ id: '4', text: 'Me too' }]);
+    expect(one.thread!.replies.map((r) => r.translation)).toEqual([null, null, null, '뜻: Me too']);
+    // Already written, our own reply, a reply without text, an unknown one: nothing is asked.
+    for (const threadsId of ['4', '2', '3', '999'])
+      expect((await daily.translateReplies({ postId: post.id, threadsId })).problem?.code).toBe(
+        'daily_replies_translated',
+      );
+    expect(
+      (await daily.translateReplies({ postId: post.id, threadsId: 'x' })).problem,
+    ).not.toBeNull();
+    expect(translateReplies).toHaveBeenCalledTimes(1);
+    // The whole run takes only what is left.
+    await daily.translateReplies({ postId: post.id });
+    expect(translateReplies.mock.lastCall![2]).toEqual([{ id: '1', text: 'Cute!' }]);
+  });
+  it('counts the replies that came since the window was last opened, and marks them while it is open', async () => {
+    const { daily, ok, post, threads, rows, summary, userData } = await published();
+    const shown = async () => ok(await daily.state()).posts.find((p) => p.id === post.id)?.replies;
+    const fetched = (at: string, count: number) => {
+      threads.get(rows[0].id)!.fetchedAt = at;
+      Object.assign(summary[0], { fetchedAt: at, count });
+    };
+    const fresh = (result: Awaited<ReturnType<typeof daily.replies>>) =>
+      result.thread!.replies.filter((r) => r.fresh).map((r) => r.threadsId);
+    fetched('2026-11-21T08:30:00.000Z', 3);
+    // Never opened: every reply by someone else is new, and the first look has nothing older.
+    expect(await shown()).toMatchObject({ count: 3, fresh: 3 });
+    expect(fresh(await daily.replies({ postId: post.id }))).toEqual(['1', '2', '3', '4']);
+    expect(await shown()).toMatchObject({ count: 3, fresh: 0 });
+    // The phone fetched again: two more by others and one of ours.
+    const later = { postedAt: '2026-11-21T09:00:00.000Z' };
+    threads
+      .get(rows[0].id)!
+      .replies.unshift(
+        reply('7', 'New!', later),
+        reply('6', 'Thanks', { ...later, ownedByMe: true, parentThreadsId: '1' }),
+        reply('5', 'Same here', later),
+      );
+    fetched('2026-11-21T09:10:00.000Z', 5);
+    expect(await shown()).toMatchObject({ count: 5, fresh: 2 });
+    expect(fresh(await daily.replies({ postId: post.id }))).toEqual(['7', '6', '5']);
+    expect(await shown()).toMatchObject({ count: 5, fresh: 0 });
+    // Work in the open window keeps the marks; opening it again has nothing new.
+    expect(fresh(await daily.translateReplies({ postId: post.id }))).toEqual(['7', '6', '5']);
+    expect(fresh(await daily.replies({ postId: post.id }))).toEqual([]);
+    const stored = JSON.parse(await readFile(join(userData, DAILY_FILE_NAME), 'utf8'))
+      .partitions[0];
+    expect(stored.replySeen).toEqual([
+      { postId: post.id, fetchedAt: '2026-11-21T09:10:00.000Z', count: 5 },
+    ]);
   });
   it("reads one post's replies with this PC's renderings, and drops a rendering once the reply changed", async () => {
     const { daily, post, threads, rows, translateReplies, userData } = await published();

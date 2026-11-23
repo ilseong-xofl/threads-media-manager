@@ -58,6 +58,8 @@ export interface DailyReplySummary {
   fetchedAt: string;
   /** Replies by other people; the account's own replies are not counted. */
   count: number;
+  /** How many of them came since the replies window of this post was last opened on this PC. */
+  fresh: number;
   /** The persona's answers the phone still has to post (2026-11-21), by the server's state. */
   answers: { queued: number; failed: number; unknown: number };
 }
@@ -84,6 +86,8 @@ export interface DailyReply {
    * (2026-11-21). Its username is not known here; `threadsId` is the answer id while it has none.
    */
   fromAnswer?: true;
+  /** Written after the fetch last looked at on this PC; kept while the window stays open. */
+  fresh?: true;
 }
 
 /**
@@ -174,6 +178,11 @@ export interface DailyPersonaInput {
 export interface DailyPostInput {
   postId: string;
 }
+/** [전체 번역] of a post's replies, or with `threadsId` the one reply its own button names. */
+export interface TranslateDailyRepliesInput {
+  postId: string;
+  threadsId?: string;
+}
 export interface SaveDailyPostInput {
   postId: string;
   text: string;
@@ -231,7 +240,7 @@ export interface DailyMethods {
   /** Reads the replies of one published post from the server. */
   getDailyReplies(input: DailyPostInput): Promise<DailyRepliesResult>;
   /** Writes in Korean the replies of one post that have no rendering yet, as many as fit at once. */
-  translateDailyReplies(input: DailyPostInput): Promise<DailyRepliesResult>;
+  translateDailyReplies(input: TranslateDailyRepliesInput): Promise<DailyRepliesResult>;
   /** Opens one reply of the replies last read on Threads, in the browser. */
   openDailyReplyLink(input: DailyReplyLinkInput): Promise<DailyLinkResult>;
   /** Adds an answer draft to one reply: as written, or from Korean into the persona's language. */
