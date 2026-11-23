@@ -18,6 +18,8 @@ import {
   type DailyView,
   type DailyWaitingNote,
   dailyTextLength,
+  dailyTopicProblem,
+  dailyTopicValue,
 } from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
@@ -569,6 +571,7 @@ export class DailyController {
           personaId: post.personaId,
           text: post.text,
           translation: post.translation ?? null,
+          topic: post.topic ?? null,
           createdAt: post.createdAt,
           replies: null,
         };
@@ -1319,14 +1322,24 @@ export class DailyController {
   async addPost(input: unknown): Promise<DailyResult> {
     if (
       !isObject(input) ||
-      !exactKeys(input, ['personaId', 'text', 'fromKorean']) ||
+      !exactKeys(input, [
+        'personaId',
+        'text',
+        'fromKorean',
+        ...(input.topic === undefined ? [] : ['topic']),
+      ]) ||
       !uuid(input.personaId) ||
       typeof input.text !== 'string' ||
-      typeof input.fromKorean !== 'boolean'
+      typeof input.fromKorean !== 'boolean' ||
+      (input.topic !== undefined && typeof input.topic !== 'string')
     )
       return this.respond(invalid);
     if (this.generating)
       return this.respond(() => fail('daily_busy', '진행 중인 글 생성이 끝난 뒤 시도하세요.'));
+    // Checked before ChatGPT is asked to write a Korean draft in the persona's language.
+    const topic = typeof input.topic === 'string' ? dailyTopicValue(input.topic) : '';
+    const topicProblem = topic ? dailyTopicProblem(topic) : null;
+    if (topicProblem) return this.respond(() => fail('daily_topic', topicProblem));
     const personaId = input.personaId;
     const written = input.text.trim();
     const add = (scope: DailyScope, text: string, translation: string | null) => {
@@ -1339,6 +1352,7 @@ export class DailyController {
           personaId,
           text,
           translation,
+          ...(topic ? { topic } : {}),
           createdAt,
           send: null,
           sentBefore: false,
@@ -1384,15 +1398,19 @@ export class DailyController {
     return this.mutate(async (context) => {
       if (
         !isObject(input) ||
-        !exactKeys(input, ['postId', 'text']) ||
+        !exactKeys(input, ['postId', 'text', ...(input.topic === undefined ? [] : ['topic'])]) ||
         !uuid(input.postId) ||
-        typeof input.text !== 'string'
+        typeof input.text !== 'string' ||
+        (input.topic !== undefined && typeof input.topic !== 'string')
       )
         return invalid();
       // Nothing is edited while ChatGPT writes; the board does not open the editor either.
       if (this.generating) fail('daily_busy', '글 생성이 끝난 뒤 수정하세요.');
       const text = input.text.trim();
       if (!validDailyText(text)) fail('daily_text', '본문은 1~500자로 작성하세요.');
+      const topic = typeof input.topic === 'string' ? dailyTopicValue(input.topic) : undefined;
+      const topicProblem = topic ? dailyTopicProblem(topic) : null;
+      if (topicProblem) fail('daily_topic', topicProblem);
       const postId = input.postId;
       return this.options.store.update(this.scope(context), (partition) => {
         const post = partition.posts.find((item) => item.id === postId);
@@ -1401,6 +1419,7 @@ export class DailyController {
         // The Korean rendering described the old text; an edited post no longer has one.
         if (post.text !== text) post.translation = null;
         post.text = text;
+        if (topic !== undefined) post.topic = topic || null;
         return partition;
       });
     });
@@ -1511,6 +1530,8 @@ export class DailyController {
             commentUpdatedAt: null,
           },
           caption: current.text,
+          // Left out without a topic, so a server that does not know the field still takes it.
+          ...(current.topic ? { topic: current.topic } : {}),
           comment: null,
           media: [],
         };
@@ -1519,7 +1540,13 @@ export class DailyController {
         this.assert(context);
         await this.options.store.update(scope, (partition) => {
           const post = partition.posts.find((item) => item.id === postId);
-          if (!post || post.send || post.published || post.text !== created.caption)
+          if (
+            !post ||
+            post.send ||
+            post.published ||
+            post.text !== created.caption ||
+            (post.topic ?? undefined) !== created.topic
+          )
             fail('daily_post_changed', '보내는 중 글이 변경되었습니다. 다시 확인하세요.');
           post!.send = { request: created, confirmed: false, sentAt: null };
         });

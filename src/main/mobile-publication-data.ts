@@ -157,6 +157,8 @@ export interface PublicationRequest {
   expectedOwnershipVersion: number;
   source: MobilePublicationSource;
   caption: string;
+  /** Daily posts only (2026-11-23), and only when the post has a topic. */
+  topic?: string;
   comment: MobilePublication['comment'];
   media: MobilePublicationMedia[];
 }

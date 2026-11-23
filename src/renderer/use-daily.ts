@@ -184,18 +184,20 @@ export function createDailyController(
       return call('generate', () => api.generateDailyPosts({ personaId }), personaId);
     },
     /** Adds a draft the user wrote; `fromKorean` has it written in the persona's language. */
-    async addPost(personaId: string, text: string, fromKorean: boolean) {
+    async addPost(personaId: string, text: string, fromKorean: boolean, topic = '') {
       const known = new Set(state.view.posts.map((post) => post.id));
       const added = await call(fromKorean ? 'compose' : 'write', () =>
-        api.addDailyPost({ personaId, text, fromKorean }),
+        api.addDailyPost({ personaId, text, fromKorean, ...(topic.trim() ? { topic } : {}) }),
       );
       // A post typed in another language has no Korean rendering yet.
       const post = state.view.posts.find((item) => !known.has(item.id));
       if (added && post && dailyNeedsTranslation(state.view, post.id)) void translate(post.id);
       return added;
     },
-    async savePost(postId: string, text: string) {
-      const saved = await call('write', () => api.saveDailyPost({ postId, text }));
+    async savePost(postId: string, text: string, topic?: string) {
+      const saved = await call('write', () =>
+        api.saveDailyPost({ postId, text, ...(topic === undefined ? {} : { topic }) }),
+      );
       // An edited post in another language lost its Korean rendering; write it again.
       if (saved && dailyNeedsTranslation(state.view, postId)) void translate(postId);
       return saved;

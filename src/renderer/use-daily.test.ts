@@ -107,6 +107,7 @@ describe('daily board requests', () => {
             personaId: 'p1',
             text: 'Edited',
             translation,
+            topic: null,
             createdAt: '2026-11-17',
             state: 'draft',
             note: null,
@@ -121,7 +122,12 @@ describe('daily board requests', () => {
     api.saveDailyPost.mockResolvedValueOnce(edited('en', '고친 글'));
     expect(await controller.savePost('post-1', 'Edited')).toBe(true);
     api.saveDailyPost.mockResolvedValueOnce(edited('ko', null));
-    expect(await controller.savePost('post-1', '고침')).toBe(true);
+    expect(await controller.savePost('post-1', '고침', '#Mom Threads')).toBe(true);
+    expect(api.saveDailyPost).toHaveBeenLastCalledWith({
+      postId: 'post-1',
+      text: '고침',
+      topic: '#Mom Threads',
+    });
     await settle();
     expect(api.translateDailyPost).not.toHaveBeenCalled();
     const translated = deferred<DailyResult>();
@@ -142,11 +148,13 @@ describe('daily board requests', () => {
     await settle();
     api.translateDailyPost.mockClear();
     api.addDailyPost.mockResolvedValueOnce(edited('en', null));
-    expect(await controller.addPost('p1', 'Edited', false)).toBe(true);
+    // The topic goes as typed; without one (the Korean draft below) the key is left out.
+    expect(await controller.addPost('p1', 'Edited', false, '#Mom Threads')).toBe(true);
     expect(api.addDailyPost).toHaveBeenLastCalledWith({
       personaId: 'p1',
       text: 'Edited',
       fromKorean: false,
+      topic: '#Mom Threads',
     });
     expect(api.translateDailyPost).toHaveBeenCalledExactlyOnceWith({ postId: 'post-1' });
     await settle();

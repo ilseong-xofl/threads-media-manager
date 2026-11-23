@@ -449,6 +449,20 @@ button.daily-card-translate:hover:not(:disabled) {
   color: #b45309;
   font-weight: 600;
 }
+.daily-card-topic {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #2b7fd6;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+.daily-card-topic svg {
+  flex: none;
+  fill: currentColor;
+}
 .daily-card-actions {
   display: flex;
   align-items: center;

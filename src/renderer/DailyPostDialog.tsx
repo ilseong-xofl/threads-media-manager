@@ -3,6 +3,7 @@ import type { CaptionLanguage } from '../shared/contracts';
 import {
   DAILY_KOREAN_DRAFT_LIMIT,
   DAILY_TEXT_LIMIT,
+  DAILY_TOPIC_LIMIT,
   dailyTextLength,
   type DailyPersona,
   type DailyPost,
@@ -30,19 +31,26 @@ export function DailyPostDialog({
   onSave,
   onClose,
 }: {
-  post: Pick<DailyPost, 'text' | 'translation'> | null;
+  post: (Pick<DailyPost, 'text' | 'translation'> & Partial<Pick<DailyPost, 'topic'>>) | null;
   persona: DailyPersona;
   replyTo?: DailyReply;
   busy: boolean;
   /** The Korean draft is being written in the persona's language. */
   composing?: boolean;
-  /** `fromKorean`: the text is Korean and the persona posts in another language. */
-  onSave(text: string, fromKorean: boolean): Promise<boolean>;
+  /**
+   * `fromKorean`: the text is Korean and the persona posts in another language. `topic` is the
+   * topic field as typed (a post only).
+   */
+  onSave(text: string, fromKorean: boolean, topic: string): Promise<boolean>;
   onClose(): void;
 }) {
   const id = useId();
   const [text, setText] = useState(post?.text ?? '');
+  const [topic, setTopic] = useState(post?.topic ?? '');
   const [language, setLanguage] = useState<CaptionLanguage>(persona.language);
+  // A post's topic is set when it is written by hand and while its draft is edited; an answer
+  // has none.
+  const editsTopic = !replyTo;
   const fromKorean = !post && persona.language !== 'ko' && language === 'ko';
   // A Korean draft grows when it is written in some languages, so it gets a shorter limit.
   const limit = fromKorean ? DAILY_KOREAN_DRAFT_LIMIT[persona.language] : DAILY_TEXT_LIMIT;
@@ -62,7 +70,7 @@ export function DailyPostDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (working || !valid) return;
-          void onSave(text, fromKorean).then((saved) => {
+          void onSave(text, fromKorean, topic).then((saved) => {
             if (saved) onClose();
           });
         }}
@@ -96,6 +104,23 @@ export function DailyPostDialog({
                       : ''
                   }`
                 : `쓴 그대로 초안에 넣${replyTo ? '습니다' : '고 한국어 뜻을 만듭니다'}. ${personaLanguage} 작문이 어렵다면 한국어를 고르세요.`}
+            </p>
+          </>
+        )}
+        {editsTopic && (
+          <>
+            <label htmlFor={`${id}-topic`}>토픽</label>
+            <input
+              id={`${id}-topic`}
+              type="text"
+              value={topic}
+              disabled={working}
+              placeholder="선택 · 예: Mom Threads"
+              onChange={(event) => setTopic(event.target.value)}
+            />
+            <p className="daily-form-note">
+              글에 붙일 Threads 토픽 하나입니다. {DAILY_TOPIC_LIMIT}자까지, 마침표(.)와 &는 쓸 수
+              없고 맨 앞의 #은 빼고 저장합니다.
             </p>
           </>
         )}

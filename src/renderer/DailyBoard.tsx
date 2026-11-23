@@ -123,7 +123,7 @@ export function DailyBoard({
         post={dialogPost}
         persona={postPersona}
         busy={daily.busy}
-        onSave={(text) => daily.savePost(dialogPost.id, text)}
+        onSave={(text, _fromKorean, topic) => daily.savePost(dialogPost.id, text, topic)}
         onClose={closeDialog}
       />
     );
@@ -134,7 +134,7 @@ export function DailyBoard({
         persona={postPersona}
         busy={daily.busy}
         composing={daily.composing}
-        onSave={(text, fromKorean) => daily.addPost(postPersona.id, text, fromKorean)}
+        onSave={(text, fromKorean, topic) => daily.addPost(postPersona.id, text, fromKorean, topic)}
         onClose={closeDialog}
       />
     );
@@ -372,6 +372,19 @@ export function DailyBoard({
   );
 }
 
+/** A post's topic as Threads shows a community tag: its three-dot mark and blue text. */
+function DailyTopic({ topic }: { topic: string }) {
+  return (
+    <p className="daily-card-topic">
+      <svg viewBox="0 0 12 12" width="8" height="8" aria-hidden="true">
+        <circle cx="3.2" cy="6" r="2.4" />
+        <circle cx="8.6" cy="2.8" r="1.7" />
+        <circle cx="8.9" cy="8.9" r="1.7" />
+      </svg>
+      {topic}
+    </p>
+  );
+}
 function PersonaChip({
   persona,
   daily,
@@ -580,6 +593,7 @@ function PersonaColumn({
                         </button>
                       )
                     )}
+                    {post.topic && <DailyTopic topic={post.topic} />}
                     <div className="daily-card-footer">
                       <span>{dailyTime(post.createdAt)} 생성</span>
                       <div className="daily-card-actions">
@@ -618,6 +632,7 @@ function PersonaColumn({
                       {post.translation && (
                         <p className="daily-card-translation">{post.translation}</p>
                       )}
+                      {post.topic && <DailyTopic topic={post.topic} />}
                       <div className="daily-card-meta">
                         {post.sentAt && <span>{dailyTime(post.sentAt)} 보냄</span>}
                         {note && <span className="daily-card-note">{note}</span>}
@@ -651,6 +666,7 @@ function PersonaColumn({
                     {post.translation && (
                       <p className="daily-card-translation">{post.translation}</p>
                     )}
+                    {post.topic && <DailyTopic topic={post.topic} />}
                     <div className="daily-card-meta">
                       <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
                       {post.replies &&

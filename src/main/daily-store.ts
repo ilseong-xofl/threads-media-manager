@@ -7,6 +7,8 @@ import {
   DAILY_TEXT_LIMIT,
   DAILY_TRANSLATION_LIMIT,
   dailyTextLength,
+  dailyTopicProblem,
+  dailyTopicValue,
   type DailyPersona,
 } from '../shared/daily';
 import { ViewError } from './collection';
@@ -29,6 +31,8 @@ export interface StoredDailyPost {
   text: string;
   /** Korean rendering of a post generated in another language. Absent in files written before it. */
   translation?: string | null;
+  /** Threads topic (2026-11-23). Absent in files written before it. */
+  topic?: string | null;
   createdAt: string;
   send: StoredDailySend | null;
   /** A cancelled send of this post still exists on the server and may yet be posted. */
@@ -112,6 +116,12 @@ export const validDailyTranslation = (value: unknown): value is string =>
   dailyTextLength(value) <= DAILY_TRANSLATION_LIMIT &&
   !value.includes('\0');
 
+export const validDailyTopic = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  dailyTopicValue(value) === value &&
+  dailyTopicProblem(value) === null;
+
 function validRequest(v: unknown, postId: string): v is PublicationRequest {
   return (
     isObject(v) &&
@@ -126,6 +136,7 @@ function validRequest(v: unknown, postId: string): v is PublicationRequest {
     v.source.draftRevision === 1 &&
     v.source.commentUpdatedAt === null &&
     validDailyText(v.caption) &&
+    (v.topic === undefined || validDailyTopic(v.topic)) &&
     v.comment === null &&
     Array.isArray(v.media) &&
     v.media.length === 0
@@ -154,6 +165,7 @@ function validPost(v: unknown): v is StoredDailyPost {
     (v.translation === undefined ||
       v.translation === null ||
       validDailyTranslation(v.translation)) &&
+    (v.topic === undefined || v.topic === null || validDailyTopic(v.topic)) &&
     timestamp(v.createdAt) &&
     typeof v.sentBefore === 'boolean' &&
     (v.send === null ||

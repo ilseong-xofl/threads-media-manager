@@ -15,6 +15,8 @@ export const DAILY_KOREAN_DRAFT_LIMIT: Record<CaptionLanguage, number> = {
   en: 200,
 };
 export const DAILY_TRANSLATION_LIMIT = 1000;
+/** Threads limits a topic (`topic_tag`) to 50 characters (2026-11-23). */
+export const DAILY_TOPIC_LIMIT = 50;
 
 /** One fictional author. It is bound to exactly one managed Threads account. */
 export interface DailyPersona {
@@ -41,6 +43,8 @@ export interface DailyPost {
   text: string;
   /** What a post written in another language says, in Korean. Shown on this PC only, never sent. */
   translation: string | null;
+  /** The Threads topic sent with the post (2026-11-23), without its `#`; null for none. */
+  topic: string | null;
   createdAt: string;
   state: DailyPostState;
   /** Waiting posts only. null means the phone has not started it. */
@@ -186,12 +190,16 @@ export interface TranslateDailyRepliesInput {
 export interface SaveDailyPostInput {
   postId: string;
   text: string;
+  /** As typed; a leading `#` is dropped and an empty one removes the topic. Omitted keeps it. */
+  topic?: string;
 }
 export interface AddDailyPostInput {
   personaId: string;
   text: string;
   /** The text is a Korean draft to be written in the persona's language first. */
   fromKorean: boolean;
+  /** As typed, like `SaveDailyPostInput.topic`; omitted or empty for a post without a topic. */
+  topic?: string;
 }
 export interface AddDailyAnswerInput {
   postId: string;
@@ -254,3 +262,15 @@ export interface DailyMethods {
 }
 
 export const dailyTextLength = (text: string) => [...text].length;
+
+/** The topic to keep for what was typed: without spaces around it or a leading `#`. */
+export const dailyTopicValue = (input: string) => input.trim().replace(/^#+/, '').trim();
+
+/** Why Threads would not take a topic (2026-11-23), or null. Expects a `dailyTopicValue`. */
+export function dailyTopicProblem(topic: string): string | null {
+  if (dailyTextLength(topic) > DAILY_TOPIC_LIMIT)
+    return `토픽은 ${DAILY_TOPIC_LIMIT}자 이내로 작성하세요.`;
+  if (/[.&]/.test(topic)) return '토픽에는 마침표(.)와 &를 쓸 수 없습니다.';
+  if (/\p{Cc}/u.test(topic)) return '토픽에는 줄바꿈이나 탭을 쓸 수 없습니다.';
+  return null;
+}

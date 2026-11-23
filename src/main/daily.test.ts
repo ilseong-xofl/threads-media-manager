@@ -222,7 +222,8 @@ async function setup() {
           };
           rows.push(row);
         }
-        return { publication: row };
+        // A server that keeps topics returns the key on every publication (2026-11-23).
+        return { publication: { ...row, topic: request.topic ?? null } };
       }
       if (operation === 'recall') {
         const row = rows.find((item) => item.id === id)!;
@@ -848,6 +849,32 @@ describe('daily drafts', () => {
     );
     expect((await daily.deletePost({ postId: post.id })).problem?.code).toBe('daily_post_sent');
   });
+  it('keeps one topic on a draft without its leading #, and refuses one Threads would not take', async () => {
+    const { daily, persona, draft } = await setup();
+    const post = await draft((await persona()).id);
+    const topic = async (value?: string) => {
+      const result = await daily.savePost({
+        postId: post.id,
+        text: post.text,
+        ...(value === undefined ? {} : { topic: value }),
+      });
+      return {
+        code: result.problem?.code ?? null,
+        topic: result.view.posts.find((item) => item.id === post.id)?.topic,
+      };
+    };
+    expect(post.topic).toBeNull();
+    expect(await topic(' #Mom Threads ')).toEqual({ code: null, topic: 'Mom Threads' });
+    // A save without the field leaves the topic as it is.
+    expect(await topic()).toEqual({ code: null, topic: 'Mom Threads' });
+    expect(await topic('가'.repeat(50))).toEqual({ code: null, topic: '가'.repeat(50) });
+    for (const refused of ['가'.repeat(51), 'Mom.Threads', 'Mom & Dad', 'Mom\tDad'])
+      expect(await topic(refused)).toEqual({ code: 'daily_topic', topic: '가'.repeat(50) });
+    expect(await topic('  #  ')).toEqual({ code: null, topic: null });
+    expect(
+      (await daily.savePost({ postId: post.id, text: post.text, topic: 1 })).problem?.code,
+    ).toBe('daily_input');
+  });
 });
 
 describe('daily sends', () => {
@@ -868,6 +895,41 @@ describe('daily sends', () => {
       media: [],
       source: { libraryId: 'daily', postKey: post.id, draftRevision: 1, commentUpdatedAt: null },
     });
+  });
+  it('takes a topic with a post written by hand', async () => {
+    const { daily, persona, ok } = await setup();
+    const personaId = (await persona()).id;
+    const add = (topic?: unknown) =>
+      daily.addPost({
+        personaId,
+        text: 'written by hand',
+        fromKorean: false,
+        ...(topic === undefined ? {} : { topic }),
+      });
+    expect(ok(await add(' #Mom Threads ')).posts.map((post) => post.topic)).toEqual([
+      'Mom Threads',
+    ]);
+    expect(ok(await add()).posts.map((post) => post.topic)).toEqual(['Mom Threads', null]);
+    expect(ok(await add('  ')).posts).toHaveLength(3);
+    const refused = await add('Mom.Threads');
+    expect(refused.problem?.code).toBe('daily_topic');
+    expect(refused.view.posts).toHaveLength(3);
+    expect((await add(1)).problem?.code).toBe('daily_input');
+  });
+  it('sends the topic only for a post that has one', async () => {
+    const { daily, server, persona, ok, creates } = await setup();
+    const p = await persona();
+    const [plain, tagged] = ok(await daily.generate({ personaId: p.id })).posts;
+    ok(await daily.savePost({ postId: tagged.id, text: tagged.text, topic: '#Mom Threads' }));
+    ok(await daily.send({ postId: plain.id }));
+    expect(creates()[0]).not.toHaveProperty('topic');
+    server.offline = true;
+    expect((await daily.send({ postId: tagged.id })).problem?.code).toBe('SERVICE_UNAVAILABLE');
+    server.offline = false;
+    const sent = ok(await daily.send({ postId: tagged.id })).posts.find((p) => p.id === tagged.id);
+    expect(sent).toMatchObject({ state: 'waiting', note: null, topic: 'Mom Threads' });
+    expect(creates()[1]).toMatchObject({ topic: 'Mom Threads', caption: tagged.text });
+    expect(creates()[2]).toEqual(creates()[1]);
   });
   it('stores the whole request before the network call and repeats it unchanged', async () => {
     const { daily, server, userData, persona, draft, ok, creates } = await setup();
@@ -1774,6 +1836,26 @@ describe('daily storage boundaries', () => {
     });
     expect(result.problem?.code).toBe('daily_storage');
     expect(await readFile(path, 'utf8')).toBe('{"version":1,"partitions":"broken"}');
+  });
+  it('reads posts of files written before topics, and refuses a stored topic Threads would not take', async () => {
+    const { daily, userData, persona, ok } = await setup();
+    const p = await persona();
+    ok(await daily.generate({ personaId: p.id }));
+    const path = join(userData, DAILY_FILE_NAME);
+    const file = JSON.parse(await readFile(path, 'utf8'));
+    expect(file.partitions[0].posts[0]).not.toHaveProperty('topic');
+    expect(ok(await daily.state()).posts.map((post) => post.topic)).toEqual([null, null, null]);
+    file.partitions[0].posts[0].topic = 'Mom Threads';
+    file.partitions[0].posts[1].topic = null;
+    await writeFile(path, JSON.stringify(file));
+    expect(ok(await daily.state()).posts.map((post) => post.topic)).toEqual([
+      'Mom Threads',
+      null,
+      null,
+    ]);
+    file.partitions[0].posts[0].topic = 'Mom.Threads';
+    await writeFile(path, JSON.stringify(file));
+    expect((await daily.state()).problem?.code).toBe('daily_storage');
   });
   it('preserves fields a later version added', async () => {
     const { daily, userData, persona, ok } = await setup();
