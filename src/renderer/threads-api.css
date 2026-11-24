@@ -22,7 +22,6 @@
   gap: 8px;
 }
 .threads-token-row > button {
-  min-width: 80px;
   white-space: nowrap;
 }
 .threads-form label,

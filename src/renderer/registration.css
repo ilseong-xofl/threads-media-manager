@@ -461,7 +461,6 @@
   padding-block: 7px;
 }
 .registration-generate-button {
-  min-width: 64px;
   color: #6260ad;
   border-color: #d8d5ed;
   background: #f6f5fe;
@@ -680,9 +679,6 @@
   padding: 14px 24px;
   border-top: 1px solid #e3e6ed;
   background: #fff;
-}
-.registration-footer-left > .registration-actions > button {
-  min-width: 87.75px;
 }
 
 .registration-footer-left {

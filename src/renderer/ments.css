@@ -156,11 +156,6 @@ textarea.ment-body:disabled {
   justify-content: space-between;
   gap: 12px;
 }
-/* The ment windows' buttons ([취소]·[저장], [돌아가기]·[삭제], [확인]) and the post dialog's
-   [취소]·[저장] share one width: twice a plain two-letter button (2026-11-24, the user's call). */
-button.ment-action-button {
-  min-width: 98px;
-}
 .ment-body-count {
   color: #5b6575;
   font-size: 12px;

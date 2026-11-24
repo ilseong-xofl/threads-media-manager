@@ -300,17 +300,12 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
             <p>{mentDeleteMessage(deleting)}</p>
           </div>
           <div className="threads-actions managed-threads-dialog-actions">
-            <button
-              type="button"
-              className="ment-action-button"
-              disabled={ments.busy}
-              onClick={() => setDeleting(null)}
-            >
+            <button type="button" disabled={ments.busy} onClick={() => setDeleting(null)}>
               돌아가기
             </button>
             <button
               type="button"
-              className="managed-threads-danger-primary ment-action-button"
+              className="managed-threads-danger-primary"
               disabled={ments.busy}
               onClick={() => void remove(deleting)}
             >
@@ -331,12 +326,12 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
           </div>
           <div className="threads-actions managed-threads-dialog-actions">
             {/* [취소] keeps the chosen ment and its text as they are. */}
-            <button type="button" className="ment-action-button" onClick={() => setLeaving(null)}>
+            <button type="button" onClick={() => setLeaving(null)}>
               취소
             </button>
             <button
               type="button"
-              className="managed-threads-danger-primary ment-action-button"
+              className="managed-threads-danger-primary"
               onClick={() => {
                 const action = leaving;
                 setLeaving(null);
@@ -555,10 +550,10 @@ function MentNameDialog({
           {length} / {limit}
         </p>
         <div className="threads-actions managed-threads-dialog-actions">
-          <button type="button" className="ment-action-button" disabled={busy} onClick={onClose}>
+          <button type="button" disabled={busy} onClick={onClose}>
             취소
           </button>
-          <button type="submit" className="primary ment-action-button" disabled={busy || !valid}>
+          <button type="submit" className="primary" disabled={busy || !valid}>
             {busy ? '저장 중…' : '저장'}
           </button>
         </div>
@@ -606,7 +601,7 @@ function MentBodyEditor({
         </span>
         <button
           type="button"
-          className="primary ment-action-button"
+          className="primary"
           disabled={busy || !changed || length > MENT_BODY_LIMIT}
           onClick={() => void onSave(text)}
         >

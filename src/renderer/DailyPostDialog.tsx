@@ -167,10 +167,10 @@ export function DailyPostDialog({
           </>
         )}
         <div className="threads-actions managed-threads-dialog-actions">
-          <button type="button" className="ment-action-button" disabled={working} onClick={onClose}>
+          <button type="button" disabled={working} onClick={onClose}>
             취소
           </button>
-          <button type="submit" className="primary ment-action-button" disabled={working || !valid}>
+          <button type="submit" className="primary" disabled={working || !valid}>
             {composing ? `${personaLanguage}로 바꾸는 중…` : busy ? '저장 중…' : '저장'}
           </button>
         </div>
@@ -187,12 +187,12 @@ export function DailyPostDialog({
           </div>
           <div className="threads-actions managed-threads-dialog-actions">
             {/* [취소] keeps the body and the ment it came from as they are. */}
-            <button type="button" className="ment-action-button" onClick={() => setReplacing(null)}>
+            <button type="button" onClick={() => setReplacing(null)}>
               취소
             </button>
             <button
               type="button"
-              className="primary ment-action-button"
+              className="primary"
               onClick={() => {
                 fill(replacing);
                 setReplacing(null);

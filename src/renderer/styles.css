@@ -50,6 +50,25 @@ button {
     border-color 150ms ease,
     color 150ms ease;
 }
+/* A button with words is at least 98px wide, the width of the ment windows' buttons, so none looks
+   cramped (2026-11-24, the user's call). Icon buttons carry an aria-label instead of words and keep
+   their size, as do tabs and buttons drawn as plain text links; the word buttons that also carry an
+   aria-label are named. :where() keeps this a default that a component's own rule can change. */
+:where(
+  button:not(
+    [aria-label],
+    .mode-tabs button,
+    .library-tabs button,
+    .daily-post-tabs button,
+    .daily-card-translate,
+    .export-toast button
+  ),
+  .managed-threads-recheck,
+  .registration-candidate-select,
+  .comment-heading-actions button
+) {
+  min-width: 98px;
+}
 button:hover:not(:disabled) {
   background: #f5f5ff;
   border-color: #ced0ed;
@@ -1581,11 +1600,7 @@ dd {
   border-top: 1px solid #e5e8ee;
   background: white;
 }
-.image-editor .media-editor-footer > button {
-  min-width: 97.5px;
-}
 .post-detail-action {
-  min-width: 90px;
   min-height: 36.8px;
   gap: 8px;
   padding: 6.4px 16px;

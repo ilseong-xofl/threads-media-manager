@@ -73,9 +73,7 @@ it('shows one select box per level and the chosen ment’s text, written and sav
   expect(html).not.toMatch(/<textarea[^>]*(readOnly|disabled)=""/);
   // [저장] waits for a change to the text, with the text's length beside it.
   expect(html).toContain('<span class="ment-body-count">8 / 500</span>');
-  expect(html).toMatch(
-    /<button type="button" class="primary ment-action-button" disabled="">저장<\/button>/,
-  );
+  expect(html).toMatch(/<button type="button" class="primary" disabled="">저장<\/button>/);
   expect(render(catalog, 'm2')).toContain('>이번 주까지</textarea>');
   expect(html).not.toMatch(
     /aria-label="(브랜드|제품|멘트) (등록|수정|삭제)" title="[^"]*" disabled=""/,
