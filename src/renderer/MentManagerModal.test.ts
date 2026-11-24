@@ -17,6 +17,9 @@ const render = (catalog: MentCatalog, mentId: string | null = null) =>
       onAdd: vi.fn(),
       onEdit: vi.fn(),
       onDelete: vi.fn(),
+      bodyText: selectMent(catalog, null, null, mentId).ment?.body ?? '',
+      bodyChanged: false,
+      onBodyChange: vi.fn(),
       onSaveBody: vi.fn(async () => true),
     }),
   );

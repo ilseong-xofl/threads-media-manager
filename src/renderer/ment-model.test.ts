@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { MentCatalog } from '../shared/ments';
-import { mentDeleteMessage, mentHas, mentLineValid, selectMent } from './ment-model';
+import {
+  mentDeleteMessage,
+  mentDraftChanged,
+  mentHas,
+  mentLineValid,
+  selectMent,
+} from './ment-model';
 
 const ment = (id: string, title = id) => ({ id, title, body: `${title} 본문` });
 const catalog: MentCatalog = {
@@ -43,6 +49,15 @@ describe('ment window model', () => {
       product: null,
       ment: null,
     });
+  });
+
+  it('sees unsaved text only for the chosen ment, ignoring spaces around it', () => {
+    const chosen = { id: 'm1', title: '후기형', body: '좋아요' };
+    expect(mentDraftChanged(chosen, null)).toBe(false);
+    expect(mentDraftChanged(chosen, { mentId: 'm1', text: ' 좋아요\n' })).toBe(false);
+    expect(mentDraftChanged(chosen, { mentId: 'm1', text: '좋아요!' })).toBe(true);
+    expect(mentDraftChanged(chosen, { mentId: 'm2', text: '다른 글' })).toBe(false);
+    expect(mentDraftChanged(null, { mentId: 'm1', text: '좋아요!' })).toBe(false);
   });
 
   it('tells whether the catalog still has an item of each kind', () => {

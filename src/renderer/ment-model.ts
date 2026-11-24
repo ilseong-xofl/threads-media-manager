@@ -36,6 +36,18 @@ export function selectMent(
   return { brand, product, ment };
 }
 
+/** Text typed for one ment's body and not saved yet. */
+export interface MentDraft {
+  mentId: string;
+  text: string;
+}
+/**
+ * Whether the chosen ment's text was changed and not saved: choosing something else or closing
+ * the window would lose it, so the window asks first (2026-11-24, the user's call).
+ */
+export const mentDraftChanged = (ment: Ment | null, draft: MentDraft | null) =>
+  !!ment && !!draft && draft.mentId === ment.id && draft.text.trim() !== ment.body;
+
 /** Whether the catalog still has the item. */
 export function mentHas(catalog: MentCatalog, kind: MentKind, id: string): boolean {
   return catalog.brands.some((brand) =>

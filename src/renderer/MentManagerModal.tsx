@@ -14,9 +14,11 @@ import { Icon } from './Icon';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
 import {
   mentDeleteMessage,
+  mentDraftChanged,
   mentHas,
   mentLineValid,
   selectMent,
+  type MentDraft,
   type MentTarget,
 } from './ment-model';
 import { useMents } from './use-ments';
@@ -47,6 +49,9 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
   const [mentId, setMentId] = useState<string | null>(null);
   const [form, setForm] = useState<MentForm | null>(null);
   const [deleting, setDeleting] = useState<MentTarget | null>(null);
+  const [draft, setDraft] = useState<MentDraft | null>(null);
+  /** What waits while the window asks whether to drop the unsaved text. */
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
   const refocus = useRef(false);
   const focusBody = useRef(false);
   useEffect(() => {
@@ -62,13 +67,24 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
   }, []);
-  const requestClose = () => {
-    if (!ments.busy) onClose();
-  };
   const { catalog } = ments;
   const { brand, product, ment } = catalog
     ? selectMent(catalog, brandId, productId, mentId)
     : { brand: null, product: null, ment: null };
+  const bodyChanged = mentDraftChanged(ment, draft);
+  const bodyText = ment && draft?.mentId === ment.id ? draft.text : (ment?.body ?? '');
+  /** Runs `action` at once, or after the user agrees to drop the chosen ment's unsaved text. */
+  function leave(action: () => void) {
+    if (bodyChanged) setLeaving(() => action);
+    else action();
+  }
+  const requestClose = () => {
+    if (!ments.busy) leave(onClose);
+  };
+  // Text typed for a ment that is no longer the chosen one is gone.
+  useEffect(() => {
+    if (draft && draft.mentId !== ment?.id) setDraft(null);
+  }, [draft, ment?.id]);
   // What the window chose by itself stays chosen while the catalog changes around it.
   useEffect(() => {
     if (brand && brand.id !== brandId) setBrandId(brand.id);
@@ -212,19 +228,27 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
             product={product}
             ment={ment}
             busy={ments.busy}
-            onSelectBrand={(id) => {
-              setBrandId(id);
-              setProductId(null);
-              setMentId(null);
-            }}
-            onSelectProduct={(id) => {
-              setProductId(id);
-              setMentId(null);
-            }}
-            onSelectMent={setMentId}
-            onAdd={add}
+            onSelectBrand={(id) =>
+              leave(() => {
+                setBrandId(id);
+                setProductId(null);
+                setMentId(null);
+              })
+            }
+            onSelectProduct={(id) =>
+              leave(() => {
+                setProductId(id);
+                setMentId(null);
+              })
+            }
+            onSelectMent={(id) => leave(() => setMentId(id))}
+            // Adding chooses the new item, which leaves the chosen ment's text.
+            onAdd={(kind) => leave(() => add(kind))}
             onEdit={edit}
             onDelete={askDelete}
+            bodyText={bodyText}
+            bodyChanged={bodyChanged}
+            onBodyChange={(text) => ment && setDraft({ mentId: ment.id, text })}
             onSaveBody={saveBody}
           />
         ) : (
@@ -294,6 +318,36 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
           </div>
         </ManagedThreadsActionDialog>
       )}
+      {leaving && (
+        <ManagedThreadsActionDialog
+          title="저장하지 않은 수정"
+          busy={false}
+          confirmation
+          onClose={() => setLeaving(null)}
+        >
+          <div className="managed-threads-confirm-copy">
+            <p>저장하지 않은 수정 내용이 있습니다. 진행하면 수정 내용이 사라집니다. 진행할까요?</p>
+          </div>
+          <div className="threads-actions managed-threads-dialog-actions">
+            {/* [취소] keeps the chosen ment and its text as they are. */}
+            <button type="button" className="ment-action-button" onClick={() => setLeaving(null)}>
+              취소
+            </button>
+            <button
+              type="button"
+              className="managed-threads-danger-primary ment-action-button"
+              onClick={() => {
+                const action = leaving;
+                setLeaving(null);
+                setDraft(null);
+                action();
+              }}
+            >
+              확인
+            </button>
+          </div>
+        </ManagedThreadsActionDialog>
+      )}
     </dialog>
   );
 }
@@ -314,6 +368,9 @@ export function MentCatalogView({
   onAdd,
   onEdit,
   onDelete,
+  bodyText,
+  bodyChanged,
+  onBodyChange,
   onSaveBody,
 }: {
   catalog: MentCatalog;
@@ -328,6 +385,11 @@ export function MentCatalogView({
   /** For a ment, only its title; its text is edited in the window. */
   onEdit(kind: MentKind): void;
   onDelete(kind: MentKind): void;
+  /** The chosen ment's text as shown: what was typed, or else what is saved. */
+  bodyText: string;
+  /** The text differs from what is saved. */
+  bodyChanged: boolean;
+  onBodyChange(text: string): void;
   onSaveBody(body: string): Promise<boolean>;
 }) {
   const id = useId();
@@ -372,7 +434,14 @@ export function MentCatalogView({
           onChange={onSelectMent}
         />
         {/* A new editor per ment, so switching ments starts from that ment's saved text. */}
-        <MentBodyEditor key={ment?.id ?? ''} ment={ment} busy={busy} onSave={onSaveBody} />
+        <MentBodyEditor
+          ment={ment}
+          text={bodyText}
+          changed={bodyChanged}
+          busy={busy}
+          onChange={onBodyChange}
+          onSave={onSaveBody}
+        />
       </MentField>
     </div>
   );
@@ -537,20 +606,25 @@ function MentNameDialog({
 
 /**
  * The chosen ment's text, written in place and kept with [저장], which is on only while the text
- * differs from what is saved. With no ment there is nothing to write into.
+ * differs from what is saved. The window holds the typed text, so it can ask before it is lost.
+ * With no ment there is nothing to write into.
  */
 function MentBodyEditor({
   ment,
+  text,
+  changed,
   busy,
+  onChange,
   onSave,
 }: {
   ment: Ment | null;
+  text: string;
+  changed: boolean;
   busy: boolean;
+  onChange(text: string): void;
   onSave(body: string): Promise<boolean>;
 }) {
-  const [text, setText] = useState(ment?.body ?? '');
   const length = mentLength(text.trim());
-  const changed = !!ment && text.trim() !== ment.body;
   return (
     <>
       <textarea
@@ -561,7 +635,7 @@ function MentBodyEditor({
         placeholder={
           ment ? '멘트 내용을 쓰고 저장하세요.' : '멘트를 등록하면 여기에 내용을 쓸 수 있습니다.'
         }
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => onChange(event.target.value)}
       />
       <div className="ment-body-foot">
         <span className={`ment-body-count${length > MENT_BODY_LIMIT ? ' is-over' : ''}`}>
