@@ -9,7 +9,10 @@ import {
   type DailyPost,
   type DailyReply,
 } from '../shared/daily';
+import type { Ment } from '../shared/ments';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
+import { MentPicker } from './MentPicker';
+import { useMentCatalog } from './use-ments';
 import './managed-threads.css';
 
 const languageNames: Record<CaptionLanguage, string> = {
@@ -59,11 +62,25 @@ export function DailyPostDialog({
   const personaLanguage = languageNames[persona.language];
   const working = busy || composing;
   const kind = replyTo ? '답글' : '글';
+  // A post (not an answer) can take a saved ment as its body (2026-11-24).
+  const catalog = useMentCatalog(!replyTo);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [replacing, setReplacing] = useState<Ment | null>(null);
+  function fill(ment: Ment) {
+    setText(ment.body);
+    setPickedId(ment.id);
+  }
+  /** Fills the body with the ment, asking first when it would replace other text. */
+  function pick(ment: Ment) {
+    if (text.trim() && text.trim() !== ment.body.trim()) setReplacing(ment);
+    else fill(ment);
+  }
   return (
     <ManagedThreadsActionDialog
       title={replyTo ? (post ? '답글 수정' : '답글 쓰기') : post ? '초안 수정' : '수동 등록'}
       busy={working}
       onClose={onClose}
+      className={replyTo ? undefined : 'daily-post-dialog'}
     >
       <form
         className="daily-form"
@@ -107,6 +124,9 @@ export function DailyPostDialog({
             </p>
           </>
         )}
+        {!replyTo && catalog && catalog.brands.length > 0 && (
+          <MentPicker catalog={catalog} mentId={pickedId} disabled={working} onPick={pick} />
+        )}
         {editsTopic && (
           <>
             <label htmlFor={`${id}-topic`}>토픽</label>
@@ -147,14 +167,42 @@ export function DailyPostDialog({
           </>
         )}
         <div className="threads-actions managed-threads-dialog-actions">
-          <button type="button" disabled={working} onClick={onClose}>
+          <button type="button" className="ment-action-button" disabled={working} onClick={onClose}>
             취소
           </button>
-          <button type="submit" className="primary" disabled={working || !valid}>
+          <button type="submit" className="primary ment-action-button" disabled={working || !valid}>
             {composing ? `${personaLanguage}로 바꾸는 중…` : busy ? '저장 중…' : '저장'}
           </button>
         </div>
       </form>
+      {replacing && (
+        <ManagedThreadsActionDialog
+          title="본문 바꾸기"
+          busy={false}
+          confirmation
+          onClose={() => setReplacing(null)}
+        >
+          <div className="managed-threads-confirm-copy">
+            <p>본문을 &apos;{replacing.title}&apos; 멘트로 바꿀까요? 지금 쓴 내용은 사라집니다.</p>
+          </div>
+          <div className="threads-actions managed-threads-dialog-actions">
+            {/* [취소] keeps the body and the ment it came from as they are. */}
+            <button type="button" className="ment-action-button" onClick={() => setReplacing(null)}>
+              취소
+            </button>
+            <button
+              type="button"
+              className="primary ment-action-button"
+              onClick={() => {
+                fill(replacing);
+                setReplacing(null);
+              }}
+            >
+              확인
+            </button>
+          </div>
+        </ManagedThreadsActionDialog>
+      )}
     </ManagedThreadsActionDialog>
   );
 }

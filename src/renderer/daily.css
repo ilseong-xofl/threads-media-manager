@@ -511,6 +511,12 @@ button.daily-card-translate:hover:not(:disabled) {
   place-items: center;
 }
 
+/* The window a post is written in (수동 등록·초안 수정): 30% wider than the 500px action dialog,
+   for the ment boxes (2026-11-24, the user's call). Answers keep the plain width. */
+.post-modal.managed-threads-action-dialog.daily-post-dialog {
+  width: min(650px, calc(100vw - 48px));
+}
+
 .daily-form {
   display: grid;
   gap: 8px;

@@ -14,6 +14,29 @@ export interface MentsState {
 }
 
 /**
+ * The ment catalog for picking a ment while a post is written: read once when `enabled`, and null
+ * until then. Picking is optional, so a failure only leaves it null and the post is written as
+ * before (a lost login still reaches the app's access check in the main process).
+ */
+export function useMentCatalog(enabled: boolean): MentCatalog | null {
+  const [catalog, setCatalog] = useState<MentCatalog | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    window.threadsMedia.getMents().then(
+      (result) => {
+        if (live && result.catalog) setCatalog(result.catalog);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [enabled]);
+  return catalog;
+}
+
+/**
  * The ment catalog while the management window is open. It is read when the window opens and
  * after every change; failures go to the toast. `onUnavailable` closes the window when the server
  * has no catalog yet.

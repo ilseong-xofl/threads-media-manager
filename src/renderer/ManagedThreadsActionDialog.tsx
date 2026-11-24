@@ -21,6 +21,7 @@ export function ManagedThreadsActionDialog({
   confirmation = false,
   returnFocusTo,
   focusInput = true,
+  className,
 }: {
   title: string;
   busy: boolean;
@@ -30,6 +31,8 @@ export function ManagedThreadsActionDialog({
   returnFocusTo?: HTMLElement | null;
   /** False keeps the first field unfocused as the dialog opens. */
   focusInput?: boolean;
+  /** Added to the dialog's classes, e.g. for a wider dialog. */
+  className?: string;
 }) {
   const id = useId();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -83,7 +86,7 @@ export function ManagedThreadsActionDialog({
   return (
     <dialog
       ref={dialog}
-      className="post-modal managed-threads-action-dialog"
+      className={`post-modal managed-threads-action-dialog${className ? ` ${className}` : ''}`}
       role={confirmation ? 'alertdialog' : undefined}
       aria-labelledby={`${id}-title`}
       aria-busy={busy}

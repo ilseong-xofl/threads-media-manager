@@ -21,6 +21,7 @@ import {
   type MentDraft,
   type MentTarget,
 } from './ment-model';
+import { MentSelect } from './MentPicker';
 import { useMents } from './use-ments';
 import './daily.css';
 import './managed-threads.css';
@@ -507,44 +508,6 @@ function MentField({
         </div>
       </div>
       {children}
-    </div>
-  );
-}
-
-function MentSelect({
-  id,
-  items,
-  value,
-  empty,
-  onChange,
-}: {
-  id: string;
-  items: { id: string; label: string }[];
-  value: string | null;
-  /** Shown in the disabled box while there is nothing to choose. */
-  empty: string;
-  onChange(id: string): void;
-}) {
-  // The app's own select look: no native arrow, a chevron inset from the right edge.
-  return (
-    <div className="select-field">
-      <select
-        id={id}
-        value={value ?? ''}
-        disabled={!items.length}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {items.length ? (
-          items.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))
-        ) : (
-          <option value="">{empty}</option>
-        )}
-      </select>
-      <Icon name="chevron" />
     </div>
   );
 }

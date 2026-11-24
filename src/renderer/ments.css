@@ -156,8 +156,8 @@ textarea.ment-body:disabled {
   justify-content: space-between;
   gap: 12px;
 }
-/* The window's [취소]·[저장] and the delete confirmation's [돌아가기]·[삭제] share one width:
-   twice a plain two-letter button (2026-11-24, the user's call). */
+/* The ment windows' buttons ([취소]·[저장], [돌아가기]·[삭제], [확인]) and the post dialog's
+   [취소]·[저장] share one width: twice a plain two-letter button (2026-11-24, the user's call). */
 button.ment-action-button {
   min-width: 98px;
 }
@@ -167,6 +167,24 @@ button.ment-action-button {
 }
 .ment-body-count.is-over {
   color: #dc2626;
+}
+
+/* Picking a ment while writing a post: brand and product side by side, the ment below. */
+.daily-ment-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+.daily-ment-pick {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.daily-ment-pick-wide {
+  grid-column: 1 / -1;
+}
+.daily-form .daily-ment-picker select {
+  padding-right: 38px;
 }
 
 /* The daily heading keeps [멘트 관리] beside [+ 페르소나]. */
