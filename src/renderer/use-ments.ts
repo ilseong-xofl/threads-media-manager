@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DeleteMentInput, MentCatalog, MentResult, SaveMentInput } from '../shared/ments';
-import { sortMentCatalog } from './ment-model';
 import { useToast } from './toast';
 
 export interface MentsState {
@@ -40,7 +39,7 @@ export function useMents(onUnavailable: () => void): MentsState {
   const accept = useCallback(
     (result: MentResult) => {
       if (!open.current) return false;
-      if (result.catalog) setCatalog(sortMentCatalog(result.catalog));
+      if (result.catalog) setCatalog(result.catalog);
       if (result.status === 'ok') return true;
       notify({ message: result.problem?.message ?? '멘트 작업을 마치지 못했습니다.', error: true });
       if (result.problem?.code === 'MENT_UNAVAILABLE') unavailable.current();

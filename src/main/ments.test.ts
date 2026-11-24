@@ -55,6 +55,19 @@ describe('ment catalog on this PC', () => {
     const emoji = '😀'.repeat(40);
     const named = { brands: [{ id: brandId, name: emoji, products: [] }] };
     expect(parseMentCatalog(named)).toEqual(named);
+    // A ment registered by its title alone has an empty body.
+    const titled = {
+      brands: [
+        {
+          id: brandId,
+          name: '브랜드',
+          products: [
+            { id: productId, name: '제품', ments: [{ id: mentId, title: '제목', body: '' }] },
+          ],
+        },
+      ],
+    };
+    expect(parseMentCatalog(titled)).toEqual(titled);
     for (const broken of [
       {},
       { brands: {} },
@@ -120,6 +133,13 @@ describe('ment catalog on this PC', () => {
       title: '후기형',
       body: '첫 줄\n\n둘째 줄',
     });
+    // A ment is registered by its title first; its body stays empty until it is written.
+    await ments.save({ kind: 'ment', id: mentId, productId, title: '후기형', body: ' \n ' });
+    expect(client.mentRequest).toHaveBeenLastCalledWith(context, 'save', 'ment', mentId, {
+      productId,
+      title: '후기형',
+      body: '',
+    });
     await ments.delete({ kind: 'product', id: productId });
     expect(client.mentRequest).toHaveBeenLastCalledWith(
       context,
@@ -143,7 +163,7 @@ describe('ment catalog on this PC', () => {
       { kind: 'product', id: productId, brandId: 'brand', name: '제품' },
       { kind: 'ment', id: mentId, productId, title: '제목', body: 'a'.repeat(501) },
       { kind: 'ment', id: mentId, productId, title: '제목', body: '본문\u0000' },
-      { kind: 'ment', id: mentId, productId, title: '제목', body: ' \n ' },
+      { kind: 'ment', id: mentId, productId, title: ' ', body: '본문' },
       { kind: 'brand', id: brandId, name: '반쪽\ud800' },
       { kind: 'ment', id: mentId, productId, title: '제목', body: '반쪽\udc00 본문' },
       { kind: 'account', id: brandId, name: '브랜드' },

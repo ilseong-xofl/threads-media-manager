@@ -1,6 +1,8 @@
-/* The [멘트 관리] window of the daily tab (2026-11-24). */
+/* The [멘트 관리] window of the daily tab (2026-11-24): three select boxes and the ment's text,
+   so the window keeps one size whatever the catalog holds. */
 .post-modal.ment-manager-modal {
-  width: min(1040px, calc(100vw - 64px));
+  width: min(768px, calc(100vw - 64px));
+  height: 80vh;
   max-height: calc(100vh - 64px);
   background: #fff;
 }
@@ -19,163 +21,152 @@
   color: #5b6575;
   font-size: 13px;
 }
+/* The window keeps 80% of the screen height; the ment's text takes what is left. */
 .ment-manager-content {
-  overflow-y: auto;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-height: 0;
-  padding: 18px 24px 24px;
+  padding: 20px 24px 24px;
+  overflow-y: auto;
   overscroll-behavior: contain;
 }
 .ment-loading {
   display: grid;
+  flex: 1;
+  place-content: center;
   justify-items: center;
   gap: 12px;
-  padding: 48px 0;
   color: #5b6575;
 }
 
-.ment-lists {
+/* Brand and product side by side; the ment takes the whole row. */
+.ment-board {
   display: grid;
+  flex: 1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 18px 16px;
+  min-height: 0;
 }
-.ment-panel {
+.ment-field {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+.ment-field-wide {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid #e0e4eb;
-  border-radius: 14px;
-  background: #f8f9fb;
+  grid-column: 1 / -1;
 }
-.ment-panel-header {
+.ment-field-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 38px;
-  margin-bottom: 8px;
+  gap: 12px;
+  padding: 0 2px 0 6px;
 }
-.ment-panel-header h3 {
-  overflow: hidden;
+.ment-field-head label {
   color: #303b4b;
   font-size: 14px;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.ment-path {
-  color: #5b6575;
-  font-weight: 500;
-}
-button.ment-add {
-  flex: none;
-  width: 34px;
-  min-height: 34px;
-  padding: 0;
-}
-button.ment-add .icon,
-button.ment-add-text .icon {
-  width: 15px;
-  height: 15px;
-}
-button.ment-add-text {
-  flex: none;
-}
-.ment-list {
-  display: grid;
-  gap: 2px;
-  max-height: 232px;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
-}
-.ment-list li {
+/* The count beside each label: a plain number, smaller and lighter than the label. */
+.ment-field-title {
   display: flex;
-  align-items: center;
-  gap: 2px;
-  border-radius: 10px;
-}
-.ment-list li.is-selected {
-  background: #ececfb;
-}
-button.ment-row {
-  flex: 1;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: #303b4b;
-  text-align: left;
-}
-.ment-list li.is-selected button.ment-row {
-  color: #4f51c5;
-  font-weight: 600;
-}
-.ment-row-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ment-row-count {
-  flex: none;
-  color: #8a93a1;
-  font-size: 12px;
-  font-weight: 400;
-}
-.ment-empty {
-  padding: 14px 4px;
-  color: #8a93a1;
-  font-size: 13px;
-}
-
-.ment-texts {
-  margin-top: 16px;
-}
-.ment-cards {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.ment-card {
-  padding: 12px 14px;
-  border: 1px solid #e0e4eb;
-  border-radius: 12px;
-  background: #fff;
-}
-.ment-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.ment-card-title {
-  overflow: hidden;
-  color: #17202e;
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ment-card-actions {
-  display: flex;
-  flex: none;
+  align-items: baseline;
   gap: 6px;
 }
-.ment-card-actions button {
-  min-height: 32px;
-  padding: 5px 11px;
-  font-size: 13px;
+.ment-count {
+  color: #9aa2af;
+  font-size: 12px;
+  font-weight: 600;
 }
-.ment-card-body {
-  margin-top: 6px;
+.ment-field-actions {
+  display: flex;
+  gap: 4px;
+}
+button.ment-icon {
+  width: 30px;
+  min-height: 30px;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+button.ment-icon .icon {
+  width: 17px;
+  height: 17px;
+}
+/* One colour per action, kept under the pointer, where the same box appears for all three. */
+button.ment-icon-add,
+button.ment-icon-add:hover:not(:disabled) {
+  color: #2563eb;
+}
+button.ment-icon-edit,
+button.ment-icon-edit:hover:not(:disabled) {
+  color: #16a34a;
+}
+button.ment-icon-delete,
+button.ment-icon-delete:hover:not(:disabled) {
+  color: #dc2626;
+}
+button.ment-icon:hover:not(:disabled) {
+  background: #eef0f4;
+}
+.ment-field select {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  padding: 10px 38px 10px 12px;
+  border: 1px solid #dce1e8;
+  border-radius: 8px;
+  background: #fff;
+  color: #303b4b;
+  font-size: 14px;
+}
+.ment-field select:disabled {
+  background: #f4f6f9;
+  color: #8a93a1;
+}
+textarea.ment-body {
+  flex: 1;
+  width: 100%;
+  min-height: 120px;
+  /* 6px, not the field's 8px, between the ment box and its text (2026-11-24, the user's call). */
+  margin-top: -2px;
+  padding: 12px 14px;
+  border: 1px solid #dce1e8;
+  border-radius: 8px;
+  background: #fff;
   color: #303b4b;
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  resize: none;
+  overflow-y: auto;
+}
+textarea.ment-body:disabled {
+  background: #f4f6f9;
+}
+/* The text's length on the left, [저장] on the right. */
+.ment-body-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* The window's [취소]·[저장] and the delete confirmation's [돌아가기]·[삭제] share one width:
+   twice a plain two-letter button (2026-11-24, the user's call). */
+button.ment-action-button {
+  min-width: 98px;
+}
+.ment-body-count {
+  color: #5b6575;
+  font-size: 12px;
+}
+.ment-body-count.is-over {
+  color: #dc2626;
 }
 
 /* The daily heading keeps [멘트 관리] beside [+ 페르소나]. */
@@ -199,7 +190,7 @@ button.daily-ment-button .icon {
   .post-modal.ment-manager-modal {
     width: calc(100vw - 24px);
   }
-  .ment-lists {
+  .ment-board {
     grid-template-columns: minmax(0, 1fr);
   }
 }

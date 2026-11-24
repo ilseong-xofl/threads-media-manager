@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   MENT_BODY_LIMIT,
   MENT_NAME_LIMIT,
@@ -7,6 +7,7 @@ import {
   type Ment,
   type MentBrand,
   type MentCatalog,
+  type MentKind,
   type MentProduct,
 } from '../shared/ments';
 import { Icon } from './Icon';
@@ -25,15 +26,16 @@ import './ments.css';
 
 /** An add or edit form. A new item's id is chosen as the form opens, so a retry reuses it. */
 type MentForm =
-  | { kind: 'brand'; id: string; brandId?: undefined; item: MentBrand | null }
+  | { kind: 'brand'; id: string; item: MentBrand | null }
   | { kind: 'product'; id: string; brandId: string; item: MentProduct | null }
   | { kind: 'ment'; id: string; productId: string; item: Ment | null };
 
 const kindNames = { brand: '브랜드', product: '제품', ment: '멘트' } as const;
 
 /**
- * The [멘트 관리] window of the daily tab (2026-11-24): brands and products side by side, the
- * chosen product's ments below. Everything is kept on the server for the signed-in employee.
+ * The [멘트 관리] window of the daily tab (2026-11-24): one select box each for the brand, its
+ * product and the product's ment, and the chosen ment's text below, so the window keeps one size.
+ * Everything is kept on the server for the signed-in employee.
  */
 export function MentManagerModal({ onClose }: { onClose(): void }) {
   const titleId = useId();
@@ -42,9 +44,11 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
   const ments = useMents(onClose);
   const [brandId, setBrandId] = useState<string | null>(null);
   const [productId, setProductId] = useState<string | null>(null);
+  const [mentId, setMentId] = useState<string | null>(null);
   const [form, setForm] = useState<MentForm | null>(null);
   const [deleting, setDeleting] = useState<MentTarget | null>(null);
   const refocus = useRef(false);
+  const focusBody = useRef(false);
   useEffect(() => {
     const element = dialog.current;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -62,14 +66,15 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
     if (!ments.busy) onClose();
   };
   const { catalog } = ments;
-  const { brand, product } = catalog
-    ? selectMent(catalog, brandId, productId)
-    : { brand: null, product: null };
-  // What the window chose by itself stays chosen when a rename moves it in the name order.
+  const { brand, product, ment } = catalog
+    ? selectMent(catalog, brandId, productId, mentId)
+    : { brand: null, product: null, ment: null };
+  // What the window chose by itself stays chosen while the catalog changes around it.
   useEffect(() => {
     if (brand && brand.id !== brandId) setBrandId(brand.id);
     if (product && product.id !== productId) setProductId(product.id);
-  }, [brand, product, brandId, productId]);
+    if (ment && ment.id !== mentId) setMentId(ment.id);
+  }, [brand, product, ment, brandId, productId, mentId]);
   // An item the catalog read again no longer has (a delete whose answer was lost) takes its
   // windows with it, so saving there cannot bring back a parent without what was under it.
   useEffect(() => {
@@ -84,7 +89,7 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
     )
       setForm(null);
   }, [catalog, deleting, form]);
-  // The button that opened a deleted item's windows went with it; keep the keyboard in the window.
+  // The button that opened a deleted item's windows may be off now; keep the keyboard in the window.
   useEffect(() => {
     if (!refocus.current || deleting || form) return;
     refocus.current = false;
@@ -94,6 +99,16 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
         ?.focus({ preventScroll: true }),
     );
   }, [deleting, form]);
+  // A ment registered by its title is written next, so the cursor goes to its text.
+  useEffect(() => {
+    if (!focusBody.current || form) return;
+    focusBody.current = false;
+    requestAnimationFrame(() =>
+      dialog.current
+        ?.querySelector<HTMLTextAreaElement>('textarea.ment-body')
+        ?.focus({ preventScroll: true }),
+    );
+  }, [form]);
 
   async function saveName(open: Extract<MentForm, { kind: 'brand' | 'product' }>, name: string) {
     const saved = await ments.save(
@@ -102,23 +117,63 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
         : { kind: 'product', id: open.id, brandId: open.brandId, name },
     );
     if (!saved) return;
-    // A new brand or product is chosen at once; a new brand shows its (empty) product list.
+    // A new brand or product is chosen at once, and what is under it starts from its first.
     if (!open.item && open.kind === 'brand') {
       setBrandId(open.id);
       setProductId(null);
+      setMentId(null);
     }
-    if (!open.item && open.kind === 'product') setProductId(open.id);
+    if (!open.item && open.kind === 'product') {
+      setProductId(open.id);
+      setMentId(null);
+    }
     setForm(null);
   }
-  async function saveMent(open: Extract<MentForm, { kind: 'ment' }>, title: string, body: string) {
-    if (await ments.save({ kind: 'ment', id: open.id, productId: open.productId, title, body }))
-      setForm(null);
+  /** Registers a ment by its title, or renames one; its text is kept and written in the window. */
+  async function saveTitle(open: Extract<MentForm, { kind: 'ment' }>, title: string) {
+    const body = open.item?.body ?? '';
+    if (!(await ments.save({ kind: 'ment', id: open.id, productId: open.productId, title, body })))
+      return;
+    if (!open.item) {
+      setMentId(open.id);
+      focusBody.current = true;
+    }
+    setForm(null);
+  }
+  function saveBody(body: string) {
+    if (!product || !ment) return Promise.resolve(false);
+    return ments.save({
+      kind: 'ment',
+      id: ment.id,
+      productId: product.id,
+      title: ment.title,
+      body,
+    });
   }
   async function remove(target: MentTarget) {
     if (!(await ments.remove({ kind: target.kind, id: target.item.id }))) return;
     refocus.current = true;
     setDeleting(null);
     setForm(null);
+  }
+  function add(kind: MentKind) {
+    if (kind === 'brand') setForm({ kind, id: crypto.randomUUID(), item: null });
+    if (kind === 'product' && brand)
+      setForm({ kind, id: crypto.randomUUID(), brandId: brand.id, item: null });
+    if (kind === 'ment' && product)
+      setForm({ kind, id: crypto.randomUUID(), productId: product.id, item: null });
+  }
+  function edit(kind: MentKind) {
+    if (kind === 'brand' && brand) setForm({ kind, id: brand.id, item: brand });
+    if (kind === 'product' && brand && product)
+      setForm({ kind, id: product.id, brandId: brand.id, item: product });
+    if (kind === 'ment' && product && ment)
+      setForm({ kind, id: ment.id, productId: product.id, item: ment });
+  }
+  function askDelete(kind: MentKind) {
+    if (kind === 'brand' && brand) setDeleting({ kind, item: brand });
+    if (kind === 'product' && product) setDeleting({ kind, item: product });
+    if (kind === 'ment' && ment) setDeleting({ kind, item: ment });
   }
 
   return (
@@ -155,29 +210,22 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
             catalog={catalog}
             brand={brand}
             product={product}
+            ment={ment}
             busy={ments.busy}
             onSelectBrand={(id) => {
               setBrandId(id);
               setProductId(null);
+              setMentId(null);
             }}
-            onSelectProduct={setProductId}
-            onAddBrand={() => setForm({ kind: 'brand', id: crypto.randomUUID(), item: null })}
-            onEditBrand={(item) => setForm({ kind: 'brand', id: item.id, item })}
-            onAddProduct={() =>
-              brand &&
-              setForm({ kind: 'product', id: crypto.randomUUID(), brandId: brand.id, item: null })
-            }
-            onEditProduct={(item) =>
-              brand && setForm({ kind: 'product', id: item.id, brandId: brand.id, item })
-            }
-            onAddMent={() =>
-              product &&
-              setForm({ kind: 'ment', id: crypto.randomUUID(), productId: product.id, item: null })
-            }
-            onEditMent={(item) =>
-              product && setForm({ kind: 'ment', id: item.id, productId: product.id, item })
-            }
-            onDeleteMent={(item) => setDeleting({ kind: 'ment', item })}
+            onSelectProduct={(id) => {
+              setProductId(id);
+              setMentId(null);
+            }}
+            onSelectMent={setMentId}
+            onAdd={add}
+            onEdit={edit}
+            onDelete={askDelete}
+            onSaveBody={saveBody}
           />
         ) : (
           <div className="ment-loading" role="status">
@@ -196,31 +244,23 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
       </div>
       {form && form.kind !== 'ment' && (
         <MentNameDialog
-          title={`${kindNames[form.kind]} ${form.item ? '수정' : '추가'}`}
+          title={`${kindNames[form.kind]} ${form.item ? '수정' : '등록'}`}
           label={`${kindNames[form.kind]} 이름`}
+          limit={MENT_NAME_LIMIT}
           initial={form.item?.name ?? ''}
           busy={ments.busy}
           onSave={(name) => saveName(form, name)}
-          onDelete={
-            form.item
-              ? () =>
-                  setDeleting(
-                    form.kind === 'brand'
-                      ? { kind: 'brand', item: form.item as MentBrand }
-                      : { kind: 'product', item: form.item as MentProduct },
-                  )
-              : undefined
-          }
           onClose={() => setForm(null)}
         />
       )}
       {form?.kind === 'ment' && (
-        <MentTextDialog
-          title={form.item ? '멘트 수정' : '멘트 추가'}
-          initialTitle={form.item?.title ?? ''}
-          initialBody={form.item?.body ?? ''}
+        <MentNameDialog
+          title={form.item ? '멘트 제목 수정' : '멘트 등록'}
+          label="멘트 제목"
+          limit={MENT_TITLE_LIMIT}
+          initial={form.item?.title ?? ''}
           busy={ments.busy}
-          onSave={(title, body) => saveMent(form, title, body)}
+          onSave={(title) => saveTitle(form, title)}
           onClose={() => setForm(null)}
         />
       )}
@@ -235,12 +275,17 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
             <p>{mentDeleteMessage(deleting)}</p>
           </div>
           <div className="threads-actions managed-threads-dialog-actions">
-            <button type="button" disabled={ments.busy} onClick={() => setDeleting(null)}>
+            <button
+              type="button"
+              className="ment-action-button"
+              disabled={ments.busy}
+              onClick={() => setDeleting(null)}
+            >
               돌아가기
             </button>
             <button
               type="button"
-              className="managed-threads-danger-primary"
+              className="managed-threads-danger-primary ment-action-button"
               disabled={ments.busy}
               onClick={() => void remove(deleting)}
             >
@@ -253,225 +298,209 @@ export function MentManagerModal({ onClose }: { onClose(): void }) {
   );
 }
 
-/** Brands and products on top, the chosen product's ments below. Holds no state of its own. */
+/**
+ * The brand, product and ment select boxes, each under its label with its buttons, and the chosen
+ * ment's text below, written and saved in place.
+ */
 export function MentCatalogView({
   catalog,
   brand,
   product,
+  ment,
   busy,
   onSelectBrand,
   onSelectProduct,
-  onAddBrand,
-  onEditBrand,
-  onAddProduct,
-  onEditProduct,
-  onAddMent,
-  onEditMent,
-  onDeleteMent,
+  onSelectMent,
+  onAdd,
+  onEdit,
+  onDelete,
+  onSaveBody,
 }: {
   catalog: MentCatalog;
   brand: MentBrand | null;
   product: MentProduct | null;
+  ment: Ment | null;
   busy: boolean;
   onSelectBrand(id: string): void;
   onSelectProduct(id: string): void;
-  onAddBrand(): void;
-  onEditBrand(brand: MentBrand): void;
-  onAddProduct(): void;
-  onEditProduct(product: MentProduct): void;
-  onAddMent(): void;
-  onEditMent(ment: Ment): void;
-  onDeleteMent(ment: Ment): void;
+  onSelectMent(id: string): void;
+  onAdd(kind: MentKind): void;
+  /** For a ment, only its title; its text is edited in the window. */
+  onEdit(kind: MentKind): void;
+  onDelete(kind: MentKind): void;
+  onSaveBody(body: string): Promise<boolean>;
 }) {
+  const id = useId();
+  const field = (kind: MentKind, count: number, canAdd: boolean, chosen: boolean) => ({
+    id: `${id}-${kind}`,
+    label: kindNames[kind],
+    count,
+    busy,
+    canAdd,
+    chosen,
+    onAdd: () => onAdd(kind),
+    onEdit: () => onEdit(kind),
+    onDelete: () => onDelete(kind),
+  });
   return (
     <div className="ment-board">
-      <div className="ment-lists">
-        <MentList
-          title="브랜드"
-          kind="브랜드"
-          items={catalog.brands}
-          selectedId={brand?.id ?? null}
-          count={(item) => `제품 ${item.products.length}`}
-          empty="브랜드를 추가하세요."
-          canAdd
-          busy={busy}
-          onSelect={onSelectBrand}
-          onAdd={onAddBrand}
-          onEdit={onEditBrand}
+      {/* Brand and product share one row; the ment takes a whole row with its text below. */}
+      <MentField {...field('brand', catalog.brands.length, true, !!brand)}>
+        <MentSelect
+          id={`${id}-brand`}
+          items={catalog.brands.map((item) => ({ id: item.id, label: item.name }))}
+          value={brand?.id ?? null}
+          empty="등록된 브랜드가 없습니다"
+          onChange={onSelectBrand}
         />
-        <MentList
-          title={brand ? `제품 · ${brand.name}` : '제품'}
-          kind="제품"
-          items={brand?.products ?? []}
-          selectedId={product?.id ?? null}
-          count={(item) => `멘트 ${item.ments.length}`}
-          empty={brand ? '이 브랜드에 제품을 추가하세요.' : '브랜드를 먼저 추가하세요.'}
-          canAdd={!!brand}
-          busy={busy}
-          onSelect={onSelectProduct}
-          onAdd={onAddProduct}
-          onEdit={onEditProduct}
+      </MentField>
+      <MentField {...field('product', brand?.products.length ?? 0, !!brand, !!product)}>
+        <MentSelect
+          id={`${id}-product`}
+          items={(brand?.products ?? []).map((item) => ({ id: item.id, label: item.name }))}
+          value={product?.id ?? null}
+          empty={brand ? '등록된 제품이 없습니다' : '브랜드를 먼저 등록하세요'}
+          onChange={onSelectProduct}
         />
-      </div>
-      <section className="ment-panel ment-texts" aria-label="멘트">
-        <div className="ment-panel-header">
-          <h3>
-            멘트
-            {brand && product && (
-              <span className="ment-path">
-                {' '}
-                — {brand.name} › {product.name}
-              </span>
-            )}
-          </h3>
-          <button
-            type="button"
-            className="primary ment-add-text"
-            disabled={busy || !product}
-            onClick={onAddMent}
-          >
-            <Icon name="plus" />
-            멘트
-          </button>
-        </div>
-        {!product ? (
-          <p className="ment-empty">
-            {brand
-              ? '이 브랜드에 제품을 추가하면 멘트를 넣을 수 있습니다.'
-              : '브랜드와 제품을 추가하면 멘트를 넣을 수 있습니다.'}
-          </p>
-        ) : product.ments.length ? (
-          <ul className="ment-cards">
-            {product.ments.map((ment) => (
-              <li key={ment.id} className="ment-card">
-                <div className="ment-card-head">
-                  <strong className="ment-card-title">{ment.title}</strong>
-                  <div className="ment-card-actions">
-                    <button
-                      type="button"
-                      aria-label={`${ment.title} 수정`}
-                      disabled={busy}
-                      onClick={() => onEditMent(ment)}
-                    >
-                      수정
-                    </button>
-                    <button
-                      type="button"
-                      className="managed-threads-danger"
-                      aria-label={`${ment.title} 삭제`}
-                      disabled={busy}
-                      onClick={() => onDeleteMent(ment)}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                </div>
-                <p className="ment-card-body">{ment.body}</p>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="ment-empty">이 제품의 멘트를 추가하세요.</p>
-        )}
-      </section>
+      </MentField>
+      <MentField {...field('ment', product?.ments.length ?? 0, !!product, !!ment)} wide>
+        <MentSelect
+          id={`${id}-ment`}
+          items={(product?.ments ?? []).map((item) => ({ id: item.id, label: item.title }))}
+          value={ment?.id ?? null}
+          empty={product ? '등록된 멘트가 없습니다' : '제품을 먼저 등록하세요'}
+          onChange={onSelectMent}
+        />
+        {/* A new editor per ment, so switching ments starts from that ment's saved text. */}
+        <MentBodyEditor key={ment?.id ?? ''} ment={ment} busy={busy} onSave={onSaveBody} />
+      </MentField>
     </div>
   );
 }
 
-function MentList<T extends { id: string; name: string }>({
-  title,
-  kind,
-  items,
-  selectedId,
+function MentField({
+  id,
+  label,
   count,
-  empty,
-  canAdd,
   busy,
-  onSelect,
+  canAdd,
+  chosen,
+  wide = false,
   onAdd,
   onEdit,
+  onDelete,
+  children,
 }: {
-  title: string;
-  kind: string;
-  items: T[];
-  selectedId: string | null;
-  count(item: T): string;
-  empty: string;
-  canAdd: boolean;
+  id: string;
+  label: string;
+  /** How many there are: brands, the brand's products, the product's ments. */
+  count: number;
   busy: boolean;
-  onSelect(id: string): void;
+  canAdd: boolean;
+  /** Something is chosen to edit or delete. */
+  chosen: boolean;
+  /** Takes the whole row instead of half of it. */
+  wide?: boolean;
   onAdd(): void;
-  onEdit(item: T): void;
+  onEdit(): void;
+  onDelete(): void;
+  children: ReactNode;
 }) {
+  // Bare coloured icons (add blue, edit green, delete red); the box shows only under the pointer.
+  const action = (
+    name: 'plus' | 'edit' | 'trash',
+    verb: string,
+    enabled: boolean,
+    run: () => void,
+  ) => (
+    <button
+      type="button"
+      className={`ment-icon ment-icon-${{ plus: 'add', edit: 'edit', trash: 'delete' }[name]}`}
+      aria-label={`${label} ${verb}`}
+      title={`${label} ${verb}`}
+      disabled={busy || !enabled}
+      onClick={run}
+    >
+      <Icon name={name} />
+    </button>
+  );
   return (
-    <section className="ment-panel" aria-label={kind}>
-      <div className="ment-panel-header">
-        <h3>{title}</h3>
-        <button
-          type="button"
-          className="ment-add"
-          aria-label={`${kind} 추가`}
-          title={`${kind} 추가`}
-          disabled={busy || !canAdd}
-          onClick={onAdd}
-        >
-          <Icon name="plus" />
-        </button>
+    <div className={`ment-field${wide ? ' ment-field-wide' : ''}`}>
+      <div className="ment-field-head">
+        <div className="ment-field-title">
+          <label htmlFor={id}>{label}</label>
+          <span className="ment-count">{count}</span>
+        </div>
+        <div className="ment-field-actions">
+          {action('plus', '등록', canAdd, onAdd)}
+          {action('edit', '수정', chosen, onEdit)}
+          {action('trash', '삭제', chosen, onDelete)}
+        </div>
       </div>
-      {items.length ? (
-        <ul className="ment-list">
-          {items.map((item) => (
-            <li key={item.id} className={item.id === selectedId ? 'is-selected' : undefined}>
-              <button
-                type="button"
-                className="ment-row"
-                aria-pressed={item.id === selectedId}
-                onClick={() => onSelect(item.id)}
-              >
-                <span className="ment-row-name">{item.name}</span>
-                <span className="ment-row-count">{count(item)}</span>
-              </button>
-              <button
-                type="button"
-                className="daily-icon-button"
-                aria-label={`${item.name} 수정`}
-                title="이름 바꾸기·삭제"
-                disabled={busy}
-                onClick={() => onEdit(item)}
-              >
-                <Icon name="more" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="ment-empty">{empty}</p>
-      )}
-    </section>
+      {children}
+    </div>
+  );
+}
+
+function MentSelect({
+  id,
+  items,
+  value,
+  empty,
+  onChange,
+}: {
+  id: string;
+  items: { id: string; label: string }[];
+  value: string | null;
+  /** Shown in the disabled box while there is nothing to choose. */
+  empty: string;
+  onChange(id: string): void;
+}) {
+  // The app's own select look: no native arrow, a chevron inset from the right edge.
+  return (
+    <div className="select-field">
+      <select
+        id={id}
+        value={value ?? ''}
+        disabled={!items.length}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {items.length ? (
+          items.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.label}
+            </option>
+          ))
+        ) : (
+          <option value="">{empty}</option>
+        )}
+      </select>
+      <Icon name="chevron" />
+    </div>
   );
 }
 
 function MentNameDialog({
   title,
   label,
+  limit,
   initial,
   busy,
   onSave,
-  onDelete,
   onClose,
 }: {
   title: string;
   label: string;
+  limit: number;
   initial: string;
   busy: boolean;
   onSave(name: string): Promise<void>;
-  onDelete?: () => void;
   onClose(): void;
 }) {
   const id = useId();
   const [name, setName] = useState(initial);
   const length = mentLength(name.trim());
-  const valid = mentLineValid(name, MENT_NAME_LIMIT);
+  const valid = mentLineValid(name, limit);
   return (
     <ManagedThreadsActionDialog title={title} busy={busy} onClose={onClose}>
       <form
@@ -490,24 +519,14 @@ function MentNameDialog({
           disabled={busy}
           onChange={(event) => setName(event.target.value)}
         />
-        <p className={`daily-form-count ${length > MENT_NAME_LIMIT ? 'is-over' : ''}`}>
-          {length} / {MENT_NAME_LIMIT}
+        <p className={`daily-form-count ${length > limit ? 'is-over' : ''}`}>
+          {length} / {limit}
         </p>
-        <div className="threads-actions managed-threads-dialog-actions daily-form-actions">
-          {onDelete && (
-            <button
-              type="button"
-              className="managed-threads-danger daily-form-delete"
-              disabled={busy}
-              onClick={onDelete}
-            >
-              삭제
-            </button>
-          )}
-          <button type="button" disabled={busy} onClick={onClose}>
+        <div className="threads-actions managed-threads-dialog-actions">
+          <button type="button" className="ment-action-button" disabled={busy} onClick={onClose}>
             취소
           </button>
-          <button type="submit" className="primary" disabled={busy || !valid}>
+          <button type="submit" className="primary ment-action-button" disabled={busy || !valid}>
             {busy ? '저장 중…' : '저장'}
           </button>
         </div>
@@ -516,69 +535,47 @@ function MentNameDialog({
   );
 }
 
-function MentTextDialog({
-  title,
-  initialTitle,
-  initialBody,
+/**
+ * The chosen ment's text, written in place and kept with [저장], which is on only while the text
+ * differs from what is saved. With no ment there is nothing to write into.
+ */
+function MentBodyEditor({
+  ment,
   busy,
   onSave,
-  onClose,
 }: {
-  title: string;
-  initialTitle: string;
-  initialBody: string;
+  ment: Ment | null;
   busy: boolean;
-  onSave(title: string, body: string): Promise<void>;
-  onClose(): void;
+  onSave(body: string): Promise<boolean>;
 }) {
-  const id = useId();
-  const [heading, setHeading] = useState(initialTitle);
-  const [body, setBody] = useState(initialBody);
-  const headingLength = mentLength(heading.trim());
-  const bodyLength = mentLength(body.trim());
-  const valid = mentLineValid(heading, MENT_TITLE_LIMIT) && mentLineValid(body, MENT_BODY_LIMIT);
+  const [text, setText] = useState(ment?.body ?? '');
+  const length = mentLength(text.trim());
+  const changed = !!ment && text.trim() !== ment.body;
   return (
-    <ManagedThreadsActionDialog title={title} busy={busy} onClose={onClose}>
-      <form
-        className="daily-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!busy && valid) void onSave(heading, body);
-        }}
-      >
-        <label htmlFor={`${id}-title`}>제목</label>
-        <input
-          id={`${id}-title`}
-          type="text"
-          value={heading}
-          autoComplete="off"
-          placeholder="예: 후기형, 할인 안내"
-          disabled={busy}
-          onChange={(event) => setHeading(event.target.value)}
-        />
-        <p className={`daily-form-count ${headingLength > MENT_TITLE_LIMIT ? 'is-over' : ''}`}>
-          {headingLength} / {MENT_TITLE_LIMIT}
-        </p>
-        <label htmlFor={`${id}-body`}>본문</label>
-        <textarea
-          id={`${id}-body`}
-          value={body}
-          rows={8}
-          disabled={busy}
-          onChange={(event) => setBody(event.target.value)}
-        />
-        <p className={`daily-form-count ${bodyLength > MENT_BODY_LIMIT ? 'is-over' : ''}`}>
-          {bodyLength} / {MENT_BODY_LIMIT}
-        </p>
-        <div className="threads-actions managed-threads-dialog-actions">
-          <button type="button" disabled={busy} onClick={onClose}>
-            취소
-          </button>
-          <button type="submit" className="primary" disabled={busy || !valid}>
-            {busy ? '저장 중…' : '저장'}
-          </button>
-        </div>
-      </form>
-    </ManagedThreadsActionDialog>
+    <>
+      <textarea
+        className="ment-body"
+        aria-label="멘트 내용"
+        value={text}
+        disabled={!ment || busy}
+        placeholder={
+          ment ? '멘트 내용을 쓰고 저장하세요.' : '멘트를 등록하면 여기에 내용을 쓸 수 있습니다.'
+        }
+        onChange={(event) => setText(event.target.value)}
+      />
+      <div className="ment-body-foot">
+        <span className={`ment-body-count${length > MENT_BODY_LIMIT ? ' is-over' : ''}`}>
+          {length} / {MENT_BODY_LIMIT}
+        </span>
+        <button
+          type="button"
+          className="primary ment-action-button"
+          disabled={busy || !changed || length > MENT_BODY_LIMIT}
+          onClick={() => void onSave(text)}
+        >
+          {busy && changed ? '저장 중…' : '저장'}
+        </button>
+      </div>
+    </>
   );
 }

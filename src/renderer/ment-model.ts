@@ -7,38 +7,33 @@ import {
   type MentProduct,
 } from '../shared/ments';
 
-const collator = new Intl.Collator('ko', { numeric: true });
-const byName = <T extends { id: string; name: string }>(a: T, b: T) =>
-  collator.compare(a.name, b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-
-/** Brands and each brand's products in name order; ments stay in the order they were made. */
-export function sortMentCatalog(catalog: MentCatalog): MentCatalog {
-  return {
-    brands: [...catalog.brands]
-      .sort(byName)
-      .map((brand) => ({ ...brand, products: [...brand.products].sort(byName) })),
-  };
-}
+// Brands, products and ments stay in the server's order: oldest first, a new one goes last
+// (2026-11-24, the user's call).
 
 export interface MentSelection {
   brand: MentBrand | null;
   product: MentProduct | null;
+  ment: Ment | null;
 }
 /**
- * The chosen brand and product while they exist. Otherwise the first brand, and the first product
- * of the brand: what the window shows when it opens, after another brand is chosen, and after the
- * chosen one is deleted.
+ * The chosen brand, product and ment while they exist. Otherwise the first of each under the one
+ * above: what the window shows when it opens, after another brand or product is chosen, and after
+ * the chosen one is deleted.
  */
 export function selectMent(
   catalog: MentCatalog,
   brandId: string | null,
   productId: string | null,
+  mentId: string | null = null,
 ): MentSelection {
   const brand = catalog.brands.find((item) => item.id === brandId) ?? catalog.brands[0] ?? null;
   const product = brand
     ? (brand.products.find((item) => item.id === productId) ?? brand.products[0] ?? null)
     : null;
-  return { brand, product };
+  const ment = product
+    ? (product.ments.find((item) => item.id === mentId) ?? product.ments[0] ?? null)
+    : null;
+  return { brand, product, ment };
 }
 
 /** Whether the catalog still has the item. */

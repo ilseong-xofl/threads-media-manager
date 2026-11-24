@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MentCatalog } from '../shared/ments';
-import {
-  mentDeleteMessage,
-  mentHas,
-  mentLineValid,
-  selectMent,
-  sortMentCatalog,
-} from './ment-model';
+import { mentDeleteMessage, mentHas, mentLineValid, selectMent } from './ment-model';
 
 const ment = (id: string, title = id) => ({ id, title, body: `${title} 본문` });
 const catalog: MentCatalog = {
@@ -25,25 +19,30 @@ const catalog: MentCatalog = {
 };
 
 describe('ment window model', () => {
-  it('orders brands and products by name, numbers by value, and keeps the ments as made', () => {
-    const sorted = sortMentCatalog(catalog);
-    expect(sorted.brands.map((brand) => brand.name)).toEqual(['가람', '하늘', 'Apple']);
-    expect(sorted.brands[1].products.map((product) => product.name)).toEqual(['제품2', '제품10']);
-    expect(sorted.brands[1].products[0].ments.map((item) => item.id)).toEqual(['m2', 'm1']);
-    // The catalog it was given is left as it was.
-    expect(catalog.brands[0].products[0].name).toBe('제품10');
-  });
-
-  it('keeps the chosen brand and product, and falls back to the first ones', () => {
-    const sorted = sortMentCatalog(catalog);
-    expect(selectMent(sorted, null, null)).toEqual({ brand: sorted.brands[0], product: null });
-    const sky = sorted.brands[1];
-    expect(selectMent(sorted, 'b2', null)).toEqual({ brand: sky, product: sky.products[0] });
-    expect(selectMent(sorted, 'b2', 'p10')).toEqual({ brand: sky, product: sky.products[1] });
-    // A chosen product that is gone, or that belongs to another brand, gives the brand's first.
-    expect(selectMent(sorted, 'b2', 'gone').product).toBe(sky.products[0]);
-    expect(selectMent(sorted, 'gone', 'p10')).toEqual({ brand: sorted.brands[0], product: null });
-    expect(selectMent({ brands: [] }, 'b1', 'p1')).toEqual({ brand: null, product: null });
+  it('keeps the chosen brand, product and ment, and falls back to the first ones in order made', () => {
+    // The server's order, oldest first, is the order on screen.
+    const [sky, garam] = catalog.brands;
+    const [ten, two] = sky.products;
+    expect(selectMent(catalog, null, null)).toEqual({ brand: sky, product: ten, ment: null });
+    expect(selectMent(catalog, 'b2', 'p2')).toEqual({
+      brand: sky,
+      product: two,
+      ment: two.ments[0],
+    });
+    expect(selectMent(catalog, 'b2', 'p2', 'm1').ment).toBe(two.ments[1]);
+    // A chosen item that is gone, or that belongs to another parent, gives the first under it.
+    expect(selectMent(catalog, 'b2', 'gone').product).toBe(ten);
+    expect(selectMent(catalog, 'b2', 'p2', 'gone').ment).toBe(two.ments[0]);
+    expect(selectMent(catalog, 'b1', 'p2', 'm1')).toEqual({
+      brand: garam,
+      product: null,
+      ment: null,
+    });
+    expect(selectMent({ brands: [] }, 'b1', 'p1', 'm1')).toEqual({
+      brand: null,
+      product: null,
+      ment: null,
+    });
   });
 
   it('tells whether the catalog still has an item of each kind', () => {

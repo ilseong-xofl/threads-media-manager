@@ -46,15 +46,11 @@ function line(value: unknown, limit: number): string {
   if (!text || mentLength(text) > limit || LONE_SURROGATE.test(text)) return invalid();
   return text;
 }
+/** A body may be empty: a ment is registered by its title and written afterwards (2026-11-24). */
 function mentBody(value: unknown): string {
   if (typeof value !== 'string') return invalid();
   const text = value.trim();
-  if (
-    !text ||
-    mentLength(text) > MENT_BODY_LIMIT ||
-    text.includes('\u0000') ||
-    LONE_SURROGATE.test(text)
-  )
+  if (mentLength(text) > MENT_BODY_LIMIT || text.includes('\u0000') || LONE_SURROGATE.test(text))
     return invalid();
   return text;
 }
@@ -102,14 +98,14 @@ function deleteRequest(value: unknown): { kind: MentKind; id: string } {
   return { kind: value.kind as MentKind, id: value.id };
 }
 
-const text = (value: unknown, limit: number): value is string =>
-  typeof value === 'string' && value.length > 0 && mentLength(value) <= limit;
+const text = (value: unknown, limit: number, min = 1): value is string =>
+  typeof value === 'string' && value.length >= min && mentLength(value) <= limit;
 function parseMent(value: unknown): Ment {
   if (
     !isObject(value) ||
     !uuid(value.id) ||
     !text(value.title, MENT_TITLE_LIMIT) ||
-    !text(value.body, MENT_BODY_LIMIT)
+    !text(value.body, MENT_BODY_LIMIT, 0)
   )
     return unreadable();
   return { id: value.id, title: value.title, body: value.body };
