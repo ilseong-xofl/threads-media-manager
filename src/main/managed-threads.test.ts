@@ -912,6 +912,28 @@ describe('managed Threads synchronization', () => {
     expect(result.accounts.map((r) => r.account!.id)).toEqual([otherId]);
     expect((await store.read(scope, 'a')).map((r) => r.account!.id)).toEqual([otherId]);
   });
+  it('names the account whose token the server cannot read (2026-11-25)', async () => {
+    const { manager, server, fetcher } = await setup();
+    const initial = await manager.register(input());
+    const account = initial.accounts[0].account!;
+    server.get(account.id)!.account.tokenRevision = 2;
+    const original = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation((url, init) =>
+      String(url).endsWith(`/${account.id}/credential`)
+        ? Promise.resolve(
+            json(
+              { error: { code: 'CREDENTIAL_UNAVAILABLE', message: '인증 정보를 확인해 주세요.' } },
+              409,
+            ),
+          )
+        : original(url, init),
+    );
+    const result = await manager.getAccounts();
+    expect(result.problem).toEqual({
+      code: 'CREDENTIAL_UNAVAILABLE',
+      message: `서버에 저장된 '${account.label}' 계정의 토큰을 읽지 못했습니다. 관리자에게 문의해 주세요.`,
+    });
+  });
   it('retains the local encrypted copy on a bare delete 404 without an explicit tombstone', async () => {
     const { manager, store, server } = await setup();
     const initial = await manager.register(input());

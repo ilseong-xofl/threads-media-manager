@@ -283,16 +283,19 @@ export class ServiceApiClient {
           failure.error.code,
           response.status,
         );
-      // Token-check outcomes the manager explains individually; any other 409 stays generic.
+      // Outcomes the manager explains individually; any other 409 stays generic.
       if (
         object(failure) &&
         object(failure.error) &&
         ((response.status === 429 && failure.error.code === 'META_REQUEST_COOLDOWN') ||
           (response.status === 409 &&
             typeof failure.error.code === 'string' &&
-            ['ACCOUNT_BUSY', 'ALREADY_REGISTERED', 'ACCOUNT_IDENTITY_MISMATCH'].includes(
-              failure.error.code,
-            )))
+            [
+              'ACCOUNT_BUSY',
+              'ALREADY_REGISTERED',
+              'ACCOUNT_IDENTITY_MISMATCH',
+              'CREDENTIAL_UNAVAILABLE',
+            ].includes(failure.error.code)))
       )
         throw new ServiceApiError(
           '계정 정보를 처리하지 못했습니다. 다시 확인해 주세요.',

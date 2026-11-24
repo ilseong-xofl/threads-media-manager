@@ -80,6 +80,7 @@ const messages: Record<string, string> = {
     '서비스에 연결하지 못했습니다. 저장된 전송 대기 정보를 다시 시도할 수 있습니다.',
   MIGRATION_REQUIRED: '계정 관리 DB 업데이트가 필요합니다. 관리자에게 문의해 주세요.',
   REMOTE_CONFLICT: '계정 정보가 변경되었거나 이미 등록되었습니다. 최신 상태를 확인해 주세요.',
+  CREDENTIAL_UNAVAILABLE: '서버에 저장된 계정 토큰을 읽지 못했습니다. 관리자에게 문의해 주세요.',
   STALE_CREDENTIAL:
     '서버 토큰이 변경되었습니다. 대기 입력을 취소하거나 최신 상태에서 다시 등록해 주세요.',
   NOT_FOUND: '계정 정보를 찾을 수 없습니다. 목록을 다시 확인해 주세요.',
@@ -400,7 +401,19 @@ export class ManagedThreadsManager {
         fresh.push({ account, token: cached.syncedToken, syncedRevision: account.tokenRevision });
         continue;
       }
-      const credential = await this.client.managedThreadsRequest(context, 'credential', account.id);
+      let credential: unknown;
+      try {
+        credential = await this.client.managedThreadsRequest(context, 'credential', account.id);
+      } catch (error) {
+        // The server has no readable token for it (a server data problem the PC cannot repair),
+        // and one such account stops every sync, so the notice names it.
+        if (error instanceof ServiceApiError && error.code === 'CREDENTIAL_UNAVAILABLE')
+          fail(
+            'CREDENTIAL_UNAVAILABLE',
+            `서버에 저장된 '${account.label}' 계정의 토큰을 읽지 못했습니다. 관리자에게 문의해 주세요.`,
+          );
+        throw error;
+      }
       if (!isObject(credential) || !validToken(credential.token)) fail('INVALID_RESPONSE');
       const data = credential as { account: unknown; token: string };
       const current = accountFrom(data.account, context.ownerId);

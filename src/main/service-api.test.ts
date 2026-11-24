@@ -562,7 +562,7 @@ describe('service login boundary reused from local-video-manager', () => {
       });
     expect(fetcher).toHaveBeenCalledTimes(count);
   });
-  it('passes through only the token-check refusals the account manager explains', async () => {
+  it('passes through only the refusals the account manager explains', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(account));
     const client = new ServiceApiClient(
       'https://admin.example.test',
@@ -575,6 +575,7 @@ describe('service login boundary reused from local-video-manager', () => {
       [409, 'ACCOUNT_BUSY', 'ACCOUNT_BUSY'],
       [409, 'ALREADY_REGISTERED', 'ALREADY_REGISTERED'],
       [409, 'ACCOUNT_IDENTITY_MISMATCH', 'ACCOUNT_IDENTITY_MISMATCH'],
+      [409, 'CREDENTIAL_UNAVAILABLE', 'CREDENTIAL_UNAVAILABLE'],
       [409, 'STALE_CREDENTIAL', 'REMOTE_CONFLICT'],
       [429, 'ACCOUNT_BUSY', 'SERVICE_UNAVAILABLE'],
       [409, 'META_REQUEST_COOLDOWN', 'REMOTE_CONFLICT'],
