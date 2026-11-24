@@ -133,6 +133,74 @@ describe('service login boundary reused from local-video-manager', () => {
       expect(failure.message).not.toContain('private detail');
     }
   });
+  it('reaches the ment catalog only on fixed paths and explains each refusal itself', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));
+    const client = new ServiceApiClient('https://admin.example.test', store('session'), fetcher);
+    const context = await client.getBusinessContext();
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const base = 'https://admin.example.test/api/v1/ment-catalog';
+    const last = () => [fetcher.mock.lastCall![1]?.method, String(fetcher.mock.lastCall![0])];
+    fetcher.mockResolvedValueOnce(json({ brands: [] }));
+    await expect(client.mentRequest(context, 'list')).resolves.toEqual({ brands: [] });
+    expect(last()).toEqual(['GET', base]);
+    expect(fetcher.mock.lastCall![1]?.body).toBeUndefined();
+    const bodies = {
+      brand: { name: '브랜드' },
+      product: { brandId: id, name: '제품' },
+      ment: { productId: id, title: '후기형', body: '첫 줄\n둘째 줄' },
+    };
+    for (const [kind, folder] of [
+      ['brand', 'brands'],
+      ['product', 'products'],
+      ['ment', 'ments'],
+    ] as const) {
+      fetcher.mockResolvedValueOnce(json({ brands: [] }));
+      await client.mentRequest(context, 'save', kind, id, bodies[kind]);
+      expect(last()).toEqual(['PUT', `${base}/${folder}/${id}`]);
+      expect(fetcher.mock.lastCall![1]?.body).toBe(JSON.stringify(bodies[kind]));
+      fetcher.mockResolvedValueOnce(json({ brands: [] }));
+      await client.mentRequest(context, 'delete', kind, id);
+      expect(last()).toEqual(['DELETE', `${base}/${folder}/${id}`]);
+      expect(fetcher.mock.lastCall![1]?.body).toBeUndefined();
+    }
+    const sent = fetcher.mock.calls.length;
+    for (const call of [
+      () => client.mentRequest(context, 'list', 'brand'),
+      () => client.mentRequest(context, 'list', undefined, id),
+      () => client.mentRequest(context, 'save', 'brand', '../accounts', { name: 'a' }),
+      () => client.mentRequest(context, 'save', 'brand', id),
+      () => client.mentRequest(context, 'save', 'account' as 'brand', id, { name: 'a' }),
+      () => client.mentRequest(context, 'delete', 'brand', id, { name: 'a' }),
+      () => client.mentRequest(context, 'delete', undefined, id),
+      () => client.mentRequest(context, 'purge' as 'delete', 'brand', id),
+    ])
+      await expect(call()).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect(fetcher).toHaveBeenCalledTimes(sent);
+    // A server without the catalog has no such route and answers with a page.
+    fetcher.mockResolvedValueOnce(new Response('<html>Not Found</html>', { status: 404 }));
+    await expect(client.mentRequest(context, 'list')).rejects.toMatchObject({
+      code: 'MENT_UNAVAILABLE',
+      status: 404,
+    });
+    for (const [status, code, expected, message] of [
+      [503, 'MIGRATION_REQUIRED', 'MENT_UNAVAILABLE', '서버 업데이트가 필요합니다'],
+      [409, 'MENT_NAME_TAKEN', 'MENT_NAME_TAKEN', '같은 이름의 제품'],
+      [404, 'MENT_BRAND_NOT_FOUND', 'MENT_BRAND_NOT_FOUND', '브랜드가 삭제되어'],
+      [409, 'MENT_CONFLICT', 'MENT_CONFLICT', '맞지 않아'],
+      [400, 'VALIDATION_FAILED', 'VALIDATION_FAILED', '입력한 내용'],
+      [418, 'SOMETHING_NEW', 'SOMETHING_NEW', '제품을 저장하지 못했습니다'],
+      [500, 'UNEXPECTED_ERROR', 'SERVICE_UNAVAILABLE', '연결할 수 없습니다'],
+      [403, 'FORBIDDEN', 'AUTH_REQUIRED', '로그인'],
+    ] as const) {
+      fetcher.mockResolvedValueOnce(json({ error: { code, message: 'private detail' } }, status));
+      const failure = (await client
+        .mentRequest(context, 'save', 'product', id, { brandId: id, name: '제품' })
+        .catch((error: unknown) => error)) as Error;
+      expect(failure).toMatchObject({ code: expected });
+      expect(failure.message).toContain(message);
+      expect(failure.message).not.toContain('private detail');
+    }
+  });
   it('saves and cancels answers on fixed paths only, with the body only where one is sent', async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json(account));
     const client = new ServiceApiClient('https://admin.example.test', store('session'), fetcher);

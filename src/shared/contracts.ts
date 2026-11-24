@@ -2,6 +2,7 @@ import type { AppAuthState } from './service-auth';
 import type { ThreadsApiMethods } from './threads-api';
 import type { ManagedThreadsMethods } from './managed-threads';
 import type { DailyMethods } from './daily';
+import type { MentMethods } from './ments';
 import type {
   MobilePublicationMethods,
   MobilePublicationStatusesResult,
@@ -45,6 +46,9 @@ export const IPC = {
   deleteDailyAnswer: 'tmm:daily:answer-delete',
   sendDailyAnswers: 'tmm:daily:answers-send',
   cancelDailyAnswer: 'tmm:daily:answer-cancel',
+  ments: 'tmm:ments:list',
+  saveMent: 'tmm:ments:save',
+  deleteMent: 'tmm:ments:delete',
   capabilities: 'tmm:app:capabilities',
   reportUpdateBlocked: 'tmm:app:update-blocked',
   chatGptState: 'tmm:chatgpt:state',
@@ -307,7 +311,12 @@ export type ChatGptResult =
   | { status: 'error'; state: ChatGptState; problem: Problem };
 
 export interface ThreadsMediaApi
-  extends ThreadsApiMethods, ManagedThreadsMethods, MobilePublicationMethods, DailyMethods {
+  extends
+    ThreadsApiMethods,
+    ManagedThreadsMethods,
+    MobilePublicationMethods,
+    DailyMethods,
+    MentMethods {
   getMobilePublicationStatuses(): Promise<MobilePublicationStatusesResult>;
   getAuthState(): Promise<AppAuthState>;
   signIn(accountId: string, password: string): Promise<AppAuthState>;

@@ -52,6 +52,13 @@ it('reaches daily posts only through fixed channels that carry no account token 
   };
   await api.saveDailyPersona(persona);
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.saveDailyPersona, persona);
+  await api.getMents();
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.ments);
+  const brand = { kind: 'brand' as const, id: 'brand', name: '브랜드' };
+  await api.saveMent(brand);
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.saveMent, brand);
+  await api.deleteMent({ kind: 'brand', id: 'brand' });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.deleteMent, { kind: 'brand', id: 'brand' });
   await api.generateDailyPosts({ personaId: 'persona' });
   expect(electron.invoke).toHaveBeenLastCalledWith(IPC.generateDailyPosts, {
     personaId: 'persona',

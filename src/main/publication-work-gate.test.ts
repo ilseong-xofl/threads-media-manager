@@ -41,6 +41,10 @@ describe('publication and local mutation barrier', () => {
     ])
       expect(mobilePublicationBlocks(mutation, true)).toBe(true);
   });
+  it('lets the ment catalog work during a send: it touches no publication or local file', () => {
+    for (const channel of [IPC.ments, IPC.saveMent, IPC.deleteMent])
+      expect(mobilePublicationBlocks(channel, true)).toBe(false);
+  });
   it.each([IPC.saveMediaEdit, IPC.deleteMedia, IPC.restoreDatabase])(
     'rechecks %s after a shared initialization barrier',
     async (channel) => {

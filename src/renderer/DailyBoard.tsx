@@ -6,6 +6,7 @@ import { DailyPersonaDialog } from './DailyPersonaDialog';
 import { DailyPostDialog } from './DailyPostDialog';
 import { DailyRepliesDialog } from './DailyRepliesDialog';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
+import { MentManagerModal } from './MentManagerModal';
 import { useManagedThreads } from './use-managed-threads';
 import type { DailyState } from './use-daily';
 import {
@@ -39,7 +40,8 @@ type Dialog =
   | { kind: 'write'; personaId: string }
   | { kind: 'cancel'; postId: string }
   | { kind: 'send'; postId: string }
-  | { kind: 'replies'; postId: string };
+  | { kind: 'replies'; postId: string }
+  | { kind: 'ments' };
 
 export function DailyBoard({
   daily,
@@ -217,6 +219,8 @@ export function DailyBoard({
         onClose={closeReplies}
       />
     );
+  } else if (dialog?.kind === 'ments') {
+    dialogElement = <MentManagerModal onClose={closeDialog} />;
   }
   const dialogOpen = dialogElement !== null;
   useEffect(() => {
@@ -254,15 +258,25 @@ export function DailyBoard({
           {heading}
           <p>페르소나마다 일상 글을 만들고 휴대폰으로 보내세요.</p>
         </div>
-        <button
-          type="button"
-          className="primary daily-add-persona"
-          disabled={!daily.loaded}
-          onClick={() => setDialog({ kind: 'persona', personaId: null })}
-        >
-          <Icon name="plus" />
-          페르소나
-        </button>
+        <div className="daily-heading-actions">
+          <button
+            type="button"
+            className="daily-ment-button"
+            onClick={() => setDialog({ kind: 'ments' })}
+          >
+            <Icon name="layers" />
+            멘트 관리
+          </button>
+          <button
+            type="button"
+            className="primary daily-add-persona"
+            disabled={!daily.loaded}
+            onClick={() => setDialog({ kind: 'persona', personaId: null })}
+          >
+            <Icon name="plus" />
+            페르소나
+          </button>
+        </div>
       </div>
       {daily.view.unsyncedPersonas > 0 && (
         <p className="daily-sync-note" role="status">

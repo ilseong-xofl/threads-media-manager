@@ -616,6 +616,107 @@ export class ServiceApiClient {
     this.assertBusinessContext(context);
     return result;
   }
+  /**
+   * The signed-in user's ment catalog on fixed paths (2026-11-24). `save` creates the item with
+   * the id this PC chose or changes the one that has it; every answer is the whole catalog.
+   */
+  async mentRequest(
+    context: ServiceBusinessContext,
+    operation: 'list' | 'save' | 'delete',
+    kind?: 'brand' | 'product' | 'ment',
+    id?: string,
+    body?: unknown,
+  ): Promise<unknown> {
+    this.assertBusinessContext(context);
+    const saved = this.businessContexts.get(context)!;
+    if ((await this.tokenStore.read()) !== saved.token)
+      throw new ServiceApiError('로그인이 변경되었습니다.', 'AUTH_CHANGED', 401);
+    this.assertBusinessContext(context);
+    const folders = { brand: 'brands', product: 'products', ment: 'ments' } as const;
+    const listing = operation === 'list';
+    if (
+      !['list', 'save', 'delete'].includes(operation) ||
+      (listing
+        ? kind !== undefined || id !== undefined
+        : kind === undefined ||
+          !Object.hasOwn(folders, kind) ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+            id ?? '',
+          )) ||
+      (operation === 'save' ? !object(body) : body !== undefined)
+    )
+      throw new ServiceApiError('멘트 정보를 확인하세요.', 'VALIDATION_FAILED', 400);
+    const response = await this.request(
+      listing ? '/api/v1/ment-catalog' : `/api/v1/ment-catalog/${folders[kind!]}/${id}`,
+      listing ? 'GET' : operation === 'save' ? 'PUT' : 'DELETE',
+      saved.token,
+      body,
+    );
+    this.assertBusinessContext(context);
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.advanceEpoch();
+        this.pending = undefined;
+        await this.tokenStore.clear();
+      }
+      const failure: unknown = await response.json().catch(() => null);
+      const code =
+        object(failure) &&
+        object(failure.error) &&
+        typeof failure.error.code === 'string' &&
+        /^[A-Z_]{1,80}$/.test(failure.error.code)
+          ? failure.error.code
+          : 'MENT_REQUEST_FAILED';
+      if (response.status === 401 || response.status === 403)
+        throw new ServiceApiError(
+          '서비스에 다시 로그인해 주세요.',
+          'AUTH_REQUIRED',
+          response.status,
+        );
+      if (response.status >= 500 && code !== 'MIGRATION_REQUIRED')
+        throw new ServiceApiError(
+          '서비스에 연결할 수 없습니다.',
+          'SERVICE_UNAVAILABLE',
+          response.status,
+        );
+      // A server without the catalog answers its own 404 page, which carries no code of ours.
+      if (
+        code === 'MIGRATION_REQUIRED' ||
+        (response.status === 404 && code === 'MENT_REQUEST_FAILED')
+      )
+        throw new ServiceApiError(
+          '멘트 관리를 쓰려면 서버 업데이트가 필요합니다. 관리자에게 확인해 주세요.',
+          'MENT_UNAVAILABLE',
+          response.status,
+        );
+      const messages: Record<string, string> = {
+        VALIDATION_FAILED: '입력한 내용을 확인해 주세요.',
+        MENT_NAME_TAKEN:
+          kind === 'product'
+            ? '이 브랜드에 같은 이름의 제품이 이미 있습니다.'
+            : '같은 이름의 브랜드가 이미 있습니다.',
+        MENT_BRAND_NOT_FOUND: '브랜드가 삭제되어 저장하지 못했습니다.',
+        MENT_PRODUCT_NOT_FOUND: '제품이 삭제되어 저장하지 못했습니다.',
+        MENT_CONFLICT: '서버의 멘트 정보와 맞지 않아 저장하지 못했습니다.',
+      };
+      const failed = {
+        brand: ['브랜드를 저장하지 못했습니다.', '브랜드를 삭제하지 못했습니다.'],
+        product: ['제품을 저장하지 못했습니다.', '제품을 삭제하지 못했습니다.'],
+        ment: ['멘트를 저장하지 못했습니다.', '멘트를 삭제하지 못했습니다.'],
+      } as const;
+      throw new ServiceApiError(
+        messages[code] ??
+          (listing
+            ? '멘트를 불러오지 못했습니다. 다시 시도해 주세요.'
+            : `${failed[kind!][operation === 'save' ? 0 : 1]} 다시 시도해 주세요.`),
+        code,
+        response.status,
+      );
+    }
+    const result = await this.read(response);
+    this.assertBusinessContext(context);
+    return result;
+  }
   async signIn(accountId: string, password: string): Promise<AppAuthState> {
     const email = serviceEmailFromId(accountId);
     if (!email || !password || password.length > ACCOUNT_PASSWORD_MAX_LENGTH)

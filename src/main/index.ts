@@ -25,6 +25,8 @@ import { handleManagedThreadsRequest } from './managed-threads-ipc';
 import { DailyController } from './daily';
 import { DailyGenerator } from './daily-generator';
 import { handleDailyRequest } from './daily-ipc';
+import { MentController } from './ments';
+import { handleMentRequest } from './ments-ipc';
 import { DailyStore } from './daily-store';
 import { DraftNoteStore } from './draft-note-store';
 import { DraftNotes } from './draft-notes';
@@ -609,6 +611,7 @@ const daily: DailyController = new DailyController({
     dailyGenerator.translateReplies(persona, post, replies),
   openExternal: (url) => shell.openExternal(url, { activate: true }),
 });
+const ments = new MentController(serviceClient);
 async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
   try {
     return await action();
@@ -959,6 +962,19 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           }
           if (channel.startsWith('tmm:daily:')) {
             const result = await handleDailyRequest(channel, args, daily);
+            if (authMutation || requestAuthGeneration !== authGeneration)
+              throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+            if (
+              result.problem &&
+              ['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(result.problem.code)
+            )
+              await serviceAccess.check();
+            if (authMutation || requestAuthGeneration !== authGeneration)
+              throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+            return result;
+          }
+          if (channel.startsWith('tmm:ments:')) {
+            const result = await handleMentRequest(channel, args, ments);
             if (authMutation || requestAuthGeneration !== authGeneration)
               throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
             if (
