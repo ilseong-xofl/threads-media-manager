@@ -5,8 +5,10 @@ export type ToastNotice = {
   action?: { label: string; onClick(): void; disabled?: boolean };
 };
 export type ToastEntry = ToastNotice & { id: number };
-/** Every notice stays long enough to read error details; the close button dismisses it sooner. */
-export const TOAST_DURATION_MS = 30_000;
+/** A success notice closes after 5 seconds and any other after 10 (2026-11-25, the user's call,
+ * replacing 30 for both); the close button dismisses it sooner. */
+export const TOAST_SUCCESS_MS = 5_000;
+export const TOAST_ERROR_MS = 10_000;
 
 export function createToastStore() {
   let entries: ToastEntry[] = [];
@@ -45,7 +47,7 @@ export function createToastStore() {
       }
       timers.set(
         id,
-        setTimeout(() => dismiss(id), TOAST_DURATION_MS),
+        setTimeout(() => dismiss(id), notice.error ? TOAST_ERROR_MS : TOAST_SUCCESS_MS),
       );
       emit();
     },
