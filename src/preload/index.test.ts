@@ -142,6 +142,33 @@ describe('dropped File preload boundary', () => {
     expect(electron.extract).not.toHaveBeenCalled();
     expect(electron.invoke).not.toHaveBeenCalled();
   });
+
+  it('hands a daily post dialog’s dropped Files over as native paths only (2026-11-24)', async () => {
+    const files = [new File(['image'], 'image.png'), new File(['video'], 'video.mp4')];
+    electron.extract
+      .mockReturnValueOnce('/chosen/image.png')
+      .mockReturnValueOnce('/chosen/video.mp4');
+    await api.addDailyMedia({ selectionId: 'a'.repeat(32), room: 5, files });
+    expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.addDailyMedia, {
+      selectionId: 'a'.repeat(32),
+      room: 5,
+      paths: ['/chosen/image.png', '/chosen/video.mp4'],
+    });
+    electron.invoke.mockClear();
+    electron.extract.mockReturnValueOnce('');
+    expect(
+      await api.addDailyMedia({ room: 20, files: [new File(['x'], 'generated.png')] }),
+    ).toMatchObject({ status: 'error', problem: { code: 'daily_media_drop' } });
+    expect(
+      (
+        await api.addDailyMedia({
+          room: 20,
+          files: Array.from({ length: 21 }, () => new File([], 'image.png')),
+        })
+      ).status,
+    ).toBe('error');
+    expect(electron.invoke).not.toHaveBeenCalled();
+  });
 });
 
 it('exposes only named auth calls and strips Electron event objects from notifications', async () => {

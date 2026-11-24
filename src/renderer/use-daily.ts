@@ -41,7 +41,10 @@ const chatGpt = (kind: CallKind) =>
  * re-enable, and reads overtaken by a mutation that finished after the read started.
  */
 export function createDailyController(
-  api: DailyMethods,
+  api: Omit<
+    DailyMethods,
+    'pickDailyMedia' | 'addDailyMedia' | 'discardDailyMedia' | 'onDailyUpload'
+  >,
   effects: { notify(message: string, error?: boolean): void },
 ) {
   let state: DailyViewState = {
@@ -52,6 +55,7 @@ export function createDailyController(
       translatingPostId: null,
       translatingRepliesPostId: null,
       unsyncedPersonas: 0,
+      mediaReady: false,
     },
     loaded: false,
     busy: false,
@@ -183,20 +187,50 @@ export function createDailyController(
     generate(personaId: string) {
       return call('generate', () => api.generateDailyPosts({ personaId }), personaId);
     },
-    /** Adds a draft the user wrote; `fromKorean` has it written in the persona's language. */
-    async addPost(personaId: string, text: string, fromKorean: boolean, topic = '') {
+    /**
+     * Adds a draft the user wrote; `fromKorean` has it written in the persona's language. `media`
+     * are the attachments in posting order, from the dialog's `selectionId`.
+     */
+    async addPost(
+      personaId: string,
+      text: string,
+      fromKorean: boolean,
+      topic = '',
+      media: string[] = [],
+      selectionId: string | null = null,
+    ) {
       const known = new Set(state.view.posts.map((post) => post.id));
       const added = await call(fromKorean ? 'compose' : 'write', () =>
-        api.addDailyPost({ personaId, text, fromKorean, ...(topic.trim() ? { topic } : {}) }),
+        api.addDailyPost({
+          personaId,
+          text,
+          fromKorean,
+          ...(topic.trim() ? { topic } : {}),
+          ...(media.length ? { media } : {}),
+          ...(selectionId ? { selectionId } : {}),
+        }),
       );
       // A post typed in another language has no Korean rendering yet.
       const post = state.view.posts.find((item) => !known.has(item.id));
       if (added && post && dailyNeedsTranslation(state.view, post.id)) void translate(post.id);
       return added;
     },
-    async savePost(postId: string, text: string, topic?: string) {
+    /** `media` omitted keeps the attachments; an empty list removes them all. */
+    async savePost(
+      postId: string,
+      text: string,
+      topic?: string,
+      media?: string[],
+      selectionId: string | null = null,
+    ) {
       const saved = await call('write', () =>
-        api.saveDailyPost({ postId, text, ...(topic === undefined ? {} : { topic }) }),
+        api.saveDailyPost({
+          postId,
+          text,
+          ...(topic === undefined ? {} : { topic }),
+          ...(media === undefined ? {} : { media }),
+          ...(selectionId ? { selectionId } : {}),
+        }),
       );
       // An edited post in another language lost its Korean rendering; write it again.
       if (saved && dailyNeedsTranslation(state.view, postId)) void translate(postId);

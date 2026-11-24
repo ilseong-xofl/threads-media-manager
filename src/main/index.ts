@@ -15,7 +15,7 @@ import { AUTH_STATE_CHANGED, type AppAuthState } from '../shared/service-auth';
 import { EncryptedAuthTokenStore } from './auth-token-store';
 import { ServiceApiClient, ServiceApiError, serviceBaseUrl } from './service-api';
 import { MobilePublicationsController } from './mobile-publications';
-import { cleanupPublicationOutbox } from './publication-outbox';
+import { cleanupPublicationOutbox, publicationWorkDirectory } from './publication-outbox';
 import { mobilePublicationBlocks } from './publication-work-gate';
 import { validPublicationJournal, type PublicationJournal } from './mobile-publication-data';
 import { ServiceAccess } from './service-access';
@@ -25,6 +25,7 @@ import { handleManagedThreadsRequest } from './managed-threads-ipc';
 import { DailyController } from './daily';
 import { DailyGenerator } from './daily-generator';
 import { handleDailyRequest } from './daily-ipc';
+import { DailyMediaLibrary } from './daily-media';
 import { MentController } from './ments';
 import { handleMentRequest } from './ments-ipc';
 import { DailyStore } from './daily-store';
@@ -39,7 +40,13 @@ import { configureAutoUpdates } from './updates';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { IPC, MEDIA_SCHEME, IMPORT_MEDIA_SCHEME } from '../shared/contracts';
+import {
+  DAILY_MEDIA_SCHEME,
+  DAILY_UPLOAD_PROGRESS,
+  IMPORT_MEDIA_SCHEME,
+  IPC,
+  MEDIA_SCHEME,
+} from '../shared/contracts';
 import {
   CollectionController,
   problem,
@@ -119,6 +126,16 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: IMPORT_MEDIA_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      stream: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: DAILY_MEDIA_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -465,6 +482,21 @@ const managedThreads = new ManagedThreadsManager(
     ),
   },
 );
+/** Attachments of daily posts (2026-11-24): copies in the work folder, like 등록's own posts. */
+const dailyMedia = new DailyMediaLibrary({
+  workFolder: () => controller.root,
+  pickFiles: async () => {
+    if (!window || !(await serviceAccess.allowed())) return null;
+    const choice = await dialog.showOpenDialog(window, {
+      title: '일상 글에 넣을 이미지·영상 선택',
+      buttonLabel: '파일 선택',
+      filters: [{ name: '이미지·영상', extensions: ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov'] }],
+      properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
+    });
+    return choice.canceled || !(await serviceAccess.allowed()) ? null : choice.filePaths;
+  },
+  webpToPng: (source, target) => webpToPng(source, target),
+});
 let managedAccountOperations = 0;
 let managedAccountMutations = 0;
 let authState: AppAuthState | null = null;
@@ -473,6 +505,8 @@ let authGeneration = 0;
 function broadcastAuthState(state: AppAuthState): AppAuthState {
   if (JSON.stringify(authState) !== JSON.stringify(state)) {
     authState = state;
+    // Another user, or none: what the last one opened is not served any more.
+    dailyMedia.reset();
     if (state.status !== 'authenticated' || state.mustChangePassword) rendererUpdateBlocked = true;
     if (window && !window.webContents.isDestroyed())
       window.webContents.send(AUTH_STATE_CHANGED, state);
@@ -610,6 +644,14 @@ const daily: DailyController = new DailyController({
   translateReplies: (persona, post, replies) =>
     dailyGenerator.translateReplies(persona, post, replies),
   openExternal: (url) => shell.openExternal(url, { activate: true }),
+  media: dailyMedia,
+  prepareUpload: (source, ids, directory) =>
+    prepareThreadsMedia(source.registry, source.root, ids, directory, webpToPng),
+  workDirectory: (requestId) => publicationWorkDirectory(app.getPath('userData'), requestId),
+  onUpload: (upload) => {
+    if (window && !window.webContents.isDestroyed())
+      window.webContents.send(DAILY_UPLOAD_PROGRESS, upload);
+  },
 });
 const ments = new MentController(serviceClient);
 async function guardPublicationWrite<T>(action: () => Promise<T>): Promise<T> {
@@ -736,10 +778,13 @@ function createWindow(): void {
   window.webContents.on('did-start-loading', () => {
     rendererUpdateBlocked = true;
     void localPosts.shutdown();
+    // A reloaded page lost its open post dialog; its unsaved files are cleaned later.
+    dailyMedia.reset();
   });
   window.webContents.on('render-process-gone', () => {
     rendererUpdateBlocked = true;
     void localPosts.shutdown();
+    dailyMedia.reset();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -844,6 +889,11 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         if (authMutation || !(await serviceAccess.allowed()))
           return new Response(null, { status: 403 });
         return localPosts.respond(request);
+      });
+      protocol.handle(DAILY_MEDIA_SCHEME, async (request) => {
+        if (authMutation || !(await serviceAccess.allowed()))
+          return new Response(null, { status: 403 });
+        return dailyMedia.respond(request);
       });
       const userData = app.getPath('userData');
       await cleanupPublicationOutbox(userData).catch(() => {});
@@ -965,7 +1015,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             if (authMutation || requestAuthGeneration !== authGeneration)
               throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
             if (
-              result.problem &&
+              result?.problem &&
               ['AUTH_REQUIRED', 'AUTH_CHANGED', 'SERVICE_UNAVAILABLE'].includes(result.problem.code)
             )
               await serviceAccess.check();

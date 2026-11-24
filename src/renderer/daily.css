@@ -511,10 +511,70 @@ button.daily-card-translate:hover:not(:disabled) {
   place-items: center;
 }
 
+/* One 16px space between the parts of a post's window (2026-11-24, the user's call): the
+   attachments, the language, the topic, brand and product, the ment and the body. The form's
+   grid gives 8px; each part's label adds the other 8. */
+.daily-post-dialog .daily-form > label {
+  margin-top: 8px;
+}
+.daily-post-dialog .daily-form > .daily-ment-picker {
+  margin-top: 8px;
+  row-gap: 16px;
+}
+.daily-post-dialog .daily-ment-picker label {
+  margin-top: 0;
+}
+/* And 8px from every label to its field (2026-11-24, the user's call), the attachments' heading
+   included; the collection's [등록] window keeps its own. */
+.daily-post-dialog .daily-ment-pick {
+  gap: 8px;
+}
+.daily-post-dialog .daily-media-field .registration-section-heading {
+  margin-bottom: 8px;
+}
+
 /* The window a post is written in (수동 등록·초안 수정): 30% wider than the 500px action dialog,
    for the ment boxes (2026-11-24, the user's call). Answers keep the plain width. */
 .post-modal.managed-threads-action-dialog.daily-post-dialog {
   width: min(650px, calc(100vw - 48px));
+}
+/* Its form: the fields, then [취소]·[저장]. */
+.daily-post-form {
+  display: grid;
+  gap: 8px;
+}
+/* 수동 등록·초안 수정 keep [취소]·[저장] at the bottom as a fixed footer, and only the fields,
+   from the attachments to the body, scroll (2026-11-24, the user's call), as in the collection's
+   [등록] window. Answers keep the plain layout. */
+.daily-post-dialog > .managed-threads-action-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.daily-post-dialog .daily-post-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+.daily-post-dialog .daily-post-form > .daily-form {
+  flex: 1 1 auto;
+  /* Every field keeps its height and the area scrolls: the body box must not shrink to fit. */
+  grid-auto-rows: max-content;
+  min-height: 0;
+  padding: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.daily-post-dialog .daily-post-form > .managed-threads-dialog-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 22px;
+  border-top: 1px solid #edf0f5;
 }
 
 .daily-form {
@@ -852,4 +912,43 @@ button.daily-card-translate:hover:not(:disabled) {
   background: #f8f9fb;
   color: #5b6575;
   font-size: 13px;
+}
+
+/* Attachments of a daily post (2026-11-24): the carousel tops the card, as on the phone. */
+.daily-card .media-carousel {
+  overflow: hidden;
+  border-radius: 10px;
+}
+.daily-card .media-carousel-card:not(:has(.carousel-dots)) {
+  padding-bottom: 0;
+}
+/* Its arrows show while the pointer is over the media and hide when it leaves (2026-11-24, the
+   user's call); keyboard focus shows them too. The collection's cards keep their own rule. */
+@media (hover: hover) {
+  .daily-card .media-carousel-card .media-stage .carousel-arrow {
+    opacity: 0;
+  }
+  .daily-card .media-carousel-card .media-stage:hover .carousel-arrow,
+  .daily-card .media-carousel-card:has(:focus-visible) .media-stage .carousel-arrow {
+    opacity: 1;
+  }
+}
+/* Cards with nothing to open play their videos in place, so their controls take clicks. */
+.daily-card .media-carousel-card video[controls] {
+  pointer-events: auto;
+}
+/* While a draft cannot be edited its media only stops opening; it does not fade. */
+.daily-card .media-open:disabled {
+  opacity: 1;
+}
+.daily-card-no-text {
+  color: #a3adbd;
+}
+.daily-card-upload {
+  color: #5b6575;
+  font-size: 13px;
+  font-weight: 600;
+}
+.daily-card.is-published .daily-card-footer {
+  align-items: flex-end;
 }

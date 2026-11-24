@@ -37,6 +37,7 @@ function post(id: string, change: Partial<DailyPost> = {}): DailyPost {
     text: id,
     translation: null,
     topic: null,
+    media: [],
     createdAt: at(1),
     state: 'draft',
     note: null,

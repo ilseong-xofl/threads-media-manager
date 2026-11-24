@@ -21,6 +21,9 @@ const actions = () => ({
   deleteAnswer: vi.fn(),
   sendAnswers: vi.fn(),
   cancelAnswer: vi.fn(),
+  pickMedia: vi.fn(),
+  addMedia: vi.fn(),
+  discardMedia: vi.fn(),
 });
 
 it('rejects unknown daily operations and wrong argument counts before any work', () => {
@@ -47,6 +50,9 @@ it('rejects unknown daily operations and wrong argument counts before any work',
     [IPC.deleteDailyAnswer, []],
     [IPC.sendDailyAnswers, [{ postId: 'post' }, 'https://graph.threads.net/me/threads']],
     [IPC.cancelDailyAnswer, []],
+    [IPC.pickDailyMedia, []],
+    [IPC.addDailyMedia, [{}, ['/Users/someone/a.png']]],
+    [IPC.discardDailyMedia, []],
   ] as const) {
     expect(() => handleDailyRequest(channel, [...args], daily)).toThrow();
   }
@@ -76,6 +82,9 @@ it('routes each fixed channel to its one action', () => {
     [IPC.deleteDailyAnswer, daily.deleteAnswer],
     [IPC.sendDailyAnswers, daily.sendAnswers],
     [IPC.cancelDailyAnswer, daily.cancelAnswer],
+    [IPC.pickDailyMedia, daily.pickMedia],
+    [IPC.addDailyMedia, daily.addMedia],
+    [IPC.discardDailyMedia, daily.discardMedia],
   ] as const) {
     handleDailyRequest(channel, [input], daily);
     expect(action).toHaveBeenCalledWith(input);

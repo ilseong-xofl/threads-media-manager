@@ -9,6 +9,10 @@ import type {
 } from './mobile-publications';
 export const MEDIA_SCHEME = 'threads-media';
 export const IMPORT_MEDIA_SCHEME = 'threads-import';
+/** Attachments of daily posts (2026-11-24): `threads-daily://file/<id>`. */
+export const DAILY_MEDIA_SCHEME = 'threads-daily';
+/** Main → renderer: upload progress of the daily post being sent (`DailyUpload | null`). */
+export const DAILY_UPLOAD_PROGRESS = 'tmm:daily-upload:progress';
 export const IPC = {
   getAuthState: 'tmm:auth:state',
   signIn: 'tmm:auth:sign-in',
@@ -46,6 +50,9 @@ export const IPC = {
   deleteDailyAnswer: 'tmm:daily:answer-delete',
   sendDailyAnswers: 'tmm:daily:answers-send',
   cancelDailyAnswer: 'tmm:daily:answer-cancel',
+  pickDailyMedia: 'tmm:daily:media-pick',
+  addDailyMedia: 'tmm:daily:media-add',
+  discardDailyMedia: 'tmm:daily:media-discard',
   ments: 'tmm:ments:list',
   saveMent: 'tmm:ments:save',
   deleteMent: 'tmm:ments:delete',

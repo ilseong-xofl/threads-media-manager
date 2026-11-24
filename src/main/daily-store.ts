@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   DAILY_DESCRIPTION_LIMIT,
+  DAILY_MEDIA_LIMIT,
   DAILY_NAME_LIMIT,
   DAILY_TEXT_LIMIT,
   DAILY_TRANSLATION_LIMIT,
@@ -12,8 +13,9 @@ import {
   type DailyPersona,
 } from '../shared/daily';
 import { ViewError } from './collection';
+import type { StoredDailyMedia } from './daily-media';
 import { isObject, validId, validRevision } from './managed-threads-store';
-import { timestamp, uuid, type PublicationRequest } from './mobile-publication-data';
+import { parseMedia, timestamp, uuid, type PublicationRequest } from './mobile-publication-data';
 
 export const DAILY_LIBRARY_ID = 'daily';
 export const DAILY_FILE_NAME = 'daily.json';
@@ -33,6 +35,11 @@ export interface StoredDailyPost {
   translation?: string | null;
   /** Threads topic (2026-11-23). Absent in files written before it. */
   topic?: string | null;
+  /**
+   * Images and videos in posting order (2026-11-24), copies in the work folder. Absent in files
+   * written before them. With at least one, `text` may be empty.
+   */
+  media?: StoredDailyMedia[];
   createdAt: string;
   send: StoredDailySend | null;
   /** A cancelled send of this post still exists on the server and may yet be posted. */
@@ -95,8 +102,13 @@ export interface DailyPartition {
   /** Absent in files written before answers were written. */
   answers?: StoredDailyAnswer[];
 }
+/**
+ * `version` 2 (2026-11-24) marks a file holding a post with attachments or without text. Older
+ * versions refuse it instead of sending such a post without its attachments; a file without them
+ * keeps 1, so they still read it.
+ */
 export interface DailyFile {
-  version: 1;
+  version: 1 | 2;
   partitions: DailyPartition[];
 }
 export interface DailyScope {
@@ -110,6 +122,45 @@ export const validDailyText = (value: unknown): value is string =>
   dailyTextLength(value) <= DAILY_TEXT_LIMIT &&
   !value.includes('\0');
 
+/** A post's text: with attachments it may be empty (2026-11-24), without them it may not. */
+export const validDailyBody = (value: unknown, withMedia: boolean): value is string =>
+  typeof value === 'string' &&
+  (withMedia || value.trim().length > 0) &&
+  dailyTextLength(value) <= DAILY_TEXT_LIMIT &&
+  !value.includes('\0');
+
+/** One attachment as `daily.json` keeps it; `relativePath` matches what `MediaRegistry` serves. */
+function validMedia(v: unknown): v is StoredDailyMedia {
+  if (!isObject(v) || typeof v.id !== 'string' || !/^[a-f0-9]{32}$/.test(v.id)) return false;
+  const path = /^media\/files\/[a-f0-9]{32}\/([a-f0-9]{32})\.(jpg|jpeg|png|mp4|mov)$/.exec(
+    String(v.relativePath),
+  );
+  const image = ['jpg', 'jpeg', 'png'].includes(path?.[2] ?? '');
+  return (
+    path !== null &&
+    path[1] === v.id &&
+    v.kind === (image ? 'image' : 'video') &&
+    typeof v.size === 'number' &&
+    Number.isSafeInteger(v.size) &&
+    v.size > 0 &&
+    v.size <= (image ? 8 * 1024 ** 2 : 1024 ** 3) &&
+    typeof v.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/.test(v.sha256) &&
+    typeof v.name === 'string' &&
+    v.name.length > 0 &&
+    v.name.length <= 255 &&
+    !/\p{Cc}/u.test(v.name)
+  );
+}
+/** The server's attachment list of a sent request, as `parseMedia` reads it back. */
+function validManifest(v: unknown, count: number): boolean {
+  try {
+    return parseMedia(v, 0).length === count;
+  } catch {
+    return false;
+  }
+}
+
 export const validDailyTranslation = (value: unknown): value is string =>
   typeof value === 'string' &&
   value.trim().length > 0 &&
@@ -122,7 +173,8 @@ export const validDailyTopic = (value: unknown): value is string =>
   dailyTopicValue(value) === value &&
   dailyTopicProblem(value) === null;
 
-function validRequest(v: unknown, postId: string): v is PublicationRequest {
+/** `media` is how many attachments the post had when it was sent; they cannot change meanwhile. */
+function validRequest(v: unknown, postId: string, media: number): v is PublicationRequest {
   return (
     isObject(v) &&
     uuid(v.requestId) &&
@@ -135,11 +187,10 @@ function validRequest(v: unknown, postId: string): v is PublicationRequest {
     timestamp(v.source.draftCreatedAt) &&
     v.source.draftRevision === 1 &&
     v.source.commentUpdatedAt === null &&
-    validDailyText(v.caption) &&
+    validDailyBody(v.caption, media > 0) &&
     (v.topic === undefined || validDailyTopic(v.topic)) &&
     v.comment === null &&
-    Array.isArray(v.media) &&
-    v.media.length === 0
+    validManifest(v.media, media)
   );
 }
 function validPersona(v: unknown): v is DailyPersona {
@@ -157,11 +208,19 @@ function validPersona(v: unknown): v is DailyPersona {
   );
 }
 function validPost(v: unknown): v is StoredDailyPost {
+  if (!isObject(v)) return false;
+  const media = v.media === undefined ? [] : v.media;
+  if (
+    !Array.isArray(media) ||
+    media.length > DAILY_MEDIA_LIMIT ||
+    !media.every(validMedia) ||
+    new Set(media.map((item) => item.id)).size !== media.length
+  )
+    return false;
   return (
-    isObject(v) &&
     uuid(v.id) &&
     uuid(v.personaId) &&
-    validDailyText(v.text) &&
+    validDailyBody(v.text, media.length > 0) &&
     (v.translation === undefined ||
       v.translation === null ||
       validDailyTranslation(v.translation)) &&
@@ -170,7 +229,7 @@ function validPost(v: unknown): v is StoredDailyPost {
     typeof v.sentBefore === 'boolean' &&
     (v.send === null ||
       (isObject(v.send) &&
-        validRequest(v.send.request, v.id) &&
+        validRequest(v.send.request, v.id, media.length) &&
         typeof v.send.confirmed === 'boolean' &&
         (v.send.sentAt === null || timestamp(v.send.sentAt)))) &&
     (v.published === null ||
@@ -214,7 +273,8 @@ function validAnswer(v: unknown): v is StoredDailyAnswer {
 }
 /** Checks the fields this version uses. Unknown fields are kept as they are. */
 export function validDailyFile(v: unknown): v is DailyFile {
-  if (!isObject(v) || v.version !== 1 || !Array.isArray(v.partitions)) return false;
+  if (!isObject(v) || (v.version !== 1 && v.version !== 2) || !Array.isArray(v.partitions))
+    return false;
   const scopes = new Set<string>();
   return v.partitions.every((p: unknown) => {
     if (
@@ -238,7 +298,10 @@ export function validDailyFile(v: unknown): v is DailyFile {
     if (scopes.has(scope)) return false;
     scopes.add(scope);
     const personas = new Set(p.personas.map((item) => item.id));
+    // One file belongs to one post, so removing a post's attachments never touches another's.
+    const media = p.posts.flatMap((item) => (item.media ?? []).map((file) => file.id));
     return (
+      new Set(media).size === media.length &&
       personas.size === p.personas.length &&
       new Set(p.personas.map((item) => item.accountId)).size === p.personas.length &&
       new Set(p.posts.map((item) => item.id)).size === p.posts.length &&
@@ -293,6 +356,15 @@ export class DailyStore {
     return value;
   }
   private async save(file: DailyFile): Promise<void> {
+    // Once 2, the file stays 2: a cancelled send of attachments is still on the server, and an
+    // older version would refuse it while reading that post's sends.
+    file.version =
+      file.version === 2 ||
+      file.partitions.some((partition) =>
+        partition.posts.some((post) => (post.media?.length ?? 0) > 0 || !post.text.trim()),
+      )
+        ? 2
+        : 1;
     if (!validDailyFile(file))
       throw new ViewError('daily_storage', '일상 자료를 저장하지 못했습니다.');
     const temporary = `${this.path}.${randomUUID()}.tmp`;
@@ -328,6 +400,21 @@ export class DailyStore {
   }
   read(scope: DailyScope): Promise<DailyPartition> {
     return this.serial(async () => DailyStore.partition(await this.load(), scope));
+  }
+  /**
+   * Like `read`, but null while there is no file at all: a PC being moved may have its work
+   * folder before `daily.json`, so nothing may be judged unused from an empty start.
+   */
+  readExisting(scope: DailyScope): Promise<DailyPartition | null> {
+    return this.serial(async () => {
+      try {
+        await stat(this.path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw unreadable();
+      }
+      return DailyStore.partition(await this.load(), scope);
+    });
   }
   /** `change` edits the partition in place. Nothing is saved when it throws. */
   update<T>(scope: DailyScope, change: (partition: DailyPartition) => T): Promise<T> {

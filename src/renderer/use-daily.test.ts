@@ -11,6 +11,7 @@ const view = (name: string, generatingPersonaId: string | null = null): DailyVie
   translatingPostId: null,
   translatingRepliesPostId: null,
   unsyncedPersonas: 0,
+  mediaReady: true,
 });
 const ok = (name: string): DailyResult => ({ status: 'ok', view: view(name), problem: null });
 function deferred<T>() {
@@ -108,6 +109,7 @@ describe('daily board requests', () => {
             text: 'Edited',
             translation,
             topic: null,
+            media: [],
             createdAt: '2026-11-17',
             state: 'draft',
             note: null,
@@ -158,6 +160,27 @@ describe('daily board requests', () => {
     });
     expect(api.translateDailyPost).toHaveBeenCalledExactlyOnceWith({ postId: 'post-1' });
     await settle();
+  });
+  it('sends the attachments in order with the dialog’s selection', async () => {
+    const { api, controller } = setup();
+    controller.setEnabled(true);
+    await settle();
+    await controller.addPost('p1', '', false, '', ['m2', 'm1'], 's1');
+    expect(api.addDailyPost).toHaveBeenLastCalledWith({
+      personaId: 'p1',
+      text: '',
+      fromKorean: false,
+      media: ['m2', 'm1'],
+      selectionId: 's1',
+    });
+    // An edit sends its list even when emptied; without new files there is no selection.
+    await controller.savePost('post-1', '본문', '', []);
+    expect(api.saveDailyPost).toHaveBeenLastCalledWith({
+      postId: 'post-1',
+      text: '본문',
+      topic: '',
+      media: [],
+    });
   });
   it('has a Korean draft written in the persona language as one long call', async () => {
     const { api, controller } = setup();

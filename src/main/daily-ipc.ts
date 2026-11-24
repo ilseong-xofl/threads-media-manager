@@ -1,5 +1,10 @@
 import { IPC } from '../shared/contracts';
-import type { DailyLinkResult, DailyRepliesResult, DailyResult } from '../shared/daily';
+import type {
+  DailyLinkResult,
+  DailyMediaResult,
+  DailyRepliesResult,
+  DailyResult,
+} from '../shared/daily';
 
 interface DailyActions {
   state(): Promise<DailyResult>;
@@ -20,6 +25,9 @@ interface DailyActions {
   deleteAnswer(input: unknown): Promise<DailyRepliesResult>;
   sendAnswers(input: unknown): Promise<DailyRepliesResult>;
   cancelAnswer(input: unknown): Promise<DailyRepliesResult>;
+  pickMedia(input: unknown): Promise<DailyMediaResult>;
+  addMedia(input: unknown): Promise<DailyMediaResult>;
+  discardMedia(input: unknown): Promise<void>;
 }
 
 /** Called only after the main frame and service-access checks. No arbitrary endpoint IPC. */
@@ -27,7 +35,7 @@ export function handleDailyRequest(
   channel: string,
   args: unknown[],
   daily: DailyActions,
-): Promise<DailyResult | DailyLinkResult> {
+): Promise<DailyResult | DailyLinkResult | DailyMediaResult | void> {
   if (channel === IPC.daily) {
     if (args.length) throw new Error('Unexpected arguments');
     return daily.state();
@@ -68,6 +76,12 @@ export function handleDailyRequest(
       return daily.sendAnswers(args[0]);
     case IPC.cancelDailyAnswer:
       return daily.cancelAnswer(args[0]);
+    case IPC.pickDailyMedia:
+      return daily.pickMedia(args[0]);
+    case IPC.addDailyMedia:
+      return daily.addMedia(args[0]);
+    case IPC.discardDailyMedia:
+      return daily.discardMedia(args[0]);
     default:
       throw new Error('Unsupported daily operation');
   }

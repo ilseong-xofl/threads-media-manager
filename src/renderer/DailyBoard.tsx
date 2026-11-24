@@ -1,7 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { DailyPersona, DailyPost, SaveDailyPersonaInput } from '../shared/daily';
+import type { Attachment } from '../shared/contracts';
+import type {
+  DailyMedia,
+  DailyPersona,
+  DailyPost,
+  DailyUpload,
+  SaveDailyPersonaInput,
+} from '../shared/daily';
 import type { ManagedThreadsAccountRow } from '../shared/managed-threads';
 import { Icon } from './Icon';
+import { MediaCarousel } from './MediaCarousel';
 import { DailyPersonaDialog } from './DailyPersonaDialog';
 import { DailyPostDialog } from './DailyPostDialog';
 import { DailyRepliesDialog } from './DailyRepliesDialog';
@@ -41,6 +49,7 @@ type Dialog =
   | { kind: 'cancel'; postId: string }
   | { kind: 'send'; postId: string }
   | { kind: 'replies'; postId: string }
+  | { kind: 'delete'; postId: string }
   | { kind: 'ments' };
 
 export function DailyBoard({
@@ -61,6 +70,8 @@ export function DailyBoard({
   const [columns, setColumns] = useState(1);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const board = useRef<HTMLDivElement>(null);
+  const [upload, setUpload] = useState<DailyUpload | null>(null);
+  useEffect(() => window.threadsMedia.onDailyUpload(setUpload), []);
   const { refresh } = daily;
   const { synchronize } = accounts;
   useEffect(() => {
@@ -92,7 +103,8 @@ export function DailyBoard({
     dialog?.kind === 'post' ||
     dialog?.kind === 'cancel' ||
     dialog?.kind === 'send' ||
-    dialog?.kind === 'replies'
+    dialog?.kind === 'replies' ||
+    dialog?.kind === 'delete'
       ? (posts.find((post) => post.id === dialog.postId) ?? null)
       : null;
   const postPersona = personas.find(
@@ -125,7 +137,10 @@ export function DailyBoard({
         post={dialogPost}
         persona={postPersona}
         busy={daily.busy}
-        onSave={(text, _fromKorean, topic) => daily.savePost(dialogPost.id, text, topic)}
+        mediaReady={daily.view.mediaReady}
+        onSave={(text, _fromKorean, topic, media, selectionId) =>
+          daily.savePost(dialogPost.id, text, topic, media, selectionId)
+        }
         onClose={closeDialog}
       />
     );
@@ -136,7 +151,10 @@ export function DailyBoard({
         persona={postPersona}
         busy={daily.busy}
         composing={daily.composing}
-        onSave={(text, fromKorean, topic) => daily.addPost(postPersona.id, text, fromKorean, topic)}
+        mediaReady={daily.view.mediaReady}
+        onSave={(text, fromKorean, topic, media, selectionId) =>
+          daily.addPost(postPersona.id, text, fromKorean, topic, media, selectionId)
+        }
         onClose={closeDialog}
       />
     );
@@ -186,7 +204,8 @@ export function DailyBoard({
               {row ? dailyAccountName(row) : '계정 없음'} ({postPersona.name})
             </strong>
           </p>
-          <p className="daily-send-text">{dialogPost.text}</p>
+          {dialogPost.text && <p className="daily-send-text">{dialogPost.text}</p>}
+          {dialogPost.media.length > 0 && <p>첨부 {dialogPost.media.length}개</p>}
           <p>
             이 글을 휴대폰 대기로 보냅니다. 등록 기한은 7일이며, 실제 등록은 이 계정의 휴대폰에서
             합니다.
@@ -202,7 +221,11 @@ export function DailyBoard({
             disabled={daily.busy}
             onClick={() => void daily.send(dialogPost.id).then(closeDialog)}
           >
-            {daily.busy ? '보내는 중…' : '이 계정으로 보내기'}
+            {upload?.postId === dialogPost.id
+              ? `첨부 올리는 중 ${upload.done}/${upload.total}`
+              : daily.busy
+                ? '보내는 중…'
+                : '이 계정으로 보내기'}
           </button>
         </div>
       </ManagedThreadsActionDialog>
@@ -218,6 +241,34 @@ export function DailyBoard({
         sendBlock={dailySendBlock(postPersona, accounts.accounts, accounts.loaded)}
         onClose={closeReplies}
       />
+    );
+  } else if (dialog?.kind === 'delete' && dialogPost?.state === 'published') {
+    dialogElement = (
+      <ManagedThreadsActionDialog
+        title="등록 완료 글 삭제"
+        busy={daily.busy}
+        confirmation
+        onClose={closeDialog}
+      >
+        <div className="managed-threads-confirm-copy">
+          <p>
+            이 PC에서 등록 완료 글을 지웁니다. Threads에 올라간 글과 휴대폰의 기록은 그대로입니다.
+          </p>
+        </div>
+        <div className="threads-actions managed-threads-dialog-actions">
+          <button type="button" disabled={daily.busy} onClick={closeDialog}>
+            돌아가기
+          </button>
+          <button
+            type="button"
+            className="managed-threads-danger-primary"
+            disabled={daily.busy}
+            onClick={() => void daily.deletePost(dialogPost.id).then(closeDialog)}
+          >
+            {daily.busy ? '삭제하는 중…' : '삭제'}
+          </button>
+        </div>
+      </ManagedThreadsActionDialog>
     );
   } else if (dialog?.kind === 'ments') {
     dialogElement = <MentManagerModal onClose={closeDialog} />;
@@ -355,12 +406,14 @@ export function DailyBoard({
                 daily={daily}
                 rows={accounts.accounts}
                 accountsLoaded={accounts.loaded}
+                upload={upload}
                 onSettings={() => setDialog({ kind: 'persona', personaId: persona.id })}
                 onWrite={() => setDialog({ kind: 'write', personaId: persona.id })}
                 onEdit={(post) => setDialog({ kind: 'post', postId: post.id })}
                 onSend={(post) => setDialog({ kind: 'send', postId: post.id })}
                 onCancel={cancelSend}
                 onReplies={openReplies}
+                onDelete={(post) => setDialog({ kind: 'delete', postId: post.id })}
               />
             ))}
           </div>
@@ -383,6 +436,57 @@ export function DailyBoard({
       </div>
       {dialogElement}
     </>
+  );
+}
+
+/** A daily attachment in the shape the card carousel takes; a file not found shows as such. */
+function dailyAttachments(media: DailyMedia[]): Attachment[] {
+  return media.map((file, index) => ({
+    ordinal: index + 1,
+    kind: file.kind,
+    addressStatus: '',
+    observedAt: null,
+    status: file.url ? 'saved' : 'unavailable',
+    reason: file.url ? null : 'daily_media_missing',
+    mediaId: file.id,
+    localUrl: file.url,
+  }));
+}
+/**
+ * The attachments at the top of a card, when the post has any. A draft's open 초안 수정 like its
+ * body, and its videos play there; cards with nothing to open play videos in place.
+ */
+function DailyCardMedia({
+  media,
+  onOpen,
+  openDisabled = false,
+}: {
+  media: DailyMedia[];
+  onOpen?(): void;
+  openDisabled?: boolean;
+}) {
+  const [ordinal, setOrdinal] = useState(1);
+  if (!media.length) return null;
+  return (
+    <MediaCarousel
+      items={dailyAttachments(media)}
+      ordinal={ordinal}
+      onChange={setOrdinal}
+      label="첨부 이미지·영상"
+      onOpen={onOpen}
+      openLabel="초안 수정"
+      openDisabled={openDisabled}
+      controls={!onOpen}
+      missing={{ label: '파일 없음', detail: '작업 폴더에서 이 첨부 파일을 찾지 못했습니다.' }}
+    />
+  );
+}
+/** Where a post's send button is while its attachments go up. */
+function DailyUploading({ upload }: { upload: DailyUpload }) {
+  return (
+    <span className="daily-card-upload" role="status">
+      첨부 올리는 중 {upload.done}/{upload.total}
+    </span>
   );
 }
 
@@ -439,24 +543,28 @@ function PersonaColumn({
   daily,
   rows,
   accountsLoaded,
+  upload,
   onSettings,
   onWrite,
   onEdit,
   onSend,
   onCancel,
   onReplies,
+  onDelete,
 }: {
   persona: DailyPersona;
   color: string;
   daily: DailyState;
   rows: ManagedThreadsAccountRow[];
   accountsLoaded: boolean;
+  upload: DailyUpload | null;
   onSettings(): void;
   onWrite(): void;
   onEdit(post: DailyPost): void;
   onSend(post: DailyPost): void;
   onCancel(post: DailyPost): void;
   onReplies(post: DailyPost): void;
+  onDelete(post: DailyPost): void;
 }) {
   const groups = groupDailyPosts(daily.view.posts, persona.id);
   const generating = daily.generatingPersonaId === persona.id;
@@ -582,6 +690,11 @@ function PersonaColumn({
                   ))}
                 {groups.drafts.map((post) => (
                   <article key={post.id} className="daily-card">
+                    <DailyCardMedia
+                      media={post.media}
+                      onOpen={() => onEdit(post)}
+                      openDisabled={daily.busy || writing}
+                    />
                     <button
                       type="button"
                       className="daily-card-text"
@@ -589,14 +702,15 @@ function PersonaColumn({
                       disabled={daily.busy || writing}
                       onClick={() => onEdit(post)}
                     >
-                      {post.text}
+                      {post.text || <span className="daily-card-no-text">본문 없음</span>}
                     </button>
                     {post.translation ? (
                       <p className="daily-card-translation">{post.translation}</p>
                     ) : daily.translatingPostId === post.id ? (
                       <p className="daily-card-translation">한국어 뜻 만드는 중…</p>
                     ) : (
-                      persona.language !== 'ko' && (
+                      persona.language !== 'ko' &&
+                      post.text && (
                         <button
                           type="button"
                           className="daily-card-translate"
@@ -620,15 +734,19 @@ function PersonaColumn({
                         >
                           <Icon name="trash" />
                         </button>
-                        <button
-                          type="button"
-                          className="primary daily-card-send"
-                          disabled={daily.busy || !!sendBlock}
-                          title={sendBlock ?? undefined}
-                          onClick={() => onSend(post)}
-                        >
-                          모바일로 보내기
-                        </button>
+                        {upload?.postId === post.id ? (
+                          <DailyUploading upload={upload} />
+                        ) : (
+                          <button
+                            type="button"
+                            className="primary daily-card-send"
+                            disabled={daily.busy || !!sendBlock}
+                            title={sendBlock ?? undefined}
+                            onClick={() => onSend(post)}
+                          >
+                            모바일로 보내기
+                          </button>
+                        )}
                       </div>
                     </div>
                   </article>
@@ -642,7 +760,8 @@ function PersonaColumn({
                   const note = dailyNoteLabel(post.note);
                   return (
                     <article key={post.id} className="daily-card is-waiting">
-                      <p className="daily-card-body">{post.text}</p>
+                      <DailyCardMedia media={post.media} />
+                      {post.text && <p className="daily-card-body">{post.text}</p>}
                       {post.translation && (
                         <p className="daily-card-translation">{post.translation}</p>
                       )}
@@ -655,16 +774,20 @@ function PersonaColumn({
                         <button type="button" disabled={daily.busy} onClick={() => onCancel(post)}>
                           보내기 취소
                         </button>
-                        {post.note === 'unconfirmed' && (
-                          <button
-                            type="button"
-                            className="primary daily-card-send"
-                            disabled={daily.busy || !!sendBlock}
-                            title={sendBlock ?? undefined}
-                            onClick={() => void daily.send(post.id)}
-                          >
-                            다시 보내기
-                          </button>
+                        {upload?.postId === post.id ? (
+                          <DailyUploading upload={upload} />
+                        ) : (
+                          post.note === 'unconfirmed' && (
+                            <button
+                              type="button"
+                              className="primary daily-card-send"
+                              disabled={daily.busy || !!sendBlock}
+                              title={sendBlock ?? undefined}
+                              onClick={() => void daily.send(post.id)}
+                            >
+                              다시 보내기
+                            </button>
+                          )
                         )}
                       </div>
                     </article>
@@ -676,41 +799,55 @@ function PersonaColumn({
               <>
                 {groups.published.map((post) => (
                   <article key={post.id} className="daily-card is-published">
-                    <p className="daily-card-body">{post.text}</p>
+                    <DailyCardMedia media={post.media} />
+                    {post.text && <p className="daily-card-body">{post.text}</p>}
                     {post.translation && (
                       <p className="daily-card-translation">{post.translation}</p>
                     )}
                     {post.topic && <DailyTopic topic={post.topic} />}
-                    <div className="daily-card-meta">
-                      <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
-                      {post.replies &&
-                        (post.replies.count > 0 ? (
-                          <>
-                            <span className="daily-card-replies-time">
-                              {dailyTime(post.replies.fetchedAt)} 조회
+                    <div className="daily-card-footer">
+                      <div className="daily-card-meta">
+                        <span>{post.sentAt ? `${dailyDay(post.sentAt)} 보냄` : '등록 완료'}</span>
+                        {post.replies &&
+                          (post.replies.count > 0 ? (
+                            <>
+                              <span className="daily-card-replies-time">
+                                {dailyTime(post.replies.fetchedAt)} 조회
+                              </span>
+                              {/* New replies take the badge's place until the window is opened. */}
+                              <button
+                                type="button"
+                                className={`daily-card-replies ${post.replies.fresh > 0 ? 'is-fresh' : ''}`}
+                                onClick={() => onReplies(post)}
+                              >
+                                {post.replies.fresh > 0
+                                  ? `새 댓글 ${post.replies.fresh}`
+                                  : `댓글 ${post.replies.count}`}
+                              </button>
+                            </>
+                          ) : (
+                            <span className="daily-card-replies-none">
+                              댓글 없음 · {dailyTime(post.replies.fetchedAt)} 조회
                             </span>
-                            {/* New replies take the badge's place until the window is opened. */}
-                            <button
-                              type="button"
-                              className={`daily-card-replies ${post.replies.fresh > 0 ? 'is-fresh' : ''}`}
-                              onClick={() => onReplies(post)}
-                            >
-                              {post.replies.fresh > 0
-                                ? `새 댓글 ${post.replies.fresh}`
-                                : `댓글 ${post.replies.count}`}
-                            </button>
-                          </>
-                        ) : (
-                          <span className="daily-card-replies-none">
-                            댓글 없음 · {dailyTime(post.replies.fetchedAt)} 조회
-                          </span>
-                        ))}
-                      {post.replies &&
-                        dailyAnswerBadges(post.replies).map((badge) => (
-                          <span key={badge} className="daily-card-note">
-                            {badge}
-                          </span>
-                        ))}
+                          ))}
+                        {post.replies &&
+                          dailyAnswerBadges(post.replies).map((badge) => (
+                            <span key={badge} className="daily-card-note">
+                              {badge}
+                            </span>
+                          ))}
+                      </div>
+                      <div className="daily-card-actions">
+                        <button
+                          type="button"
+                          className="daily-icon-button"
+                          aria-label="등록 완료 글 삭제"
+                          disabled={daily.busy}
+                          onClick={() => onDelete(post)}
+                        >
+                          <Icon name="trash" />
+                        </button>
+                      </div>
                     </div>
                   </article>
                 ))}

@@ -14,19 +14,27 @@ function Media({
   item,
   detail,
   videoRef,
+  missing,
+  controls = false,
 }: {
   item: Attachment;
   detail: boolean;
   videoRef?: Ref<HTMLVideoElement>;
+  missing?: { label: string; detail: string };
+  controls?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   if (!item.localUrl || failed) {
     return (
       <div className="media-placeholder">
         <Icon name={item.kind === 'video' ? 'play' : 'image'} />
-        <strong>{failed ? '미리보기를 열 수 없습니다' : attachmentLabel(item)}</strong>
+        <strong>
+          {failed ? '미리보기를 열 수 없습니다' : (missing?.label ?? attachmentLabel(item))}
+        </strong>
         <span>
-          {failed ? '저장된 파일의 상태는 유지됩니다.' : '파일을 다운로드하면 여기에 표시됩니다.'}
+          {failed
+            ? '저장된 파일의 상태는 유지됩니다.'
+            : (missing?.detail ?? '파일을 다운로드하면 여기에 표시됩니다.')}
         </span>
       </div>
     );
@@ -46,7 +54,7 @@ function Media({
         ref={videoRef}
         crossOrigin="anonymous"
         src={item.localUrl}
-        controls={detail}
+        controls={detail || controls}
         autoPlay={detail}
         muted={!detail}
         playsInline
@@ -55,7 +63,7 @@ function Media({
         aria-label={`${item.ordinal}번째 저장 영상`}
         onError={() => setFailed(true)}
       />
-      {!detail && (
+      {!detail && !controls && (
         <span className="play-indicator">
           <Icon name="play" />
         </span>
@@ -78,6 +86,10 @@ export function MediaCarousel({
   includeEditsInType = false,
   overlay,
   overlayDescription,
+  missing,
+  controls = false,
+  openLabel,
+  openDisabled = false,
 }: {
   items: Attachment[];
   ordinal?: number;
@@ -92,6 +104,14 @@ export function MediaCarousel({
   includeEditsInType?: boolean;
   overlay?: ReactNode;
   overlayDescription?: string;
+  /** What a file that is not on this PC shows; the collection's download hint by default. */
+  missing?: { label: string; detail: string };
+  /** Video controls outside the detail view, for cards that open no detail (daily posts). */
+  controls?: boolean;
+  /** The name of the button `onOpen` puts on the media; `${label} 상세 보기` by default. */
+  openLabel?: string;
+  /** Keeps that button from opening while its card cannot act. */
+  openDisabled?: boolean;
 }) {
   const found = items.findIndex((item) => item.ordinal === ordinal);
   const index = found < 0 ? 0 : found;
@@ -114,6 +134,8 @@ export function MediaCarousel({
       item={item}
       detail={detail}
       videoRef={videoRef}
+      missing={missing}
+      controls={controls}
     />
   ) : (
     <div className="media-placeholder">
@@ -165,8 +187,9 @@ export function MediaCarousel({
           <button
             className="media-open"
             type="button"
-            aria-label={`${label} 상세 보기`}
+            aria-label={openLabel ?? `${label} 상세 보기`}
             title={overlayDescription}
+            disabled={openDisabled}
             onClick={() => {
               if (Date.now() >= swipeUntil.current) onOpen();
             }}

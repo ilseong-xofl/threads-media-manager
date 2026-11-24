@@ -9,6 +9,7 @@ it('allows only this Forge server and registered-shape media URLs', () => {
   expect(isLocalRequest('ws://localhost:3120/ws', entry)).toBe(true);
   expect(isLocalRequest(`threads-media://file/${'a'.repeat(32)}`, entry)).toBe(true);
   expect(isLocalRequest(`threads-import://file/${'a'.repeat(32)}`, entry)).toBe(true);
+  expect(isLocalRequest(`threads-daily://file/${'a'.repeat(32)}`, entry)).toBe(true);
   for (const url of [
     'https://cdn.example.test/a.jpg',
     'https://fonts.googleapis.com/css',
@@ -20,6 +21,9 @@ it('allows only this Forge server and registered-shape media URLs', () => {
     `threads-import://file/${'a'.repeat(32)}/other`,
     'threads-import://file/../../etc/passwd',
     `threads-import://ai/${'a'.repeat(32)}/1`,
+    `threads-daily://file/${'a'.repeat(32)}?path=/secret`,
+    `threads-daily://file/${'a'.repeat(32)}/other`,
+    'threads-daily://file/../../etc/passwd',
   ]) {
     expect(isLocalRequest(url, entry)).toBe(false);
   }

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { AUTH_STATE_CHANGED, type AppAuthState } from '../shared/service-auth';
-import { IPC, type ThreadsMediaApi } from '../shared/contracts';
+import { DAILY_UPLOAD_PROGRESS, IPC, type ThreadsMediaApi } from '../shared/contracts';
+import { DAILY_MEDIA_LIMIT, type DailyUpload } from '../shared/daily';
 const api: ThreadsMediaApi = {
   getAuthState: () => ipcRenderer.invoke(IPC.getAuthState),
   getManagedThreadsAccounts: () => ipcRenderer.invoke(IPC.managedThreadsAccounts),
@@ -40,6 +41,33 @@ const api: ThreadsMediaApi = {
   deleteDailyAnswer: (input) => ipcRenderer.invoke(IPC.deleteDailyAnswer, input),
   sendDailyAnswers: (input) => ipcRenderer.invoke(IPC.sendDailyAnswers, input),
   cancelDailyAnswer: (input) => ipcRenderer.invoke(IPC.cancelDailyAnswer, input),
+  pickDailyMedia: (input) => ipcRenderer.invoke(IPC.pickDailyMedia, input),
+  addDailyMedia: async ({ files, ...input }) => {
+    try {
+      if (!Array.isArray(files) || files.length < 1 || files.length > DAILY_MEDIA_LIMIT)
+        throw new Error('Invalid drop');
+      // Only Electron can extract the native path of a real dropped File (as for 등록).
+      const paths = files.map((file) => webUtils.getPathForFile(file));
+      if (paths.some((path) => !path)) throw new Error('No native file');
+      return await ipcRenderer.invoke(IPC.addDailyMedia, { ...input, paths });
+    } catch {
+      return {
+        status: 'error',
+        selectionId: null,
+        media: [],
+        problem: {
+          code: 'daily_media_drop',
+          message: `내 컴퓨터의 이미지·영상 파일을 최대 ${DAILY_MEDIA_LIMIT}개까지 끌어다 놓으세요.`,
+        },
+      };
+    }
+  },
+  discardDailyMedia: (input) => ipcRenderer.invoke(IPC.discardDailyMedia, input),
+  onDailyUpload: (listener) => {
+    const callback = (_event: unknown, upload: DailyUpload | null) => listener(upload);
+    ipcRenderer.on(DAILY_UPLOAD_PROGRESS, callback);
+    return () => ipcRenderer.removeListener(DAILY_UPLOAD_PROGRESS, callback);
+  },
   getMents: () => ipcRenderer.invoke(IPC.ments),
   saveMent: (input) => ipcRenderer.invoke(IPC.saveMent, input),
   deleteMent: (input) => ipcRenderer.invoke(IPC.deleteMent, input),

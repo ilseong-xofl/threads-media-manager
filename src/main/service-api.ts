@@ -93,6 +93,7 @@ export class ServiceApiClient {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     token?: string | null,
     body?: unknown,
+    timeoutMs = 15_000,
   ): Promise<Response> {
     if (!this.baseUrl)
       throw new ServiceApiError(
@@ -101,7 +102,7 @@ export class ServiceApiClient {
         503,
       );
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await this.requestFetch(`${this.baseUrl}${path}`, {
         method,
@@ -335,6 +336,8 @@ export class ServiceApiClient {
       | 'comment',
     id?: string,
     body?: unknown,
+    /** A longer wait for a call the server takes long over, like completing many files. */
+    options?: { timeoutMs?: number },
   ): Promise<unknown> {
     this.assertBusinessContext(context);
     const saved = this.businessContexts.get(context)!;
@@ -391,7 +394,7 @@ export class ServiceApiClient {
         body = undefined;
       }
     }
-    const response = await this.request(path, method, saved.token, body);
+    const response = await this.request(path, method, saved.token, body, options?.timeoutMs);
     this.assertBusinessContext(context);
     if (!response.ok) {
       if (response.status === 401) {

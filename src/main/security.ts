@@ -16,6 +16,8 @@ export function isLocalRequest(url: string, entry: string): boolean {
       return /^threads-media:\/\/(?:file\/[a-f0-9]{32}|ai\/[a-f0-9]{32}\/[12])$/.test(url);
     if (target.protocol === 'threads-import:')
       return /^threads-import:\/\/file\/[a-f0-9]{32}$/.test(url);
+    if (target.protocol === 'threads-daily:')
+      return /^threads-daily:\/\/file\/[a-f0-9]{32}$/.test(url);
     if (page.protocol === 'file:') {
       const targetPath = localFilePath(url);
       const entryPath = localFilePath(entry);

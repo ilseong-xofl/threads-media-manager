@@ -165,6 +165,31 @@ export class MediaRegistry {
     }
     this.files = next;
   }
+  /**
+   * Like `adopt` without reading the bytes: records each file's stat signature only, so the
+   * stored `sha256` is trusted until `copyForUpload` checks it. Files that cannot be opened
+   * (missing, invalid path) are left out instead of failing the rest. Replaces every earlier
+   * registration and returns the registered ids in order.
+   */
+  async register(root: string, files: readonly LocalFile[]): Promise<string[]> {
+    const next = new Map<string, Registration>();
+    for (const { id, relativePath, size, sha256, kind } of files) {
+      if (next.has(id)) continue;
+      const file = { id, relativePath, size, sha256, kind };
+      try {
+        const handle = await openLocal(root, file, this.includeAI);
+        try {
+          next.set(id, { ...file, root, stamp: signature(await handle.stat()) });
+        } finally {
+          await handle.close();
+        }
+      } catch {
+        /* Missing or invalid: not registered. */
+      }
+    }
+    this.files = next;
+    return [...next.keys()];
+  }
   async respond(request: Request): Promise<Response> {
     if (!['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 405 });
     const match = /^threads-media:\/\/file\/([a-f0-9]{32})$/.exec(request.url);

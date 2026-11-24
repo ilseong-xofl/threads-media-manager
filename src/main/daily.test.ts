@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,13 +9,18 @@ import type {
   DailyRepliesResult,
   DailyReplyThread,
   DailyResult,
+  DailyUpload,
 } from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
 import { DailyController, dailyReplyBatch } from './daily';
+import type { StoredDailyMedia } from './daily-media';
 import { DAILY_FILE_NAME, DailyStore } from './daily-store';
+import type { MediaRegistry } from './media';
 import type { PublicationRequest } from './mobile-publication-data';
+import type { uploadPublicationFile } from './publication-s3-upload';
 import { ServiceApiError, type ServiceApiClient } from './service-api';
+import type { ThreadsUploadFile } from './threads-media';
 
 interface ServerAnswer {
   id: string;
@@ -63,6 +68,8 @@ async function setup() {
     hold: null as Promise<void> | null,
     /** The reply routes: 'old' as a build without them, 'migration' as a missing table. */
     replies: 'up' as 'up' | 'down' | 'old' | 'migration' | 'auth',
+    /** The server's file upload (2026-11-24): off for every call, or only when completing. */
+    storage: 'on' as 'on' | 'off' | 'off-at-complete',
   };
   /** The server's reply summary and the replies of each publication. */
   const summary: { postKey: string; publicationId: string; fetchedAt: string; count: number }[] =
@@ -205,18 +212,22 @@ async function setup() {
         const request = body as PublicationRequest;
         let row = rows.find((item) => item.requestId === request.requestId);
         if (!row) {
+          // The server looks for the request first and only then for its storage.
+          if (request.media.length && server.storage === 'off')
+            throw new ServiceApiError('저장소가 없습니다.', 'STORAGE_NOT_CONFIGURED', 503);
+          const files = request.media.length > 0;
           row = {
             id: randomUUID(),
             requestId: request.requestId,
             version: 1,
             accountId: request.accountId,
             source: request.source,
-            status: 'ready',
+            status: files ? 'uploading' : 'ready',
             caption: request.caption,
             comment: null,
-            media: [],
-            sentAt: '2026-11-17T01:00:00.000Z',
-            deadlineAt: '2026-11-24T01:00:00.000Z',
+            media: structuredClone(request.media),
+            sentAt: files ? null : '2026-11-17T01:00:00.000Z',
+            deadlineAt: files ? null : '2026-11-24T01:00:00.000Z',
             rootStatus: 'queued',
             commentStatus: 'not_required',
           };
@@ -224,6 +235,40 @@ async function setup() {
         }
         // A server that keeps topics returns the key on every publication (2026-11-23).
         return { publication: { ...row, topic: request.topic ?? null } };
+      }
+      if (operation === 'upload-urls') {
+        const row = rows.find((item) => item.id === id)!;
+        if (server.storage !== 'on')
+          throw new ServiceApiError('저장소가 없습니다.', 'STORAGE_NOT_CONFIGURED', 503);
+        const { mediaIds } = body as { mediaIds: string[] };
+        return {
+          uploads: row.media
+            .filter((m) => mediaIds.includes(m.id))
+            .map((m) => ({
+              mediaId: m.id,
+              method: 'PUT',
+              url: `https://test-bucket.s3.ap-northeast-2.amazonaws.com/staging/${m.id}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=synthetic`,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              headers: {
+                'content-type': m.contentType,
+                'content-length': String(m.size),
+                'x-amz-checksum-sha256': Buffer.from(m.sha256, 'hex').toString('base64'),
+                'if-none-match': '*',
+              },
+            })),
+        };
+      }
+      if (operation === 'complete') {
+        const row = rows.find((item) => item.id === id)!;
+        if (server.storage !== 'on')
+          throw new ServiceApiError('저장소가 없습니다.', 'STORAGE_NOT_CONFIGURED', 503);
+        Object.assign(row, {
+          status: 'ready',
+          version: row.version + 1,
+          sentAt: '2026-11-17T01:00:00.000Z',
+          deadlineAt: '2026-11-24T01:00:00.000Z',
+        });
+        return { publication: row };
       }
       if (operation === 'recall') {
         const row = rows.find((item) => item.id === id)!;
@@ -251,6 +296,7 @@ async function setup() {
   const client = {
     getBusinessContext: vi.fn(async () => context),
     assertBusinessContext: vi.fn(),
+    businessSignal: vi.fn(() => new AbortController().signal),
     managedThreadsRequest: vi.fn(async () => ({ accounts })),
     publicationRequest,
     personaRequest,
@@ -259,6 +305,7 @@ async function setup() {
     ServiceApiClient,
     | 'getBusinessContext'
     | 'assertBusinessContext'
+    | 'businessSignal'
     | 'publicationRequest'
     | 'managedThreadsRequest'
     | 'personaRequest'
@@ -288,6 +335,89 @@ async function setup() {
     async (_persona, korean) => `EN reply: ${korean}`,
   );
   const openExternal = vi.fn<(url: string) => Promise<void>>(async () => {});
+  /**
+   * The attachment library of this PC (2026-11-24), kept in memory: what dialogs staged, what
+   * saves kept and removed, and the bytes the upload preparation would copy now.
+   */
+  const library = {
+    known: new Map<string, StoredDailyMedia>(),
+    staged: new Map<string, Map<string, StoredDailyMedia>>(),
+    commits: [] as { selectionId: string; kept: string[] }[],
+    removed: [] as string[],
+    missing: new Set<string>(),
+    bytes: new Map<string, string>(),
+    /** A work folder is set. */
+    ready: true,
+  };
+  /** Files a post dialog added, as one selection. */
+  const stage = (...names: string[]) => {
+    const selectionId = randomUUID().replaceAll('-', '');
+    const files = names.map((name): StoredDailyMedia => {
+      const id = randomUUID().replaceAll('-', '');
+      const kind = name.endsWith('.mp4') ? 'video' : 'image';
+      const file = {
+        id,
+        kind,
+        relativePath: `media/files/${selectionId}/${id}.${kind === 'video' ? 'mp4' : 'png'}`,
+        size: 10,
+        sha256: 'a'.repeat(64),
+        name,
+      } as const;
+      library.known.set(id, file);
+      return file;
+    });
+    library.staged.set(selectionId, new Map(files.map((file) => [file.id, file])));
+    return { selectionId, ids: files.map((file) => file.id) };
+  };
+  const media = {
+    ready: () => library.ready,
+    pick: vi.fn(),
+    add: vi.fn(),
+    discard: vi.fn(async () => {}),
+    staged: (_scope: unknown, selectionId: string) => library.staged.get(selectionId) ?? null,
+    commit: vi.fn(async (_scope: unknown, selectionId: string, kept: ReadonlySet<string>) => {
+      library.commits.push({ selectionId, kept: [...kept] });
+      library.staged.delete(selectionId);
+    }),
+    track: vi.fn(
+      async (_scope: unknown, files: readonly StoredDailyMedia[]) =>
+        new Set(files.map((file) => file.id).filter((id) => !library.missing.has(id))),
+    ),
+    url: (id: string) => `threads-daily://file/${id}`,
+    uploadSource: () => ({ registry: {} as MediaRegistry, root: '/work/daily-media/part' }),
+    remove: vi.fn(async (_scope: unknown, files: readonly StoredDailyMedia[]) => {
+      library.removed.push(...files.map((file) => file.id));
+    }),
+    sweep: vi.fn(async () => {}),
+    reset: vi.fn(),
+  };
+  const prepareUpload = vi.fn(async (_source: unknown, ids: string[], directory: string) => {
+    const prepared: ThreadsUploadFile[] = [];
+    for (const id of ids) {
+      const file = library.known.get(id)!;
+      const content = library.bytes.get(id) ?? `bytes of ${id}`;
+      const extension = file.kind === 'video' ? 'mp4' : 'png';
+      const path = join(directory, `${id}.${extension}`);
+      await writeFile(path, content);
+      prepared.push({
+        path,
+        size: Buffer.byteLength(content),
+        contentType: file.kind === 'video' ? 'video/mp4' : 'image/png',
+        extension,
+        kind: file.kind,
+        mediaId: id,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      });
+    }
+    return prepared;
+  });
+  const workDirectory = vi.fn(async (requestId: string) => {
+    const directory = join(userData, 'outbox', requestId);
+    await mkdir(directory, { recursive: true });
+    return directory;
+  });
+  const upload = vi.fn<typeof uploadPublicationFile>(async () => {});
+  const onUpload = vi.fn<(progress: DailyUpload | null) => void>();
   let tick = 0;
   const daily = new DailyController({
     client,
@@ -300,6 +430,11 @@ async function setup() {
     composeAnswer,
     openExternal,
     now: () => new Date(Date.UTC(2026, 10, 17, 0, 0, tick++)),
+    media,
+    prepareUpload,
+    workDirectory,
+    upload,
+    onUpload,
   });
   const ok = (result: DailyResult) => {
     expect(result.problem).toBeNull();
@@ -339,6 +474,13 @@ async function setup() {
     answerFaults,
     beforeAnswer,
     composeAnswer,
+    library,
+    stage,
+    media,
+    prepareUpload,
+    workDirectory,
+    upload,
+    onUpload,
   };
 }
 
@@ -1920,5 +2062,384 @@ describe('daily storage boundaries', () => {
       await writeFile(path, JSON.stringify(file));
       expect((await daily.state()).problem?.code).toBe('daily_storage');
     }
+  });
+});
+
+describe('attachments of daily posts (2026-11-24)', () => {
+  const scope = { service: 'https://service.test', ownerId: 'employee-a' };
+  const version = async (userData: string) =>
+    JSON.parse(await readFile(join(userData, DAILY_FILE_NAME), 'utf8')).version;
+  const calls = (mock: { mock: { calls: unknown[][] } }, operation: string) =>
+    mock.mock.calls.filter((call) => call[1] === operation);
+
+  it('adds a post of attachments without text and marks the file for newer versions only', async () => {
+    const { daily, ok, persona, stage, library, userData } = await setup();
+    const mom = await persona();
+    const { selectionId, ids } = stage('a.png', 'b.png', 'c.mp4');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '  ',
+        fromKorean: false,
+        media: [ids[2], ids[0]],
+        selectionId,
+      }),
+    ).posts[0];
+    expect(post.text).toBe('');
+    expect(post.media).toEqual([
+      { id: ids[2], kind: 'video', name: 'c.mp4', url: `threads-daily://file/${ids[2]}` },
+      { id: ids[0], kind: 'image', name: 'a.png', url: `threads-daily://file/${ids[0]}` },
+    ]);
+    // The dialog's other file goes; the post keeps the two it chose.
+    expect(library.commits).toEqual([{ selectionId, kept: [ids[2], ids[0]] }]);
+    expect(await version(userData)).toBe(2);
+    // Without attachments the text is required as before; unknown files are refused.
+    expect(
+      (await daily.addPost({ personaId: mom.id, text: ' ', fromKorean: false })).problem?.code,
+    ).toBe('daily_text');
+    expect(
+      (
+        await daily.addPost({
+          personaId: mom.id,
+          text: '글',
+          fromKorean: false,
+          media: ['f'.repeat(32)],
+          selectionId,
+        })
+      ).problem?.code,
+    ).toBe('daily_media');
+    // A file that is gone is shown as such.
+    library.missing.add(ids[0]);
+    expect(ok(await daily.state()).posts[0].media[1].url).toBeNull();
+  });
+
+  it('edits a draft’s attachments and deletes the files it no longer has after saving', async () => {
+    const { daily, ok, persona, stage, library } = await setup();
+    const mom = await persona();
+    const first = stage('a.png', 'b.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '사진 두 장',
+        fromKorean: false,
+        media: first.ids,
+        selectionId: first.selectionId,
+      }),
+    ).posts[0];
+    const second = stage('c.png');
+    const saved = ok(
+      await daily.savePost({
+        postId: post.id,
+        text: '사진 두 장',
+        media: [first.ids[1], second.ids[0]],
+        selectionId: second.selectionId,
+      }),
+    ).posts[0];
+    expect(saved.media.map((file) => file.id)).toEqual([first.ids[1], second.ids[0]]);
+    expect(library.removed).toEqual([first.ids[0]]);
+    // Leaving `media` out keeps them; taking all away needs text again.
+    expect(
+      ok(await daily.savePost({ postId: post.id, text: '본문만 고침' })).posts[0].media,
+    ).toHaveLength(2);
+    expect((await daily.savePost({ postId: post.id, text: '', media: [] })).problem?.code).toBe(
+      'daily_text',
+    );
+    expect(library.removed).toEqual([first.ids[0]]);
+  });
+
+  it('uploads one file per fresh address and completes the post', async () => {
+    const {
+      daily,
+      ok,
+      persona,
+      stage,
+      creates,
+      publicationRequest,
+      upload,
+      onUpload,
+      workDirectory,
+    } = await setup();
+    const mom = await persona();
+    const { selectionId, ids } = stage('a.png', 'b.mp4');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '',
+        fromKorean: false,
+        media: ids,
+        selectionId,
+        topic: 'Mom Threads',
+      }),
+    ).posts[0];
+    const sent = ok(await daily.send({ postId: post.id })).posts[0];
+    expect(sent.state).toBe('waiting');
+    const [request] = creates() as PublicationRequest[];
+    // The server gets its own ids; the order and the bytes are the post's.
+    expect(request.media.map((m) => [m.ordinal, m.kind, m.contentType])).toEqual([
+      [0, 'image', 'image/png'],
+      [1, 'video', 'video/mp4'],
+    ]);
+    expect(request.media.every((m) => !ids.includes(m.id))).toBe(true);
+    expect(request.media[0].sha256).toBe(
+      createHash('sha256').update(`bytes of ${ids[0]}`).digest('hex'),
+    );
+    expect(calls(publicationRequest, 'upload-urls').map((call) => call[3])).toEqual([
+      { mediaIds: [request.media[0].id] },
+      { mediaIds: [request.media[1].id] },
+    ]);
+    expect(upload.mock.calls.map((call) => call[1].id)).toEqual(request.media.map((m) => m.id));
+    // Completing many files takes the server long: the wait grows with them.
+    expect(calls(publicationRequest, 'complete')[0][4]).toEqual({ timeoutMs: 75_000 });
+    expect(onUpload.mock.calls.map((call) => call[0])).toEqual([
+      { postId: post.id, done: 0, total: 2 },
+      { postId: post.id, done: 1, total: 2 },
+      { postId: post.id, done: 2, total: 2 },
+      null,
+    ]);
+    // The prepared copies do not stay.
+    await expect(stat(await workDirectory.mock.results[0].value)).rejects.toThrow();
+  });
+
+  it('continues an interrupted upload with the same bytes and refuses changed ones', async () => {
+    const { daily, ok, persona, stage, creates, upload, library, rows } = await setup();
+    const mom = await persona();
+    const { selectionId, ids } = stage('a.png', 'b.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '글',
+        fromKorean: false,
+        media: ids,
+        selectionId,
+      }),
+    ).posts[0];
+    upload.mockRejectedValueOnce(new ViewError('mobile_publication_upload', '끊겼습니다.'));
+    expect((await daily.send({ postId: post.id })).problem?.code).toBe('mobile_publication_upload');
+    expect(ok(await daily.state()).posts[0]).toMatchObject({
+      state: 'waiting',
+      note: 'unconfirmed',
+    });
+    expect(rows[0].status).toBe('uploading');
+    // [다시 보내기] repeats the request and finishes the files.
+    ok(await daily.send({ postId: post.id }));
+    const [first, again] = creates() as PublicationRequest[];
+    expect(again).toEqual(first);
+    expect(rows[0].status).toBe('ready');
+    // Bytes that differ from the first send are not uploaded for it.
+    const other = stage('c.png');
+    const next = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '다른 글',
+        fromKorean: false,
+        media: other.ids,
+        selectionId: other.selectionId,
+      }),
+    ).posts.find((item) => item.text === '다른 글')!;
+    upload.mockRejectedValueOnce(new ViewError('mobile_publication_upload', '끊겼습니다.'));
+    await daily.send({ postId: next.id });
+    library.bytes.set(other.ids[0], 'changed');
+    expect((await daily.send({ postId: next.id })).problem?.code).toBe('daily_media_changed');
+  });
+
+  it('turns a post back to a draft only when the server holds no request of it', async () => {
+    const { daily, ok, persona, stage, server, rows } = await setup();
+    const mom = await persona();
+    const { selectionId, ids } = stage('a.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '',
+        fromKorean: false,
+        media: ids,
+        selectionId,
+      }),
+    ).posts[0];
+    server.storage = 'off';
+    const refused = await daily.send({ postId: post.id });
+    expect(refused.problem).toEqual({
+      code: 'daily_storage_off',
+      message: '서버의 파일 업로드 설정이 꺼져 있습니다. 관리자에게 확인해 주세요.',
+    });
+    expect(refused.view.posts[0].state).toBe('draft');
+    expect(rows).toHaveLength(0);
+    // Created first and refused while completing: the request is there, so the send stays.
+    server.storage = 'off-at-complete';
+    expect((await daily.send({ postId: post.id })).problem?.code).toBe('daily_storage_off');
+    expect(ok(await daily.state()).posts[0]).toMatchObject({
+      state: 'waiting',
+      note: 'unconfirmed',
+    });
+    server.storage = 'on';
+    expect(ok(await daily.send({ postId: post.id })).posts[0].note).toBeNull();
+    expect(rows).toHaveLength(1);
+  });
+
+  it('reads an earlier cancelled send with other attachments and sends the post again', async () => {
+    const { daily, ok, persona, stage, rows } = await setup();
+    const mom = await persona();
+    const first = stage('a.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '글',
+        fromKorean: false,
+        media: first.ids,
+        selectionId: first.selectionId,
+      }),
+    ).posts[0];
+    ok(await daily.send({ postId: post.id }));
+    ok(await daily.cancelSend({ postId: post.id }));
+    const second = stage('b.png');
+    ok(
+      await daily.savePost({
+        postId: post.id,
+        text: '글',
+        media: second.ids,
+        selectionId: second.selectionId,
+      }),
+    );
+    expect(ok(await daily.send({ postId: post.id })).posts[0].state).toBe('waiting');
+    expect(rows.map((row) => row.status)).toEqual(['cancelled', 'ready']);
+    expect(ok(await daily.state()).posts[0].state).toBe('waiting');
+  });
+
+  it('deletes a published post with its answers and files, but not while it waits or has a sent answer', async () => {
+    const { daily, ok, persona, stage, library, rows, userData } = await setup();
+    const mom = await persona();
+    const { selectionId, ids } = stage('a.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '글',
+        fromKorean: false,
+        media: ids,
+        selectionId,
+      }),
+    ).posts[0];
+    ok(await daily.send({ postId: post.id }));
+    expect((await daily.deletePost({ postId: post.id })).problem?.code).toBe('daily_post_sent');
+    rows[0].rootStatus = 'published';
+    expect(ok(await daily.state()).posts[0].state).toBe('published');
+    const store = new DailyStore(userData);
+    const answer = {
+      id: randomUUID(),
+      postId: post.id,
+      publicationId: rows[0].id,
+      replyThreadsId: '123',
+      text: '감사합니다',
+      createdAt: '2026-11-24T00:00:00.000Z',
+      send: { confirmed: true },
+    };
+    await store.update(scope, (partition) => {
+      partition.answers = [answer];
+      partition.replySeen = [{ postId: post.id, fetchedAt: '2026-11-24T00:00:00.000Z', count: 1 }];
+    });
+    expect((await daily.deletePost({ postId: post.id })).problem?.code).toBe('daily_post_answers');
+    await store.update(scope, (partition) => {
+      partition.answers = [{ ...answer, send: null }];
+    });
+    expect(ok(await daily.deletePost({ postId: post.id })).posts).toEqual([]);
+    const after = await store.read(scope);
+    expect([after.answers, after.replySeen]).toEqual([[], []]);
+    expect(library.removed).toEqual(ids);
+    // The file stays 2: the cancelled sends of attachments are still on the server.
+    expect(await version(userData)).toBe(2);
+  });
+
+  it('refuses a server row of this send whose attachments differ from what was sent', async () => {
+    const { daily, ok, persona, stage, rows } = await setup();
+    const mom = await persona();
+    const { selectionId, ids } = stage('a.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '글',
+        fromKorean: false,
+        media: ids,
+        selectionId,
+      }),
+    ).posts[0];
+    ok(await daily.send({ postId: post.id }));
+    rows[0].media[0].sha256 = 'b'.repeat(64);
+    expect((await daily.state()).problem?.code).toBe('INVALID_RESPONSE');
+  });
+
+  it('keeps a draft’s files without a work folder, but takes no new ones then', async () => {
+    const { daily, ok, persona, stage, library } = await setup();
+    const mom = await persona();
+    const first = stage('a.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: mom.id,
+        text: '글',
+        fromKorean: false,
+        media: first.ids,
+        selectionId: first.selectionId,
+      }),
+    ).posts[0];
+    library.ready = false;
+    const saved = ok(await daily.savePost({ postId: post.id, text: '고친 글', media: first.ids }));
+    expect(saved.posts[0]).toMatchObject({
+      text: '고친 글',
+      media: [{ id: first.ids[0], url: null }],
+    });
+    expect(saved.mediaReady).toBe(false);
+    library.ready = true;
+    const second = stage('b.png');
+    library.ready = false;
+    expect(
+      (
+        await daily.savePost({
+          postId: post.id,
+          text: '고친 글',
+          media: [...first.ids, ...second.ids],
+          selectionId: second.selectionId,
+        })
+      ).problem?.code,
+    ).toBe('daily_media_unavailable');
+  });
+
+  it('cleans unsaved attachments only when daily.json was there before the sync wrote one', async () => {
+    const { daily, ok, remote, media } = await setup();
+    // A moved PC: the server has the persona, this PC has no daily.json yet.
+    remote.push({
+      id: randomUUID(),
+      name: '아들맘',
+      accountId: 'account-a',
+      language: 'ko',
+      description: '30세',
+      createdAt: '2026-11-17T00:00:00.000Z',
+    });
+    expect(ok(await daily.state()).personas).toHaveLength(1);
+    ok(await daily.state());
+    expect(media.sweep).not.toHaveBeenCalled();
+  });
+
+  it('keeps posts without text out of Korean renderings and of the posts handed to the writer', async () => {
+    const { daily, ok, stage, generate, translate } = await setup();
+    const english = ok(
+      await daily.savePersona({
+        name: 'Mia',
+        accountId: 'account-a',
+        language: 'en',
+        description: '나이: 30대',
+      }),
+    ).personas[0];
+    const { selectionId, ids } = stage('a.png');
+    const post = ok(
+      await daily.addPost({
+        personaId: english.id,
+        text: '',
+        fromKorean: true,
+        media: ids,
+        selectionId,
+      }),
+    ).posts[0];
+    expect(post.text).toBe('');
+    expect((await daily.translatePost({ postId: post.id })).problem?.code).toBe('daily_text');
+    expect(translate).not.toHaveBeenCalled();
+    ok(await daily.generate({ personaId: english.id }));
+    expect(generate.mock.calls[0][1]).toEqual([]);
   });
 });

@@ -141,7 +141,9 @@ export function dailyDay(value: string) {
 export function dailyNeedsTranslation(view: DailyView, postId: string) {
   const post = view.posts.find((item) => item.id === postId);
   const persona = post && view.personas.find((item) => item.id === post.personaId);
-  return !!persona && persona.language !== 'ko' && post.translation === null;
+  return (
+    !!persona && persona.language !== 'ko' && post.translation === null && post.text.trim() !== ''
+  );
 }
 
 /** One line of the replies window. */

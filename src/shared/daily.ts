@@ -17,6 +17,30 @@ export const DAILY_KOREAN_DRAFT_LIMIT: Record<CaptionLanguage, number> = {
 export const DAILY_TRANSLATION_LIMIT = 1000;
 /** Threads limits a topic (`topic_tag`) to 50 characters (2026-11-23). */
 export const DAILY_TOPIC_LIMIT = 50;
+/** Threads takes at most 20 images and videos in one post (2026-11-24). */
+export const DAILY_MEDIA_LIMIT = 20;
+
+/**
+ * One image or video attached to a daily post (2026-11-24). The file is a copy kept in the work
+ * folder, like the collection's own posts.
+ */
+export interface DailyMedia {
+  /** 32 lowercase hex characters chosen by this PC. */
+  id: string;
+  kind: 'image' | 'video';
+  /** The original file name, shown under the thumbnail. */
+  name: string;
+  /** `threads-daily://file/<id>`; null while the file cannot be found (no or another work folder). */
+  url: string | null;
+}
+
+/** How far the attachments of a post being sent have been uploaded. */
+export interface DailyUpload {
+  postId: string;
+  /** Files uploaded so far. */
+  done: number;
+  total: number;
+}
 
 /** One fictional author. It is bound to exactly one managed Threads account. */
 export interface DailyPersona {
@@ -45,6 +69,11 @@ export interface DailyPost {
   translation: string | null;
   /** The Threads topic sent with the post (2026-11-23), without its `#`; null for none. */
   topic: string | null;
+  /**
+   * Images and videos in posting order (2026-11-24); empty for a text post. With at least one the
+   * text may be empty.
+   */
+  media: DailyMedia[];
   createdAt: string;
   state: DailyPostState;
   /** Waiting posts only. null means the phone has not started it. */
@@ -146,6 +175,8 @@ export interface DailyView {
    * server personas it could not take in because their account is used by another one here.
    */
   unsyncedPersonas: number;
+  /** Attachments are kept in the work folder, so they can be added only while one is set. */
+  mediaReady: boolean;
 }
 
 export interface DailyResult {
@@ -192,6 +223,13 @@ export interface SaveDailyPostInput {
   text: string;
   /** As typed; a leading `#` is dropped and an empty one removes the topic. Omitted keeps it. */
   topic?: string;
+  /**
+   * The attachments in posting order: ids the post already has and ids added in this dialog
+   * (2026-11-24). Omitted keeps them as they are.
+   */
+  media?: string[];
+  /** The dialog's selection, when files were added in it. */
+  selectionId?: string;
 }
 export interface AddDailyPostInput {
   personaId: string;
@@ -200,6 +238,29 @@ export interface AddDailyPostInput {
   fromKorean: boolean;
   /** As typed, like `SaveDailyPostInput.topic`; omitted or empty for a post without a topic. */
   topic?: string;
+  /** The attachments in posting order, all added in this dialog (2026-11-24). */
+  media?: string[];
+  /** The dialog's selection, when files were added in it. */
+  selectionId?: string;
+}
+/** Adding images and videos to the attachments of an open post dialog (2026-11-24). */
+export interface PickDailyMediaInput {
+  /** The dialog's selection; omitted until the dialog's first files. */
+  selectionId?: string;
+  /** How many more files the dialog may take: the limit minus what it shows. */
+  room: number;
+}
+export interface DailyMediaResult {
+  /** `cancelled`: the file picker was closed without choosing. */
+  status: 'ok' | 'cancelled' | 'error';
+  /** The selection the files went into; null when nothing was added. */
+  selectionId: string | null;
+  /** The added files, in the order they were chosen. Empty unless `ok`. */
+  media: DailyMedia[];
+  problem: Problem | null;
+}
+export interface DiscardDailyMediaInput {
+  selectionId: string;
 }
 export interface AddDailyAnswerInput {
   postId: string;
@@ -259,6 +320,14 @@ export interface DailyMethods {
   sendDailyAnswers(input: SendDailyAnswersInput): Promise<DailyRepliesResult>;
   /** Takes an answer back from the phone; one of this PC becomes a draft again. */
   cancelDailyAnswer(input: DailyAnswerInput): Promise<DailyRepliesResult>;
+  /** Opens the file picker and copies the chosen images and videos into the dialog's selection. */
+  pickDailyMedia(input: PickDailyMediaInput): Promise<DailyMediaResult>;
+  /** Copies dropped files into the dialog's selection; the preload reads their native paths. */
+  addDailyMedia(input: PickDailyMediaInput & { files: File[] }): Promise<DailyMediaResult>;
+  /** Drops what a dialog added when it closes without saving. */
+  discardDailyMedia(input: DiscardDailyMediaInput): Promise<void>;
+  /** Upload progress of the post being sent; null when the upload ends. Returns the unsubscribe. */
+  onDailyUpload(listener: (upload: DailyUpload | null) => void): () => void;
 }
 
 export const dailyTextLength = (text: string) => [...text].length;

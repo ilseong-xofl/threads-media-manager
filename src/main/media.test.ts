@@ -136,6 +136,34 @@ describe('development AI media registrations', () => {
   });
 });
 
+describe('registrations without hashing', () => {
+  it('registers by stat only, skips files it cannot open, and replaces earlier ones', async () => {
+    const registry = new MediaRegistry();
+    const other = {
+      ...file,
+      id: 'c'.repeat(32),
+      relativePath: file.relativePath.replace('a'.repeat(32), 'c'.repeat(32)),
+    };
+    await registry.adopt(root, [file]);
+    // The stored hash is trusted here; copyForUpload checks the bytes later.
+    const trusted = { ...file, sha256: '0'.repeat(64) };
+    expect(
+      await registry.register(root, [
+        other,
+        trusted,
+        trusted,
+        { ...file, id: 'e'.repeat(32), relativePath: '../outside' },
+      ]),
+    ).toEqual([file.id]);
+    expect(await (await registry.respond(new Request(url))).text()).toBe('0123456789');
+    await expect(registry.copyForUpload(root, file.id, join(root, 'frozen.mp4'))).rejects.toThrow(
+      'File changed',
+    );
+    expect(await registry.register(root, [])).toEqual([]);
+    expect((await registry.respond(new Request(url))).status).toBe(404);
+  });
+});
+
 describe('frozen media copies for API upload', () => {
   it('copies exactly the registered bytes and refuses destination overwrites', async () => {
     const registry = new MediaRegistry();

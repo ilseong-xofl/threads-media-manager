@@ -1,20 +1,24 @@
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
 import type { CaptionLanguage } from '../shared/contracts';
 import {
   DAILY_DESCRIPTION_LIMIT,
   DAILY_KOREAN_DRAFT_LIMIT,
+  DAILY_MEDIA_LIMIT,
   DAILY_NAME_LIMIT,
   DAILY_TEXT_LIMIT,
   type DailyAnswer,
   type DailyAnswerState,
   type DailyDraft,
   type DailyLinkResult,
+  type DailyMediaResult,
   type DailyPersona,
   type DailyPost,
   type DailyRepliesResult,
   type DailyReply,
   type DailyReplyThread,
   type DailyResult,
+  type DailyUpload,
   type DailyView,
   type DailyWaitingNote,
   dailyTextLength,
@@ -23,9 +27,11 @@ import {
 } from '../shared/daily';
 import type { MobilePublication } from '../shared/mobile-publications';
 import { ViewError } from './collection';
+import type { DailyMediaLibrary, StoredDailyMedia } from './daily-media';
 import {
   DAILY_LIBRARY_ID,
   threadsId,
+  validDailyBody,
   validDailyText,
   validDailyTranslation,
   type DailyPartition,
@@ -34,6 +40,7 @@ import {
   type StoredDailyPost,
 } from './daily-store';
 import { exactKeys, isObject, parseManagedAccount, validId } from './managed-threads-store';
+import type { MediaRegistry } from './media';
 import {
   parsePublicationResponse,
   parsePublications,
@@ -42,12 +49,19 @@ import {
   type PublicationRequest,
 } from './mobile-publication-data';
 import { validUrl } from './open-post-link';
+import {
+  parseUploadUrls,
+  preparedFileDigest,
+  uploadPublicationFile,
+} from './publication-s3-upload';
 import { ServiceApiError, type ServiceApiClient, type ServiceBusinessContext } from './service-api';
+import type { ThreadsUploadFile } from './threads-media';
 
 type Client = Pick<
   ServiceApiClient,
   | 'getBusinessContext'
   | 'assertBusinessContext'
+  | 'businessSignal'
   | 'publicationRequest'
   | 'managedThreadsRequest'
   | 'personaRequest'
@@ -55,8 +69,26 @@ type Client = Pick<
 >;
 interface Store {
   read(scope: DailyScope): Promise<DailyPartition>;
+  /** Null while there is no file at all; only the attachment cleanup needs it. */
+  readExisting?(scope: DailyScope): Promise<DailyPartition | null>;
   update<T>(scope: DailyScope, change: (partition: DailyPartition) => T): Promise<T>;
 }
+/** What the controller uses of the attachment library (2026-11-24). */
+type MediaLibrary = Pick<
+  DailyMediaLibrary,
+  | 'ready'
+  | 'pick'
+  | 'add'
+  | 'discard'
+  | 'staged'
+  | 'commit'
+  | 'track'
+  | 'url'
+  | 'uploadSource'
+  | 'remove'
+  | 'sweep'
+  | 'reset'
+>;
 interface Options {
   client: Client;
   store: Store;
@@ -81,6 +113,20 @@ interface Options {
   /** Opens an https address in the user's browser. */
   openExternal(url: string): Promise<void>;
   now?: () => Date;
+  /** The attachments of daily posts (2026-11-24); left out where none are used. */
+  media?: MediaLibrary;
+  /** Fixes the bytes of attachments for upload with the checks of 모바일로 보내기. */
+  prepareUpload?(
+    source: { registry: MediaRegistry; root: string },
+    ids: string[],
+    directory: string,
+  ): Promise<ThreadsUploadFile[]>;
+  /** A fresh folder for one request's prepared files; it is removed after the upload. */
+  workDirectory?(requestId: string): Promise<string>;
+  /** PUTs one prepared file to its signed address. */
+  upload?: typeof uploadPublicationFile;
+  /** Upload progress of the post being sent, for the screen; null when the upload ends. */
+  onUpload?(upload: DailyUpload | null): void;
 }
 /** What the server last said about one send. Memory only; rebuilt by `state()`. */
 interface Remote {
@@ -98,7 +144,36 @@ const EMPTY: DailyView = {
   translatingPostId: null,
   translatingRepliesPostId: null,
   unsyncedPersonas: 0,
+  mediaReady: false,
 };
+/** An attachment id of a post dialog: 32 lowercase hex characters. */
+const mediaId = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{32}$/.test(v);
+/** The attachment ids a post dialog sends, in posting order; undefined keeps the post's own. */
+const mediaInput = (v: unknown): v is string[] | undefined =>
+  v === undefined ||
+  (Array.isArray(v) &&
+    v.length <= DAILY_MEDIA_LIMIT &&
+    v.every(mediaId) &&
+    new Set(v).size === v.length);
+/** The server's attachment list is exactly the one sent. */
+const sameMedia = (a: PublicationRequest['media'], b: PublicationRequest['media']) =>
+  a.length === b.length &&
+  a.every(
+    (m, i) =>
+      m.id === b[i].id &&
+      m.ordinal === b[i].ordinal &&
+      m.kind === b[i].kind &&
+      m.contentType === b[i].contentType &&
+      m.size === b[i].size &&
+      m.sha256 === b[i].sha256,
+  );
+/** The server keeps no attachments: its file upload is not set up. */
+const storageOff = (error: unknown) =>
+  error instanceof ServiceApiError &&
+  (error.code === 'STORAGE_NOT_CONFIGURED' || error.code === 'S3_NOT_CONFIGURED');
+const STORAGE_OFF = '서버의 파일 업로드 설정이 꺼져 있습니다. 관리자에게 확인해 주세요.';
+/** The server checks each file (HEAD, copy, HEAD) in turn, up to 30 seconds each. */
+const completeTimeout = (files: number) => 15_000 + 30_000 * files;
 /** How much reply text one [한국어 뜻 보기] hands to ChatGPT (2026-11-21): the result fits 64KiB and 180s. */
 const REPLY_BATCH = 4000;
 /** The server's summary of one post's replies. Memory only; rebuilt when the board is read. */
@@ -394,6 +469,10 @@ export class DailyController {
   private syncing: Promise<void> | null = null;
   /** Server personas the last sync left out because another persona here uses their account. */
   private conflicts = 0;
+  /** The attachments whose file was there when the view was last built (2026-11-24). */
+  private present = new Set<string>();
+  /** Scopes whose unsaved attachment folders were cleaned in this run of the app. */
+  private readonly swept = new Set<string>();
   constructor(private readonly options: Options) {}
   /** A send, cancel, save or sync is talking to the server or the file. */
   get busy(): boolean {
@@ -425,13 +504,27 @@ export class DailyController {
     operation: Parameters<Client['publicationRequest']>[1],
     id?: string,
     body?: unknown,
+    timeoutMs?: number,
   ) {
     this.assert(context);
-    const response = await this.options.client.publicationRequest(context, operation, id, body);
+    const response =
+      timeoutMs === undefined
+        ? await this.options.client.publicationRequest(context, operation, id, body)
+        : await this.options.client.publicationRequest(context, operation, id, body, {
+            timeoutMs,
+          });
     this.assert(context);
     return response;
   }
-  private async list(context: ServiceBusinessContext, postId: string) {
+  /**
+   * Every send of the post, cancelled ones included. Attachments are only checked for form here
+   * (2026-11-24): an earlier send may have had others, so only the current request is compared.
+   */
+  private async list(
+    context: ServiceBusinessContext,
+    postId: string,
+    expected?: PublicationRequest,
+  ) {
     const rows = parsePublications(
       await this.request(context, 'list', undefined, {
         libraryId: DAILY_LIBRARY_ID,
@@ -442,13 +535,13 @@ export class DailyController {
     if (
       rows.some(
         (row) =>
-          row.source.libraryId !== DAILY_LIBRARY_ID ||
-          row.source.postKey !== postId ||
-          row.media.length ||
-          row.comment,
+          row.source.libraryId !== DAILY_LIBRARY_ID || row.source.postKey !== postId || row.comment,
       )
     )
       fail('INVALID_RESPONSE', '다른 글의 응답을 받았습니다.');
+    const mine = expected && rows.find((row) => row.requestId === expected.requestId);
+    if (mine && (mine.caption !== expected!.caption || !sameMedia(mine.media, expected!.media)))
+      fail('INVALID_RESPONSE', '전송 요청과 서버에 저장된 글이 다릅니다.');
     return rows;
   }
   private async accounts(context: ServiceBusinessContext) {
@@ -554,7 +647,9 @@ export class DailyController {
     this.conflicts = conflicts;
   }
   private view(partition: DailyPartition): DailyView {
+    const media = this.options.media;
     return {
+      mediaReady: media?.ready() ?? false,
       unsyncedPersonas:
         partition.personas.filter((persona) => persona.synced !== true).length + this.conflicts,
       personas: partition.personas.map((persona) => ({
@@ -572,6 +667,12 @@ export class DailyController {
           text: post.text,
           translation: post.translation ?? null,
           topic: post.topic ?? null,
+          media: (post.media ?? []).map((file) => ({
+            id: file.id,
+            kind: file.kind,
+            name: file.name,
+            url: media && this.present.has(file.id) ? media.url(file.id) : null,
+          })),
           createdAt: post.createdAt,
           replies: null,
         };
@@ -909,7 +1010,7 @@ export class DailyController {
     const open = before.posts.filter((post) => !post.published && (post.send || post.sentBefore));
     const verdicts: { id: string; requestId: string | null; verdict: Verdict }[] = [];
     for (const post of open) {
-      const verdict = dailyVerdict(post, await this.list(context, post.id));
+      const verdict = dailyVerdict(post, await this.list(context, post.id, post.send?.request));
       await this.withdraw(context, verdict);
       this.remember(post, verdict);
       verdicts.push({ id: post.id, requestId: post.send?.request.requestId ?? null, verdict });
@@ -934,6 +1035,7 @@ export class DailyController {
       context = await this.options.client.getBusinessContext();
       const partition = await action(context);
       seen?.(context, partition);
+      await this.trackMedia(context, partition);
       return { status: 'ok', view: this.view(partition), problem: null };
     } catch (error) {
       let view = EMPTY;
@@ -942,6 +1044,7 @@ export class DailyController {
           this.assert(context);
           const partition = await this.options.store.read(this.scope(context));
           seen?.(context, partition);
+          await this.trackMedia(context, partition);
           view = this.view(partition);
         } catch {
           /* No data is shown after an auth change or when the file cannot be read. */
@@ -967,6 +1070,8 @@ export class DailyController {
 
   state(): Promise<DailyResult> {
     return this.respond(async (context) => {
+      // Before a sync, which may create a `daily.json` a moved PC does not have yet.
+      await this.sweepMedia(context);
       // A change in progress has the file; this read then shows what is stored.
       if (!this.mutating) {
         this.syncing ??= this.sync(context).finally(() => {
@@ -978,6 +1083,132 @@ export class DailyController {
       await this.readReplySummary(context);
       return partition;
     });
+  }
+
+  /** The attachment files of a partition's posts. */
+  private static mediaOf(partition: DailyPartition): StoredDailyMedia[] {
+    return partition.posts.flatMap((post) => post.media ?? []);
+  }
+  /** Registers the partition's attachments, so the view knows which files are there. */
+  private async trackMedia(context: ServiceBusinessContext, partition: DailyPartition) {
+    const media = this.options.media;
+    if (!media) return;
+    this.assert(context);
+    try {
+      this.present = media.ready()
+        ? await media.track(this.scope(context), DailyController.mediaOf(partition))
+        : new Set();
+    } catch {
+      this.present = new Set();
+    }
+    try {
+      this.assert(context);
+    } catch (error) {
+      // Signed in as someone else meanwhile: what was just registered is not theirs.
+      media.reset();
+      this.present = new Set();
+      throw error;
+    }
+  }
+  /**
+   * Cleans what dialogs of an app that stopped left unsaved, once per run on the first look at
+   * the board (2026-11-24). Only with a `daily.json` that exists and reads cleanly: a PC being
+   * moved may have its work folder first, and nothing may then look unused.
+   */
+  private async sweepMedia(context: ServiceBusinessContext) {
+    const media = this.options.media;
+    if (!media?.ready() || !this.options.store.readExisting) return;
+    const scope = this.scope(context);
+    const key = JSON.stringify([scope.service, scope.ownerId]);
+    if (this.swept.has(key)) return;
+    this.swept.add(key);
+    try {
+      const partition = await this.options.store.readExisting(scope);
+      if (partition)
+        await media.sweep(
+          scope,
+          new Set(DailyController.mediaOf(partition).map((file) => file.id)),
+        );
+    } catch {
+      /* What is left is tried again at the next start. */
+    }
+  }
+  /** Runs one attachment call of a post dialog for the signed-in user. */
+  private async withMedia(
+    work: (media: MediaLibrary, scope: DailyScope) => Promise<DailyMediaResult>,
+  ): Promise<DailyMediaResult> {
+    try {
+      const media = this.options.media;
+      if (!media?.ready())
+        return fail(
+          'daily_media_unavailable',
+          '작업 폴더를 지정하면 이미지·영상을 첨부할 수 있습니다.',
+        );
+      const context = await this.options.client.getBusinessContext();
+      const result = await work(media, this.scope(context));
+      this.assert(context);
+      return result;
+    } catch (error) {
+      return { status: 'error', selectionId: null, media: [], problem: safeProblem(error) };
+    }
+  }
+  /** The file picker of a post dialog (2026-11-24). */
+  pickMedia(input: unknown): Promise<DailyMediaResult> {
+    return this.withMedia((media, scope) => media.pick(scope, input));
+  }
+  /** Files dropped on a post dialog (2026-11-24). */
+  addMedia(input: unknown): Promise<DailyMediaResult> {
+    return this.withMedia((media, scope) => media.add(scope, input));
+  }
+  /** What a post dialog added before it closed without saving (2026-11-24). */
+  async discardMedia(input: unknown): Promise<void> {
+    const media = this.options.media;
+    if (!media) return;
+    try {
+      const context = await this.options.client.getBusinessContext();
+      await media.discard(this.scope(context), input);
+    } catch {
+      /* A folder left behind is cleaned at the next start. */
+    }
+  }
+  /**
+   * The stored attachments for a dialog's `ids`: files the post has and files the dialog added.
+   * Runs inside a store update, against what the file holds then.
+   */
+  private chosen(
+    scope: DailyScope,
+    selectionId: string | undefined,
+    ids: readonly string[],
+    existing: readonly StoredDailyMedia[],
+  ): StoredDailyMedia[] {
+    if (!ids.length) return [];
+    const media = this.options.media;
+    const staged = selectionId && media?.ready() ? media.staged(scope, selectionId) : null;
+    return ids.map(
+      (id) =>
+        existing.find((file) => file.id === id) ??
+        staged?.get(id) ??
+        (media?.ready()
+          ? fail('daily_media', '첨부한 파일을 찾을 수 없습니다. 다시 넣어 주세요.')
+          : fail(
+              'daily_media_unavailable',
+              '작업 폴더를 지정하면 이미지·영상을 첨부할 수 있습니다.',
+            )),
+    );
+  }
+  /** After a save: the dialog's added files that the post kept stay; the rest go. */
+  private async settleSelection(
+    scope: DailyScope,
+    selectionId: string | undefined,
+    kept: readonly string[],
+  ) {
+    if (!selectionId || !this.options.media) return;
+    await this.options.media.commit(scope, selectionId, new Set(kept)).catch(() => {});
+  }
+  /** Deletes the files of attachments `daily.json` no longer has. */
+  private async removeMedia(scope: DailyScope, files: readonly StoredDailyMedia[]) {
+    if (!files.length || !this.options.media) return;
+    await this.options.media.remove(scope, files).catch(() => {});
   }
 
   /** The replies of one published post, read from the server when its window opens or after work. */
@@ -1228,8 +1459,12 @@ export class DailyController {
       await this.personas(context, 'delete', personaId).catch((error) =>
         noPersonaStore(error) && stored.synced !== true ? undefined : Promise.reject(error),
       );
-      return this.options.store.update(scope, (partition) => {
+      let removed: StoredDailyMedia[] = [];
+      const after = await this.options.store.update(scope, (partition) => {
         allowed(partition);
+        removed = partition.posts
+          .filter((post) => post.personaId === personaId)
+          .flatMap((post) => post.media ?? []);
         partition.personas = partition.personas.filter((p) => p.id !== personaId);
         partition.posts = partition.posts.filter((post) => post.personaId !== personaId);
         // The drafts and renderings of its posts go with them.
@@ -1242,6 +1477,9 @@ export class DailyController {
           partition.replySeen = partition.replySeen.filter((seen) => posts.has(seen.postId));
         return partition;
       });
+      // The attachments of its posts go once the file no longer has them (2026-11-24).
+      await this.removeMedia(scope, removed);
+      return after;
     });
   }
 
@@ -1272,8 +1510,9 @@ export class DailyController {
           const before = await this.options.store.read(scope);
           const persona = before.personas.find((p) => p.id === personaId);
           if (!persona) return fail('daily_persona', '페르소나를 찾을 수 없습니다.');
+          // A post of only images or videos has no text to steer away from (2026-11-24).
           const recent = before.posts
-            .filter((post) => post.personaId === personaId)
+            .filter((post) => post.personaId === personaId && post.text.trim())
             .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
             .slice(0, RECENT_POSTS)
             .map((post) => post.text);
@@ -1327,11 +1566,15 @@ export class DailyController {
         'text',
         'fromKorean',
         ...(input.topic === undefined ? [] : ['topic']),
+        ...(input.media === undefined ? [] : ['media']),
+        ...(input.selectionId === undefined ? [] : ['selectionId']),
       ]) ||
       !uuid(input.personaId) ||
       typeof input.text !== 'string' ||
       typeof input.fromKorean !== 'boolean' ||
-      (input.topic !== undefined && typeof input.topic !== 'string')
+      (input.topic !== undefined && typeof input.topic !== 'string') ||
+      !mediaInput(input.media) ||
+      (input.selectionId !== undefined && !mediaId(input.selectionId))
     )
       return this.respond(invalid);
     if (this.generating)
@@ -1342,17 +1585,21 @@ export class DailyController {
     if (topicProblem) return this.respond(() => fail('daily_topic', topicProblem));
     const personaId = input.personaId;
     const written = input.text.trim();
-    const add = (scope: DailyScope, text: string, translation: string | null) => {
+    const ids = input.media ?? [];
+    const selectionId = input.selectionId;
+    const add = async (scope: DailyScope, text: string, translation: string | null) => {
       const createdAt = this.now();
-      return this.options.store.update(scope, (partition) => {
+      const partition = await this.options.store.update(scope, (partition) => {
         if (!partition.personas.some((p) => p.id === personaId))
           fail('daily_persona', '페르소나를 찾을 수 없습니다.');
+        const media = this.chosen(scope, selectionId, ids, []);
         partition.posts.push({
           id: randomUUID(),
           personaId,
           text,
           translation,
           ...(topic ? { topic } : {}),
+          ...(media.length ? { media } : {}),
           createdAt,
           send: null,
           sentBefore: false,
@@ -1360,10 +1607,15 @@ export class DailyController {
         });
         return partition;
       });
+      await this.settleSelection(scope, selectionId, ids);
+      return partition;
     };
-    if (!input.fromKorean)
+    // With attachments the text may be empty, and an empty text has nothing to write in the
+    // persona's language (2026-11-24).
+    if (!input.fromKorean || (!written && ids.length))
       return this.mutate(async (context) => {
-        if (!validDailyText(written)) fail('daily_text', '본문은 1~500자로 작성하세요.');
+        if (!validDailyBody(written, ids.length > 0))
+          fail('daily_text', '본문은 1~500자로 작성하세요.');
         return add(this.scope(context), written, null);
       });
     this.composing = true;
@@ -1398,30 +1650,52 @@ export class DailyController {
     return this.mutate(async (context) => {
       if (
         !isObject(input) ||
-        !exactKeys(input, ['postId', 'text', ...(input.topic === undefined ? [] : ['topic'])]) ||
+        !exactKeys(input, [
+          'postId',
+          'text',
+          ...(input.topic === undefined ? [] : ['topic']),
+          ...(input.media === undefined ? [] : ['media']),
+          ...(input.selectionId === undefined ? [] : ['selectionId']),
+        ]) ||
         !uuid(input.postId) ||
         typeof input.text !== 'string' ||
-        (input.topic !== undefined && typeof input.topic !== 'string')
+        (input.topic !== undefined && typeof input.topic !== 'string') ||
+        !mediaInput(input.media) ||
+        (input.selectionId !== undefined && !mediaId(input.selectionId))
       )
         return invalid();
       // Nothing is edited while ChatGPT writes; the board does not open the editor either.
       if (this.generating) fail('daily_busy', '글 생성이 끝난 뒤 수정하세요.');
       const text = input.text.trim();
-      if (!validDailyText(text)) fail('daily_text', '본문은 1~500자로 작성하세요.');
       const topic = typeof input.topic === 'string' ? dailyTopicValue(input.topic) : undefined;
       const topicProblem = topic ? dailyTopicProblem(topic) : null;
       if (topicProblem) fail('daily_topic', topicProblem);
       const postId = input.postId;
-      return this.options.store.update(this.scope(context), (partition) => {
+      const ids = input.media;
+      const selectionId = input.selectionId;
+      const scope = this.scope(context);
+      let removed: StoredDailyMedia[] = [];
+      const partition = await this.options.store.update(scope, (partition) => {
         const post = partition.posts.find((item) => item.id === postId);
         if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
         if (post.send || post.published) fail('daily_post_sent', '초안만 수정할 수 있습니다.');
+        const before = post.media ?? [];
+        const media = ids === undefined ? before : this.chosen(scope, selectionId, ids, before);
+        if (!validDailyBody(text, media.length > 0))
+          fail('daily_text', '본문은 1~500자로 작성하세요.');
+        removed = before.filter((file) => !media.some((item) => item.id === file.id));
         // The Korean rendering described the old text; an edited post no longer has one.
         if (post.text !== text) post.translation = null;
         post.text = text;
         if (topic !== undefined) post.topic = topic || null;
+        if (media.length) post.media = media;
+        else delete post.media;
         return partition;
       });
+      await this.settleSelection(scope, selectionId, ids ?? []);
+      // A removed attachment's file goes once the file no longer points to it (2026-11-24).
+      await this.removeMedia(scope, removed);
+      return partition;
     });
   }
 
@@ -1447,6 +1721,9 @@ export class DailyController {
           if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
           const persona = before.personas.find((p) => p.id === post.personaId);
           if (!persona || persona.language === 'ko') return invalid();
+          // A post of only images or videos has nothing to say in Korean (2026-11-24).
+          if (!post.text.trim())
+            fail('daily_text', '본문이 없는 글은 한국어 뜻을 만들 수 없습니다.');
           text = post.text;
           translation = await this.options.translate(persona, text);
         } finally {
@@ -1473,14 +1750,139 @@ export class DailyController {
       if (!isObject(input) || !exactKeys(input, ['postId']) || !uuid(input.postId))
         return invalid();
       const postId = input.postId;
-      return this.options.store.update(this.scope(context), (partition) => {
+      const scope = this.scope(context);
+      let removed: StoredDailyMedia[] = [];
+      const partition = await this.options.store.update(scope, (partition) => {
         const post = partition.posts.find((item) => item.id === postId);
         if (!post) return fail('daily_post', '글을 찾을 수 없습니다.');
-        if (post.send || post.published) fail('daily_post_sent', '초안만 삭제할 수 있습니다.');
+        // A published post may go from this PC too (2026-11-24, the user's call); Threads and the
+        // server keep theirs. A post on its way to the phone stays until its send is taken back.
+        if (post.send)
+          fail(
+            'daily_post_sent',
+            '휴대폰 대기 중인 글은 지울 수 없습니다. 전송을 먼저 취소하세요.',
+          );
+        if ((partition.answers ?? []).some((answer) => answer.postId === postId && answer.send))
+          fail('daily_post_answers', '답글을 먼저 취소하거나 올려 주세요.');
+        removed = post.media ?? [];
         partition.posts = partition.posts.filter((item) => item.id !== postId);
+        // Its answers and renderings go with it, as when its persona is deleted.
+        if (partition.answers)
+          partition.answers = partition.answers.filter((answer) => answer.postId !== postId);
+        if (partition.replyNotes)
+          partition.replyNotes = partition.replyNotes.filter((note) => note.postId !== postId);
+        if (partition.replySeen)
+          partition.replySeen = partition.replySeen.filter((seen) => seen.postId !== postId);
         return partition;
       });
+      await this.removeMedia(scope, removed);
+      return partition;
     });
+  }
+
+  /**
+   * Fixes the bytes of a post's attachments for upload (2026-11-24) with the checks of
+   * 모바일로 보내기. With `expected` (a send being continued) they must be the bytes first sent;
+   * the server's ids are then kept, otherwise each file gets a new one.
+   */
+  private async prepareMedia(
+    context: ServiceBusinessContext,
+    partition: DailyPartition,
+    post: StoredDailyPost,
+    requestId: string,
+    expected?: PublicationRequest['media'],
+  ) {
+    const { media, prepareUpload, workDirectory } = this.options;
+    const scope = this.scope(context);
+    const source = media?.ready() ? media.uploadSource(scope) : null;
+    if (!media || !source || !prepareUpload || !workDirectory)
+      return fail('daily_media_unavailable', '작업 폴더를 지정한 뒤 보내세요.');
+    const files = post.media ?? [];
+    // Registered afresh, so a send right after a restart finds its files as well.
+    this.present = await media.track(scope, DailyController.mediaOf(partition));
+    if (files.some((file) => !this.present.has(file.id)))
+      fail('daily_media_missing', '첨부 파일을 찾을 수 없습니다. 작업 폴더를 확인하세요.');
+    const directory = await workDirectory(requestId);
+    try {
+      const prepared = await prepareUpload(
+        source,
+        files.map((file) => file.id),
+        directory,
+      );
+      const manifest: PublicationRequest['media'] = [];
+      for (const [ordinal, file] of prepared.entries())
+        manifest.push({
+          id: expected?.[ordinal]?.id ?? randomUUID(),
+          ordinal,
+          kind: file.kind,
+          contentType: file.contentType as PublicationRequest['media'][number]['contentType'],
+          ...(await preparedFileDigest(file.path)),
+        });
+      if (expected && !sameMedia(manifest, expected))
+        fail(
+          'daily_media_changed',
+          '첨부 파일이 보낼 때와 달라졌습니다. 전송을 취소한 뒤 다시 보내세요.',
+        );
+      return { prepared, directory, manifest };
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  /**
+   * Uploads a created post's attachments one by one and completes it (2026-11-24). Each file
+   * gets a fresh address, as one large video may take longer than an address lives (15 minutes).
+   */
+  private async uploadMedia(
+    context: ServiceBusinessContext,
+    postId: string,
+    publication: MobilePublication,
+    sent: PublicationRequest,
+    files: ThreadsUploadFile[],
+  ): Promise<MobilePublication> {
+    const total = sent.media.length;
+    const step = async <T>(call: () => Promise<T>) => {
+      try {
+        return await call();
+      } catch (error) {
+        // The server's request is there; it stays unconfirmed for [다시 보내기] or a cancel.
+        if (storageOff(error)) fail('daily_storage_off', STORAGE_OFF);
+        throw error;
+      }
+    };
+    for (const [i, media] of sent.media.entries()) {
+      this.options.onUpload?.({ postId, done: i, total });
+      const [url] = parseUploadUrls(
+        await step(() =>
+          this.request(context, 'upload-urls', publication.id, { mediaIds: [media.id] }),
+        ),
+        [media],
+      );
+      await (this.options.upload ?? uploadPublicationFile)(
+        files[i].path,
+        media,
+        url,
+        undefined,
+        this.options.client.businessSignal(context),
+      );
+      this.assert(context);
+    }
+    this.options.onUpload?.({ postId, done: total, total });
+    const completed = parsePublicationResponse(
+      await step(() =>
+        this.request(context, 'complete', publication.id, {}, completeTimeout(total)),
+      ),
+      0,
+    );
+    if (completed.id !== publication.id || !sameMedia(completed.media, sent.media))
+      fail('INVALID_RESPONSE', '전송 요청과 서버에 저장된 글이 다릅니다.');
+    if (completed.status !== 'ready')
+      fail(
+        'daily_upload_not_ready',
+        '첨부 확인이 끝나지 않았습니다. [다시 보내기]로 이어서 확인하세요.',
+      );
+    return completed;
   }
 
   send(input: unknown): Promise<DailyResult> {
@@ -1509,71 +1911,121 @@ export class DailyController {
           );
         }
       }
-      if (!request) {
-        const persona = before.personas.find((p) => p.id === current.personaId);
-        const account = (await this.accounts(context)).find((a) => a.id === persona?.accountId);
-        if (!persona || !account)
-          return fail(
-            'daily_account',
-            '연동된 게시 계정을 찾을 수 없습니다. 페르소나 설정에서 계정을 다시 연동하세요.',
+      // Attachments are copied out for the upload (2026-11-24); the copies go in any case.
+      let prepared: { prepared: ThreadsUploadFile[]; directory: string } | null = null;
+      try {
+        if (!request) {
+          const persona = before.personas.find((p) => p.id === current.personaId);
+          const account = (await this.accounts(context)).find((a) => a.id === persona?.accountId);
+          if (!persona || !account)
+            return fail(
+              'daily_account',
+              '연동된 게시 계정을 찾을 수 없습니다. 페르소나 설정에서 계정을 다시 연동하세요.',
+            );
+          const requestId = randomUUID();
+          const files = current.media ?? [];
+          let media: PublicationRequest['media'] = [];
+          if (files.length) {
+            const ready = await this.prepareMedia(context, before, current, requestId);
+            prepared = ready;
+            media = ready.manifest;
+          }
+          const created: PublicationRequest = {
+            requestId,
+            accountId: account.id,
+            expectedLifecycleVersion: account.lifecycleVersion ?? 1,
+            expectedOwnershipVersion: account.ownershipVersion ?? 1,
+            source: {
+              libraryId: DAILY_LIBRARY_ID,
+              postKey: postId,
+              draftCreatedAt: this.now(),
+              draftRevision: 1,
+              commentUpdatedAt: null,
+            },
+            caption: current.text,
+            // Left out without a topic, so a server that does not know the field still takes it.
+            ...(current.topic ? { topic: current.topic } : {}),
+            comment: null,
+            media,
+          };
+          request = created;
+          // The whole request is saved before the network call so a retry can repeat it exactly.
+          this.assert(context);
+          await this.options.store.update(scope, (partition) => {
+            const post = partition.posts.find((item) => item.id === postId);
+            if (
+              !post ||
+              post.send ||
+              post.published ||
+              post.text !== created.caption ||
+              (post.topic ?? undefined) !== created.topic ||
+              JSON.stringify((post.media ?? []).map((file) => file.id)) !==
+                JSON.stringify(files.map((file) => file.id))
+            )
+              fail('daily_post_changed', '보내는 중 글이 변경되었습니다. 다시 확인하세요.');
+            post!.send = { request: created, confirmed: false, sentAt: null };
+          });
+        }
+        const sent = request;
+        let publication: MobilePublication;
+        try {
+          publication = parsePublicationResponse(
+            await this.request(context, 'create', undefined, sent),
+            0,
           );
-        const created: PublicationRequest = {
-          requestId: randomUUID(),
-          accountId: account.id,
-          expectedLifecycleVersion: account.lifecycleVersion ?? 1,
-          expectedOwnershipVersion: account.ownershipVersion ?? 1,
-          source: {
-            libraryId: DAILY_LIBRARY_ID,
-            postKey: postId,
-            draftCreatedAt: this.now(),
-            draftRevision: 1,
-            commentUpdatedAt: null,
-          },
-          caption: current.text,
-          // Left out without a topic, so a server that does not know the field still takes it.
-          ...(current.topic ? { topic: current.topic } : {}),
-          comment: null,
-          media: [],
-        };
-        request = created;
-        // The whole request is saved before the network call so a retry can repeat it exactly.
+        } catch (error) {
+          if (!storageOff(error)) throw error;
+          // The server looks for this request before its storage, so it holds no row of it:
+          // the post is a draft again (2026-11-24).
+          this.assert(context);
+          await this.options.store.update(scope, (partition) => {
+            const post = partition.posts.find((item) => item.id === postId);
+            if (post?.send?.request.requestId === sent.requestId) post.send = null;
+          });
+          return fail('daily_storage_off', STORAGE_OFF);
+        }
+        if (
+          publication.requestId !== sent.requestId ||
+          publication.accountId !== sent.accountId ||
+          publication.caption !== sent.caption ||
+          JSON.stringify(publication.source) !== JSON.stringify(sent.source) ||
+          publication.comment ||
+          !sameMedia(publication.media, sent.media)
+        )
+          fail('INVALID_RESPONSE', '전송 요청과 서버에 저장된 글이 다릅니다.');
+        if (publication.status === 'uploading') {
+          // A send being continued prepares the same files again and checks they did not change.
+          prepared ??= await this.prepareMedia(
+            context,
+            before,
+            current,
+            sent.requestId,
+            sent.media,
+          );
+          publication = await this.uploadMedia(
+            context,
+            postId,
+            publication,
+            sent,
+            prepared.prepared,
+          );
+        }
         this.assert(context);
+        const accepted = publication;
         await this.options.store.update(scope, (partition) => {
           const post = partition.posts.find((item) => item.id === postId);
-          if (
-            !post ||
-            post.send ||
-            post.published ||
-            post.text !== created.caption ||
-            (post.topic ?? undefined) !== created.topic
-          )
-            fail('daily_post_changed', '보내는 중 글이 변경되었습니다. 다시 확인하세요.');
-          post!.send = { request: created, confirmed: false, sentAt: null };
+          if (post?.send?.request.requestId === sent.requestId) {
+            post.send.confirmed = true;
+            post.send.sentAt = accepted.sentAt;
+          }
         });
-      }
-      const sent = request;
-      const publication = parsePublicationResponse(
-        await this.request(context, 'create', undefined, sent),
-        0,
-      );
-      if (
-        publication.requestId !== sent.requestId ||
-        publication.accountId !== sent.accountId ||
-        publication.caption !== sent.caption ||
-        JSON.stringify(publication.source) !== JSON.stringify(sent.source) ||
-        publication.comment ||
-        publication.media.length
-      )
-        fail('INVALID_RESPONSE', '전송 요청과 서버에 저장된 글이 다릅니다.');
-      this.assert(context);
-      await this.options.store.update(scope, (partition) => {
-        const post = partition.posts.find((item) => item.id === postId);
-        if (post?.send?.request.requestId === sent.requestId) {
-          post.send.confirmed = true;
-          post.send.sentAt = publication.sentAt;
+        return this.refresh(context);
+      } finally {
+        if (prepared) {
+          this.options.onUpload?.(null);
+          await rm(prepared.directory, { recursive: true, force: true }).catch(() => {});
         }
-      });
-      return this.refresh(context);
+      }
     });
   }
 
@@ -1592,7 +2044,7 @@ export class DailyController {
       const current = before.posts.find((item) => item.id === postId);
       if (!current?.send) return fail('daily_post', '취소할 전송을 찾을 수 없습니다.');
       const requestId = current.send.request.requestId;
-      const rows = await this.list(context, postId);
+      const rows = await this.list(context, postId, current.send.request);
       const verdict = dailyVerdict(current, rows);
       const finish = async (result: Verdict, problem?: ViewError) => {
         await this.withdraw(context, result);
