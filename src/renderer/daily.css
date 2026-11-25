@@ -119,6 +119,8 @@ button.daily-arrow:disabled {
   align-items: center;
   gap: 8px;
   overflow-x: auto;
+  /* The arrows on either side move it (2026-11-25). */
+  scrollbar-width: none;
 }
 .daily-strip-shown {
   display: flex;
@@ -152,12 +154,6 @@ button.daily-chip.is-shown {
   color: #4a4cc0;
   font-size: 12px;
   font-weight: 600;
-}
-.daily-range {
-  flex: none;
-  color: #5b6575;
-  font-size: 13px;
-  white-space: nowrap;
 }
 
 .daily-avatar {

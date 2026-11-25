@@ -97,27 +97,23 @@ export function dailyNoteLabel(note: DailyWaitingNote | null) {
   }
 }
 
-/** How many persona columns fit; never fewer than one. */
+/** At most this many personas share the screen (2026-11-25, the user's call: four were too narrow). */
+export const DAILY_COLUMNS_MAX = 3;
+
+/** How many persona columns fit, three at most; never fewer than one. */
 export function dailyColumnCount(width: number, minWidth = 300, gap = 16) {
   if (!Number.isFinite(width) || width <= 0) return 1;
-  return Math.max(1, Math.floor((width + gap) / (minWidth + gap)));
+  return Math.max(1, Math.min(DAILY_COLUMNS_MAX, Math.floor((width + gap) / (minWidth + gap))));
 }
 
-/** The shown slice of personas. The last page is filled from the end instead of left short. */
+/**
+ * The shown page of personas: fixed groups of `columns` ([1–3], [4–6], ...), the last one maybe
+ * short (2026-11-25, the user's call). `start` is a persona the page holds, so a resized board
+ * still shows it.
+ */
 export function dailyWindow(start: number, total: number, columns: number) {
-  const first = Math.max(0, Math.min(start, total - columns));
+  const first = Math.floor(Math.max(0, Math.min(start, total - 1)) / columns) * columns;
   return { start: first, end: Math.min(total, first + columns) };
-}
-
-/** Keeps the current slice when the persona is already shown; otherwise starts at it. */
-export function dailyWindowFor(index: number, start: number, total: number, columns: number) {
-  const current = dailyWindow(start, total, columns);
-  if (index >= current.start && index < current.end) return current.start;
-  return dailyWindow(index, total, columns).start;
-}
-
-export function dailyRangeLabel(start: number, end: number, total: number) {
-  return end - start > 1 ? `${start + 1}–${end} / ${total}` : `${start + 1} / ${total}`;
 }
 
 const pad = (value: number) => String(value).padStart(2, '0');

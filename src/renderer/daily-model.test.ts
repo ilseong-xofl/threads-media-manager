@@ -17,11 +17,9 @@ import {
   dailyColumnCount,
   dailyDay,
   dailyNoteLabel,
-  dailyRangeLabel,
   dailySendBlock,
   dailyTime,
   dailyWindow,
-  dailyWindowFor,
   dailyReplyMedia,
   dailyReplyRows,
   dailyRepliesTranslatable,
@@ -133,21 +131,21 @@ describe('daily account choices', () => {
 });
 
 describe('daily board window', () => {
-  it('fits columns of at least the minimum width and never fewer than one', () => {
-    expect(dailyColumnCount(1247)).toBe(3);
-    expect(dailyColumnCount(1248)).toBe(4);
+  it('fits columns of at least the minimum width, three at most and never fewer than one', () => {
+    expect(dailyColumnCount(931)).toBe(2);
+    expect(dailyColumnCount(932)).toBe(3);
+    expect(dailyColumnCount(1920)).toBe(3);
     expect(dailyColumnCount(200)).toBe(1);
     expect(dailyColumnCount(0)).toBe(1);
   });
-  it('fills the last page from the end and moves only when a persona is hidden', () => {
-    expect(dailyWindow(0, 7, 4)).toEqual({ start: 0, end: 4 });
-    expect(dailyWindow(4, 7, 4)).toEqual({ start: 3, end: 7 });
-    expect(dailyWindow(2, 2, 4)).toEqual({ start: 0, end: 2 });
-    expect(dailyWindowFor(2, 0, 7, 4)).toBe(0);
-    expect(dailyWindowFor(5, 0, 7, 4)).toBe(3);
-    expect(dailyWindowFor(1, 3, 7, 4)).toBe(1);
-    expect(dailyRangeLabel(0, 4, 7)).toBe('1–4 / 7');
-    expect(dailyRangeLabel(2, 3, 7)).toBe('3 / 7');
+  it('shows the fixed page that holds a persona, the last one short (2026-11-25)', () => {
+    expect(dailyWindow(0, 4, 3)).toEqual({ start: 0, end: 3 });
+    expect(dailyWindow(2, 4, 3)).toEqual({ start: 0, end: 3 });
+    expect(dailyWindow(3, 4, 3)).toEqual({ start: 3, end: 4 });
+    expect(dailyWindow(4, 7, 3)).toEqual({ start: 3, end: 6 });
+    expect(dailyWindow(9, 7, 3)).toEqual({ start: 6, end: 7 });
+    expect(dailyWindow(4, 7, 2)).toEqual({ start: 4, end: 6 });
+    expect(dailyWindow(0, 0, 3)).toEqual({ start: 0, end: 0 });
   });
 });
 

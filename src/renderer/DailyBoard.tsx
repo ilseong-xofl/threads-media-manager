@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Attachment } from '../shared/contracts';
 import type {
   DailyMedia,
@@ -25,11 +25,9 @@ import {
   dailyDay,
   dailyInitial,
   dailyNoteLabel,
-  dailyRangeLabel,
   dailySendBlock,
   dailyTime,
   dailyWindow,
-  dailyWindowFor,
   groupDailyPosts,
 } from './daily-model';
 import './daily.css';
@@ -38,6 +36,10 @@ import './managed-threads.css';
 
 const COLUMN_MIN_WIDTH = 300;
 const COLUMN_GAP = 16;
+/** Room left before a chip the strip stops at, so the shown group keeps its border. */
+const STRIP_EDGE = 6;
+/** Names an arrow press moves the strip by. */
+const STRIP_STEP = 3;
 const avatarColors = ['#5c5ed6', '#0f766e', '#b45309', '#be185d'];
 const CANCEL_WARNING =
   '휴대폰이 이미 등록을 시도한 글입니다. 취소해도 Threads에 올라갔을 수 있으니 Threads 앱에서 확인하세요. 이미 보낸 요청은 취소되지 않습니다.';
@@ -66,6 +68,7 @@ export function DailyBoard({
 }) {
   const accounts = useManagedThreads(serviceAvailable);
   const { personas, posts } = daily.view;
+  // A persona the shown page holds; the page is its fixed group of `columns` (dailyWindow).
   const [start, setStart] = useState(0);
   const [columns, setColumns] = useState(1);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -95,6 +98,72 @@ export function DailyBoard({
   }, []);
 
   const shown = dailyWindow(start, personas.length, columns);
+  // 2026-11-25 (the user's call): the arrows move the strip of names, not the shown page; a name
+  // pressed there shows its group.
+  const strip = useRef<HTMLDivElement>(null);
+  /** Where an arrow press is still taking the strip; cleared when the strip stops. */
+  const stripTarget = useRef<number | null>(null);
+  const [stripEnds, setStripEnds] = useState({ left: false, right: false });
+  const measureStrip = useCallback(() => {
+    const element = strip.current;
+    if (!element) return;
+    const left = element.scrollLeft > 1;
+    const right = element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
+    setStripEnds((now) => (now.left === left && now.right === right ? now : { left, right }));
+  }, []);
+  // Chips come, go and change width with renders; the observer catches a resized window.
+  useLayoutEffect(() => measureStrip());
+  const hasPersonas = personas.length > 0;
+  useEffect(() => {
+    const element = strip.current;
+    if (!element) return;
+    const observer = new ResizeObserver(measureStrip);
+    observer.observe(element);
+    const settled = () => {
+      stripTarget.current = null;
+    };
+    element.addEventListener('scrollend', settled);
+    return () => {
+      observer.disconnect();
+      element.removeEventListener('scrollend', settled);
+    };
+  }, [measureStrip, hasPersonas]);
+  // A new page (a pressed name, a new persona) brings its names into the strip's view.
+  useLayoutEffect(() => {
+    const element = strip.current;
+    const group = element?.querySelector<HTMLElement>('.daily-strip-shown');
+    if (!element || !group) return;
+    const left =
+      group.getBoundingClientRect().left -
+      element.getBoundingClientRect().left +
+      element.scrollLeft;
+    const right = left + group.offsetWidth;
+    if (left < element.scrollLeft || right - left > element.clientWidth)
+      element.scrollTo({ left: left - STRIP_EDGE, behavior: 'smooth' });
+    else if (right > element.scrollLeft + element.clientWidth)
+      element.scrollTo({ left: right - element.clientWidth + STRIP_EDGE, behavior: 'smooth' });
+  }, [shown.start]);
+  /** Moves the strip three names over (2026-11-25, the user's call), a name at its left edge. */
+  function moveStrip(direction: 1 | -1) {
+    const element = strip.current;
+    if (!element) return;
+    const origin = element.getBoundingClientRect().left - element.scrollLeft;
+    const lefts = [...element.querySelectorAll<HTMLElement>('.daily-chip')].map(
+      (chip) => chip.getBoundingClientRect().left - origin,
+    );
+    // A second press while the strip still glides counts from where the first one goes.
+    const from = stripTarget.current ?? element.scrollLeft;
+    const first = lefts.findIndex((left) => left >= from);
+    const index = Math.min(
+      lefts.length - 1,
+      Math.max(0, (first < 0 ? lefts.length - 1 : first) + direction * STRIP_STEP),
+    );
+    const max = element.scrollWidth - element.clientWidth;
+    const left = index === 0 ? 0 : Math.min(max, Math.max(0, lefts[index] - STRIP_EDGE));
+    if (Math.abs(left - element.scrollLeft) < 1) return;
+    stripTarget.current = left;
+    element.scrollTo({ left, behavior: 'smooth' });
+  }
   const dialogPersona =
     dialog?.kind === 'persona' && dialog.personaId
       ? (personas.find((persona) => persona.id === dialog.personaId) ?? null)
@@ -285,7 +354,7 @@ export function DailyBoard({
     if (saved && !input.personaId) {
       const next = daily.getSnapshot().view.personas;
       const index = next.findIndex((persona) => !before.has(persona.id));
-      if (index >= 0) setStart(dailyWindowFor(index, start, next.length, columns));
+      if (index >= 0) setStart(index);
     }
     return saved;
   }
@@ -340,19 +409,25 @@ export function DailyBoard({
           <button
             type="button"
             className="daily-arrow"
-            aria-label="이전 페르소나"
-            disabled={shown.start === 0}
-            onClick={() => setStart(Math.max(0, shown.start - columns))}
+            aria-label="페르소나 목록 왼쪽으로"
+            disabled={!stripEnds.left}
+            onClick={() => moveStrip(-1)}
           >
             <Icon name="left" />
           </button>
-          <div className="daily-strip" role="group" aria-label="페르소나 목록">
+          <div
+            ref={strip}
+            className="daily-strip"
+            role="group"
+            aria-label="페르소나 목록"
+            onScroll={measureStrip}
+          >
             {personas.slice(0, shown.start).map((persona, index) => (
               <PersonaChip
                 key={persona.id}
                 persona={persona}
                 daily={daily}
-                onClick={() => setStart(dailyWindowFor(index, start, personas.length, columns))}
+                onClick={() => setStart(index)}
               />
             ))}
             <div className="daily-strip-shown">
@@ -372,21 +447,16 @@ export function DailyBoard({
                 key={persona.id}
                 persona={persona}
                 daily={daily}
-                onClick={() =>
-                  setStart(dailyWindowFor(shown.end + offset, start, personas.length, columns))
-                }
+                onClick={() => setStart(shown.end + offset)}
               />
             ))}
           </div>
-          <span className="daily-range" aria-live="polite">
-            {dailyRangeLabel(shown.start, shown.end, personas.length)}
-          </span>
           <button
             type="button"
             className="daily-arrow"
-            aria-label="다음 페르소나"
-            disabled={shown.end >= personas.length}
-            onClick={() => setStart(shown.start + columns)}
+            aria-label="페르소나 목록 오른쪽으로"
+            disabled={!stripEnds.right}
+            onClick={() => moveStrip(1)}
           >
             <Icon name="right" />
           </button>
