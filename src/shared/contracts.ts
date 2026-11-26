@@ -3,6 +3,7 @@ import type { ThreadsApiMethods } from './threads-api';
 import type { ManagedThreadsMethods } from './managed-threads';
 import type { DailyMethods } from './daily';
 import type { MentMethods } from './ments';
+import type { ReleaseNote } from './release-notes';
 import type {
   MobilePublicationMethods,
   MobilePublicationStatusesResult,
@@ -58,6 +59,8 @@ export const IPC = {
   deleteMent: 'tmm:ments:delete',
   capabilities: 'tmm:app:capabilities',
   reportUpdateBlocked: 'tmm:app:update-blocked',
+  releaseNotes: 'tmm:app:release-notes',
+  releaseNotesSeen: 'tmm:app:release-notes-seen',
   chatGptState: 'tmm:chatgpt:state',
   loginChatGpt: 'tmm:chatgpt:login',
   cancelChatGptLogin: 'tmm:chatgpt:cancel-login',
@@ -336,6 +339,10 @@ export interface ThreadsMediaApi
   cancelChatGptLogin(): Promise<ChatGptResult>;
   logoutChatGpt(): Promise<ChatGptResult>;
   capabilities(): Promise<AppCapabilities>;
+  /** Update notes this PC has not seen yet (2026-11-26); empty when there are none. */
+  getReleaseNotes(): Promise<ReleaseNote[]>;
+  /** Records the running version's notes as seen. */
+  markReleaseNotesSeen(): Promise<void>;
   current(): Promise<CollectionView>;
   chooseFolder(): Promise<CollectionView>;
   refresh(): Promise<CollectionView>;

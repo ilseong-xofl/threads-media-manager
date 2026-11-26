@@ -35,6 +35,8 @@ import { createMetaTokenClient } from './meta-token-client';
 import { MetaTokenLog } from './meta-token-log';
 import squirrelStartup from 'electron-squirrel-startup';
 import { removeFormerShortcuts } from './former-shortcuts';
+import { markReleaseNotesSeen, readSeenReleaseNotes } from './release-notes-store';
+import { RELEASE_NOTES, releaseNotesToShow } from '../shared/release-notes';
 import { configureRuntime } from './runtime';
 import { configureAutoUpdates } from './updates';
 import { homedir } from 'node:os';
@@ -857,6 +859,14 @@ function createWindow(): void {
 // An update that renamed the app leaves the shortcuts of its former name behind.
 if (process.platform === 'win32')
   removeFormerShortcuts(process.argv[1], TMM_FORMER_SHORTCUTS, (name) => app.getPath(name));
+// A new install starts with its own version's notes seen, so only updates show what changed.
+if (process.platform === 'win32' && process.argv[1] === '--squirrel-install') {
+  try {
+    markReleaseNotesSeen(app.getPath('userData'), app.getVersion());
+  } catch {
+    // Without the record the first run shows the notes once; that must not stop the install.
+  }
+}
 if (squirrelStartup || !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -985,6 +995,20 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           await serviceAccess.require();
           if (authMutation || requestAuthGeneration !== authGeneration)
             throw new Error('로그인이 변경되었습니다. 다시 시도해 주세요.');
+          // Update notes touch nothing else, so no other work holds them back.
+          if (channel === IPC.releaseNotes) {
+            if (args.length) throw new Error('Unexpected arguments');
+            return releaseNotesToShow(
+              RELEASE_NOTES,
+              app.getVersion(),
+              readSeenReleaseNotes(app.getPath('userData')),
+            );
+          }
+          if (channel === IPC.releaseNotesSeen) {
+            if (args.length) throw new Error('Unexpected arguments');
+            markReleaseNotesSeen(app.getPath('userData'), app.getVersion());
+            return;
+          }
           if (mobilePublicationBlocks(channel, mobilePublications.active))
             throw new Error('게시 대기 전송이 끝난 뒤 작업하세요.');
           if (channel.startsWith('tmm:managed-threads:')) {

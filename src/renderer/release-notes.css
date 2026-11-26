@@ -1,0 +1,56 @@
+/* Update notes (2026-11-26, the user's call): the list scrolls and [확인] stays at the bottom. */
+.post-modal.managed-threads-action-dialog.release-notes-dialog {
+  width: min(560px, calc(100vw - 48px));
+}
+.release-notes-dialog > .managed-threads-action-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.release-notes-list {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 20px;
+  min-height: 0;
+  padding: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.release-notes-version {
+  display: grid;
+  gap: 12px;
+}
+.release-notes-version + .release-notes-version {
+  padding-top: 20px;
+  border-top: 1px solid #edf0f5;
+}
+.release-notes-version h4 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: -0.2px;
+}
+.release-notes-kind p {
+  margin: 0 0 6px;
+  color: #5b6575;
+  font-size: 12px;
+  font-weight: 600;
+}
+.release-notes-kind ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.release-notes-dialog > .managed-threads-action-content > .managed-threads-dialog-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 14px 22px;
+  border-top: 1px solid #edf0f5;
+}

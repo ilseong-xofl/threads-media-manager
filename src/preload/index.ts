@@ -96,6 +96,8 @@ const api: ThreadsMediaApi = {
   reconcileThreadsPublication: (input) =>
     ipcRenderer.invoke(IPC.reconcileThreadsPublication, input),
   capabilities: () => ipcRenderer.invoke(IPC.capabilities),
+  getReleaseNotes: () => ipcRenderer.invoke(IPC.releaseNotes),
+  markReleaseNotesSeen: () => ipcRenderer.invoke(IPC.releaseNotesSeen),
   current: () => ipcRenderer.invoke(IPC.current),
   chooseFolder: () => ipcRenderer.invoke(IPC.choose),
   refresh: () => ipcRenderer.invoke(IPC.refresh),

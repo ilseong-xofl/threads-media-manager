@@ -50,6 +50,7 @@ import { createUpdateBlockReporter, updateBlockedByUi } from './update-blocker';
 import { createDownloadPolling, downloadPollingDelay } from './download-polling';
 import { DailyBoard } from './DailyBoard';
 import { useDaily } from './use-daily';
+import { PendingReleaseNotes } from './ReleaseNotesDialog';
 
 const captionCacheKey = (root: string, postKey: string) => JSON.stringify([root, postKey]);
 
@@ -1385,6 +1386,7 @@ export function App({
           }}
         />
       )}
+      <PendingReleaseNotes />
     </div>
   );
 }
