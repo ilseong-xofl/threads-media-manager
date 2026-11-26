@@ -16,9 +16,12 @@ export interface MentsState {
 /**
  * The ment catalog for picking a ment while a post is written: read once when `enabled`, and null
  * until then. Picking is optional, so a failure only leaves it null and the post is written as
- * before (a lost login still reaches the app's access check in the main process).
+ * before (a lost login still reaches the app's access check in the main process). The setter takes
+ * the catalog a save sends back.
  */
-export function useMentCatalog(enabled: boolean): MentCatalog | null {
+export function useMentCatalog(
+  enabled: boolean,
+): readonly [MentCatalog | null, (catalog: MentCatalog) => void] {
   const [catalog, setCatalog] = useState<MentCatalog | null>(null);
   useEffect(() => {
     if (!enabled) return;
@@ -33,7 +36,7 @@ export function useMentCatalog(enabled: boolean): MentCatalog | null {
       live = false;
     };
   }, [enabled]);
-  return catalog;
+  return [catalog, setCatalog] as const;
 }
 
 /**

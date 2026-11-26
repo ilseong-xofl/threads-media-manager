@@ -10,10 +10,11 @@ import {
   type DailyPost,
   type DailyReply,
 } from '../shared/daily';
-import type { Ment } from '../shared/ments';
+import { MENT_BODY_LIMIT, mentLength, type Ment } from '../shared/ments';
 import { DailyMediaField } from './DailyMediaField';
 import { ManagedThreadsActionDialog } from './ManagedThreadsActionDialog';
-import { MentPicker } from './MentPicker';
+import { MentPicker, type MentPlace } from './MentPicker';
+import { MentRegisterDialog } from './MentRegisterDialog';
 import { useMentCatalog } from './use-ments';
 import './managed-threads.css';
 
@@ -97,9 +98,14 @@ export function DailyPostDialog({
   const working = busy || composing || importing;
   const kind = replyTo ? '답글' : '글';
   // A post (not an answer) can take a saved ment as its body (2026-11-24).
-  const catalog = useMentCatalog(!replyTo);
+  const [catalog, setCatalog] = useMentCatalog(!replyTo);
+  const [place, setPlace] = useState<MentPlace>({ brandId: null, productId: null });
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [replacing, setReplacing] = useState<Ment | null>(null);
+  // ...and its text can be kept as a new ment under a product that exists (2026-11-25).
+  const [registering, setRegistering] = useState(false);
+  const canRegister = !!catalog && catalog.brands.some((brand) => brand.products.length > 0);
+  const registrable = text.trim() !== '' && mentLength(text) <= MENT_BODY_LIMIT;
   function fill(ment: Ment) {
     setText(ment.body);
     setPickedId(ment.id);
@@ -198,7 +204,14 @@ export function DailyPostDialog({
             </>
           )}
           {!replyTo && catalog && catalog.brands.length > 0 && (
-            <MentPicker catalog={catalog} mentId={pickedId} disabled={working} onPick={pick} />
+            <MentPicker
+              catalog={catalog}
+              place={place}
+              mentId={pickedId}
+              disabled={working}
+              onSelect={setPlace}
+              onPick={pick}
+            />
           )}
           <label htmlFor={`${id}-text`}>본문</label>
           <textarea
@@ -224,6 +237,16 @@ export function DailyPostDialog({
           )}
         </div>
         <div className="threads-actions managed-threads-dialog-actions">
+          {canRegister && (
+            <button
+              type="button"
+              className="daily-ment-register"
+              disabled={working || !registrable}
+              onClick={() => setRegistering(true)}
+            >
+              멘트 등록
+            </button>
+          )}
           <button type="button" disabled={busy || composing} onClick={onClose}>
             취소
           </button>
@@ -259,6 +282,22 @@ export function DailyPostDialog({
             </button>
           </div>
         </ManagedThreadsActionDialog>
+      )}
+      {registering && catalog && (
+        <MentRegisterDialog
+          catalog={catalog}
+          place={place}
+          body={text}
+          onCatalog={setCatalog}
+          onSaved={(saved, at, mentId) => {
+            // The boxes show the new ment, whose text the body already is.
+            setCatalog(saved);
+            setPlace(at);
+            setPickedId(mentId);
+            setRegistering(false);
+          }}
+          onClose={() => setRegistering(false)}
+        />
       )}
     </ManagedThreadsActionDialog>
   );

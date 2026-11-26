@@ -513,7 +513,7 @@ button.daily-card-translate:hover:not(:disabled) {
 .daily-post-dialog .daily-form > label {
   margin-top: 8px;
 }
-.daily-post-dialog .daily-form > .daily-ment-picker {
+.daily-post-dialog .daily-form > .daily-ment-picker:not(:first-child) {
   margin-top: 8px;
   row-gap: 16px;
 }
@@ -565,6 +565,10 @@ button.daily-card-translate:hover:not(:disabled) {
   padding: 22px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* [멘트 등록] keeps to the left of the footer (2026-11-25, the user's call). */
+.daily-post-dialog .daily-post-form > .managed-threads-dialog-actions > .daily-ment-register {
+  margin-right: auto;
 }
 .daily-post-dialog .daily-post-form > .managed-threads-dialog-actions {
   flex: 0 0 auto;

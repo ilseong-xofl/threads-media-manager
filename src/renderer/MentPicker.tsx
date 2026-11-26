@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId } from 'react';
 import type { Ment, MentCatalog } from '../shared/ments';
 import { Icon } from './Icon';
 import './ments.css';
@@ -48,30 +48,29 @@ export function MentSelect({
   );
 }
 
-/**
- * The brand, product and ment-title boxes of a post being written (2026-11-24): nothing is chosen
- * at first, so an ordinary post is left alone. Choosing a ment hands it to the post, which puts its
- * text in the body; `mentId` is the ment the body was last filled from.
- */
-export function MentPicker({
+/** The brand and product a ment belongs to, or is about to; either may be unchosen. */
+export interface MentPlace {
+  brandId: string | null;
+  productId: string | null;
+}
+
+/** The brand and product boxes, side by side; a new brand clears the product. */
+export function MentPlaceSelects({
   catalog,
-  mentId,
+  place,
   disabled,
-  onPick,
+  onSelect,
 }: {
   catalog: MentCatalog;
-  mentId: string | null;
+  place: MentPlace;
   disabled: boolean;
-  onPick(ment: Ment): void;
+  onSelect(place: MentPlace): void;
 }) {
   const id = useId();
-  const [brandId, setBrandId] = useState<string | null>(null);
-  const [productId, setProductId] = useState<string | null>(null);
-  const brand = catalog.brands.find((item) => item.id === brandId) ?? null;
-  const product = brand?.products.find((item) => item.id === productId) ?? null;
-  const ments = product?.ments ?? [];
+  const brand = catalog.brands.find((item) => item.id === place.brandId) ?? null;
+  const product = brand?.products.find((item) => item.id === place.productId) ?? null;
   return (
-    <div className="daily-ment-picker">
+    <>
       <div className="daily-ment-pick">
         <label htmlFor={`${id}-brand`}>브랜드</label>
         <MentSelect
@@ -81,10 +80,7 @@ export function MentPicker({
           empty="등록된 브랜드가 없습니다"
           placeholder="브랜드 선택"
           disabled={disabled}
-          onChange={(value) => {
-            setBrandId(value);
-            setProductId(null);
-          }}
+          onChange={(value) => onSelect({ brandId: value, productId: null })}
         />
       </div>
       <div className="daily-ment-pick">
@@ -96,9 +92,41 @@ export function MentPicker({
           empty={brand ? '등록된 제품이 없습니다' : '브랜드를 먼저 고르세요'}
           placeholder="제품 선택"
           disabled={disabled}
-          onChange={setProductId}
+          onChange={(value) => onSelect({ brandId: brand?.id ?? null, productId: value })}
         />
       </div>
+    </>
+  );
+}
+
+/**
+ * The brand, product and ment-title boxes of a post being written (2026-11-24): nothing is chosen
+ * at first, so an ordinary post is left alone. Choosing a ment hands it to the post, which puts its
+ * text in the body; `mentId` is the ment the body was last filled from. The window holds the brand
+ * and product, so [멘트 등록] starts from them (2026-11-25).
+ */
+export function MentPicker({
+  catalog,
+  place,
+  mentId,
+  disabled,
+  onSelect,
+  onPick,
+}: {
+  catalog: MentCatalog;
+  place: MentPlace;
+  mentId: string | null;
+  disabled: boolean;
+  onSelect(place: MentPlace): void;
+  onPick(ment: Ment): void;
+}) {
+  const id = useId();
+  const brand = catalog.brands.find((item) => item.id === place.brandId) ?? null;
+  const product = brand?.products.find((item) => item.id === place.productId) ?? null;
+  const ments = product?.ments ?? [];
+  return (
+    <div className="daily-ment-picker">
+      <MentPlaceSelects catalog={catalog} place={place} disabled={disabled} onSelect={onSelect} />
       <div className="daily-ment-pick daily-ment-pick-wide">
         <label htmlFor={`${id}-ment`}>멘트</label>
         <MentSelect
