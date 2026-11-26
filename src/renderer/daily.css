@@ -922,6 +922,10 @@ button.daily-card-translate:hover:not(:disabled) {
 .daily-card .media-carousel-card:not(:has(.carousel-dots)) {
   padding-bottom: 0;
 }
+/* 20% lower than the collection's square cards (2026-11-26, the user's call). */
+.daily-card .media-carousel-card .media-stage {
+  aspect-ratio: 5 / 4;
+}
 /* Its arrows show while the pointer is over the media and hide when it leaves (2026-11-24, the
    user's call); keyboard focus shows them too. The collection's cards keep their own rule. */
 @media (hover: hover) {
