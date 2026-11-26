@@ -53,7 +53,7 @@ Release에는 다음을 함께 올린다.
 
 Windows CI는 push마다 두 벌을 따로 빌드·검증한다(`Check (windows-2022, dev)`, `Check (windows-2022, prod)`). 후보 artifact 이름에 벌이 들어간다: `threads-media-manager-windows-candidate-dev-<sha>`, `...-candidate-prod-<sha>`. 이 저장소의 `release-windows.yml`은 개발용 후보만 받아 게시하며, 후보의 벌 표시가 `dev`가 아니거나 이 저장소가 개발용의 업데이트 저장소가 아니면 거절한다.
 
-배포할 소스의 `package.json`을 기존 공개 버전보다 높이고 CI를 한 번 통과시킨다. 그 커밋에 동일한 `v<version>` 태그를 push한다. `release-windows.yml`은 공개 저장소·태그/버전 일치·기존 버전 미중복과 동일 커밋의 CI 성공을 확인하고, 이미 검증된 설치 파일을 GitHub 안에서 Release로 옮긴다. 전체 테스트와 빌드를 다시 실행하지 않는다. 전달받은 파일의 SHA-256과 Squirrel 패키지 무결성만 확인한 뒤 모든 파일을 draft에 올리고 일반 Release로 전환한다. 기존 Release 파일은 덮어쓰지 않는다. 필요하면 태그와 성공한 CI 실행 번호를 지정해 수동 게시한다. 태그는 원래 검증한 앱 소스를 유지하며 게시 작업만 수정해도 앱을 재빌드하지 않는다.
+배포할 소스의 `package.json`을 기존 공개 버전보다 높이고 CI를 한 번 통과시킨다. 같은 커밋에서 `src/shared/release-notes.ts`에 그 버전의 직원용 업데이트 내역을 쓴다(2026-11-26부터, 없으면 테스트가 실패해 CI가 통과하지 않는다). 그 커밋에 동일한 `v<version>` 태그를 push한다. `release-windows.yml`은 공개 저장소·태그/버전 일치·기존 버전 미중복과 동일 커밋의 CI 성공을 확인하고, 이미 검증된 설치 파일을 GitHub 안에서 Release로 옮긴다. 전체 테스트와 빌드를 다시 실행하지 않는다. 전달받은 파일의 SHA-256과 Squirrel 패키지 무결성만 확인한 뒤 모든 파일을 draft에 올리고 일반 Release로 전환한다. 기존 Release 파일은 덮어쓰지 않는다. 필요하면 태그와 성공한 CI 실행 번호를 지정해 수동 게시한다. 태그는 원래 검증한 앱 소스를 유지하며 게시 작업만 수정해도 앱을 재빌드하지 않는다.
 
 일반 CI artifact는 14일 뒤 만료되는 시험 후보이며 자동 업데이트 배포 대상이 아니다. 공개 일반 Release만 Electron 서비스가 제공한다. draft/prerelease는 대상에서 제외된다. 공개 이후 같은 버전을 재사용하거나 설치 ID를 변경하지 않는다.
 
